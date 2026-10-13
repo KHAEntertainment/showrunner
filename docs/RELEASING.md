@@ -1,26 +1,35 @@
 # Releasing
 
-The plugin marketplace entry pins a release tag (ADR-003), so **the plugin does
-not resolve until that tag exists and is pushed**. Cutting a release is
-therefore a required step, not an optional one.
+The plugin is listed in the central KHA Entertainment catalog,
+[`KHAEntertainment/marketplace`](https://github.com/KHAEntertainment/marketplace)
+(catalog name `kha-marketplace`; ADR-014), and that entry pins a release tag
+(ADR-003). So **the plugin does not resolve until the tag exists and is
+pushed**, and **users do not receive a release until the central pin is bumped
+to it**. Cutting a release is therefore a required step, not an optional one,
+and it spans two repositories.
 
 ## Version sites
 
-One version, five places — four repository fields plus the git tag. The four
-repository fields are updated together in the release commit; the tag is created
-afterwards, from that commit.
+One version, four places — two repository fields, the git tag, and the central
+catalog pin. The two repository fields are updated together in the release
+commit; the tag is created afterwards, from that commit; the central pin is
+bumped last, in the other repository (step 5).
 
 | Site | Form | Example |
 |---|---|---|
 | `skills/dev/SKILL.md` frontmatter `version:` | semver + build metadata | `2.0.0+upstream.3e87db0` |
 | `.claude-plugin/plugin.json` `version` | plain semver | `2.0.0` |
-| `.claude-plugin/marketplace.json` plugin entry `version` | plain semver | `2.0.0` |
-| `.claude-plugin/marketplace.json` plugin entry `source.ref` | `v` + semver | `v2.0.0` |
 | git tag | `v` + semver | `v2.0.0` |
+| `KHAEntertainment/marketplace` `.claude-plugin/marketplace.json`, `dev-skill` entry `source.ref` | `v` + semver | `v2.0.0` |
 
-The Skill value carries `+upstream.<sha>` build metadata that the manifests do
-not. They are **not** byte-identical — they share the same core version, the
-part before `+`. Comparison must strip build metadata.
+The Skill value carries `+upstream.<sha>` build metadata that `plugin.json`
+does not. They are **not** byte-identical — they share the same core version,
+the part before `+`. Comparison must strip build metadata. The central entry
+has no `version` field, only the `ref`.
+
+`scripts/check_version_sync.py` compares the first two sites and an optional
+`--tag`, offline. The central pin lives in another repository, so it is checked
+separately, over the network, by `scripts/check_central_catalog.py` (step 6).
 
 ## Tag scheme
 
@@ -30,8 +39,8 @@ use, because a plain `vX.Y.Z` tag also serves the Homebrew formula's source
 tarball URL (`refs/tags/vX.Y.Z.tar.gz`, ADR-007). One tag serves both channels.
 
 `claude plugin tag --dry-run .` is still useful as a *validation* step: it
-reports whether `plugin.json` and the marketplace entry agree on name and
-version. Ignore the tag name it proposes; do not let it create the tag.
+checks `plugin.json` (name and version) and refuses a dirty tree. Ignore the
+tag name it proposes; do not let it create the tag.
 
 ## Procedure
 
@@ -90,28 +99,83 @@ version. Ignore the tag name it proposes; do not let it create the tag.
    first re-resolve `remote` with the same `resolve_repository.py ...
    --print-push-remote` command.
 
-5. **Verify the advertised install actually works**, in a scratch config so the
+5. **Publish to the central catalog.** This needs the tag from steps 3 and 4,
+   because the central CI clones the pinned ref. In a clone of
+   `KHAEntertainment/marketplace`, open a PR that changes only the `dev-skill`
+   entry's `source.ref` in `.claude-plugin/marketplace.json` from the previous
+   release tag to `vX.Y.Z`. Leave `source.source` (`url`) and `source.url`
+   (`https://github.com/KHAEntertainment/claude-dev-skill.git`) alone; the
+   HTTPS transport is ADR-003's. That repository's `verify-catalog.yml` clones
+   every entry anonymously and checks the plugin name and any declared
+   version; it must pass before the PR merges. It does not compare the plugin
+   version with the tag, which is what step 6 is for. Merge the PR.
+
+6. **Verify the central entry against the tag.** From the release commit:
+
+   ```bash
+   python3 scripts/check_central_catalog.py --tag vX.Y.Z
+   ```
+
+   It clones `KHAEntertainment/marketplace` `main` anonymously and passes only
+   if the catalog has exactly one `dev-skill` entry, its source is the HTTPS
+   URL above with `ref` equal to `vX.Y.Z`, the tag is published (annotated tags
+   are peeled), the checkout it read is that tag's commit, and that commit's
+   `plugin.json` is named `dev-skill` at the release version. It does not run
+   in `scripts/verify.sh`: it needs the network and a published tag. It fails
+   closed: exit 1 is a mismatch, exit 2 means it could not verify (no network,
+   clone failure, unparseable catalog). **Exit 2 is not a pass; rerun it.** If
+   it keeps failing, treat the release as incomplete (below).
+
+7. **Verify the advertised install actually works**, in a scratch config so the
    real one is untouched.
 
-   The marketplace entry uses an `https://` `url` source specifically so this
+   The catalog entry uses an `https://` `url` source specifically so this
    works without a GitHub SSH key (ADR-003). Verify on a machine where
    `ssh -T git@github.com` fails, if you have one — that is the configuration
    the `url` source exists to support.
 
    ```bash
    CLAUDE_CONFIG_DIR=/tmp/dev-skill-release-check \
-     claude plugin marketplace add KHAEntertainment/claude-dev-skill
+     claude plugin marketplace add KHAEntertainment/marketplace
    CLAUDE_CONFIG_DIR=/tmp/dev-skill-release-check \
-     claude plugin install dev-skill@khaentertainment-dev-skill
+     claude plugin install dev-skill@kha-marketplace
+   ```
+
+   Then run the migration test, which does the same for a clean install and for
+   an old-marketplace install, in directories it creates and removes itself:
+
+   ```bash
+   MIGRATION_EXPECT_TAG=vX.Y.Z bash tests/migration-scratch.sh
    ```
 
    This is the step that catches an unresolvable pin, and the only step that
    exercises the transport real users hit. Do not skip it — manifest validation
    passing proves neither that the pinned ref exists nor that it can be fetched.
 
-   It can only be run **after** the tag is pushed. Before that, both the
-   `owner/repo` shorthand and the explicit HTTPS URL fail on the missing
-   manifest, which is expected and tells you nothing about the release.
+   It can only be run **after** the tag is pushed and the central pin from step
+   5 has merged. Before that, the catalog still serves the previous release (or
+   the `owner/repo` shorthand fails on a missing manifest), which tells you
+   nothing about the new one.
+
+## Incomplete publication and recovery
+
+Publication spans two repositories in a fixed order: tag (steps 3 and 4), then
+central pin (step 5), then verification (steps 6 and 7). From the tag push until
+step 7 passes, marketplace distribution of the release is **incomplete**: do not
+announce the release, and do not bump the Homebrew formula. An incomplete
+release is safe for users, because the central entry pins an immutable tag and
+keeps serving the previous release until the pin moves.
+
+| State | What users get | Recovery |
+|---|---|---|
+| Tag pushed, central PR not yet merged | The previous release | Open or finish the step 5 PR. |
+| Step 6 exits 1 (mismatch) | The previous release, or a wrong pin if the PR already merged | Fix the central entry (or the tag mismatch it names) and rerun step 6. |
+| Step 6 exits 2 (unverifiable) | Unknown | Rerun. If it persists, check the network and `KHAEntertainment/marketplace`, then repeat; never record it as a pass. |
+| Pin merged, step 7 install fails | A broken install | Roll back by reverting the central pin PR so `ref` returns to the previous tag, confirm the central CI and step 7 against it, then diagnose. |
+| The tagged content is wrong | Whatever the pin selects | Never move, delete, or recreate a published tag. Fix forward: release a new patch version through steps 1 to 7 and point the pin at it. |
+
+Old release tags stay immutable. Rolling back always means repointing the central
+`ref` at an earlier tag, never retagging.
 
 ## Homebrew formula
 
@@ -123,7 +187,7 @@ release; until bumped, the formula serves the previous release.
 
 ### Bumping the formula
 
-After `docs/RELEASING.md` step 5 (marketplace install verification) succeeds:
+After `docs/RELEASING.md` step 7 (marketplace install verification) succeeds:
 
 ```bash
 # 1. Compute the new tarball sha256
@@ -161,12 +225,13 @@ particular the packaging job extracts `git archive HEAD` and runs
 working tree — so a broken `export-ignore` rule that would ship a defective
 source tarball fails CI rather than surfacing later as a broken `brew install`.
 
-What CI cannot do is step 5. The tag does not exist when CI runs, so verifying
-that the published plugin actually installs remains a manual post-tag step.
+What CI cannot do is steps 5 to 7. The tag does not exist when CI runs and the
+central catalog lives in another repository, so verifying the central entry and
+that the published plugin actually installs remain manual post-tag steps.
 
 ## Never move a released tag
 
-The marketplace pins `ref` only, not a commit `sha`, so a moved tag silently
+The central catalog entry pins `ref` only, not a commit `sha`, so a moved tag silently
 changes what existing users receive. Treat a pushed release tag as immutable. If
 a release is wrong, cut a new patch version.
 
@@ -178,9 +243,10 @@ computes it (Issue #6).
 
 ## Next release
 
-Update the four repository fields in a single commit, land it, then create the
-tag from that commit — the tag is the fifth site and by definition cannot be
-inside the commit it points at. Then repeat from step 1.
+Update the two repository fields in a single commit, land it, then create the
+tag from that commit — the tag is a separate site and by definition cannot be
+inside the commit it points at — and bump the central pin (step 5). Then repeat
+from step 1.
 
 `CHANGELOG.custom.md` also records the version as a release-lifecycle heading.
 It is not a plugin-resolution source, so it is not in the table above, but it

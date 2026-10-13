@@ -36,7 +36,7 @@ jobs:
           bash -n install.sh
           bash -n scripts/verify.sh
       - name: Lint shell scripts
-        run: shellcheck install.sh tests/test-install.sh scripts/check_plugin_root.sh scripts/verify.sh
+        run: shellcheck install.sh tests/test-install.sh tests/migration-scratch.sh scripts/check_plugin_root.sh scripts/verify.sh
 
   installer:
     name: Bash installer (${{ matrix.os }})
@@ -130,18 +130,9 @@ jobs:
           from pathlib import Path
 
           plugin = json.loads(Path('.claude-plugin/plugin.json').read_text(encoding='utf-8'))
-          marketplace = json.loads(Path('.claude-plugin/marketplace.json').read_text(encoding='utf-8'))
 
           if not isinstance(plugin, dict) or not all(isinstance(plugin.get(key), str) and plugin[key] for key in ('name', 'version')):
               raise SystemExit('plugin.json must contain non-empty string name and version')
-          if not isinstance(marketplace, dict):
-              raise SystemExit('marketplace.json must be an object')
-          if not isinstance(marketplace.get('name'), str) or not marketplace['name']:
-              raise SystemExit('marketplace.json must contain a non-empty string name')
-          if not isinstance(marketplace.get('owner'), dict) or not marketplace['owner']:
-              raise SystemExit('marketplace.json must contain a non-empty owner object')
-          if not isinstance(marketplace.get('plugins'), list):
-              raise SystemExit('marketplace.json must contain a plugins array')
           print('OK: plugin manifests satisfy fallback structure checks')
           PY
           }

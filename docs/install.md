@@ -16,8 +16,8 @@ Every way to install, update, and invoke `/dev`. For the short version, see the
 ## Plugin install (recommended)
 
 ```bash
-claude plugin marketplace add KHAEntertainment/claude-dev-skill
-claude plugin install dev-skill@khaentertainment-dev-skill
+claude plugin marketplace add KHAEntertainment/marketplace
+claude plugin install dev-skill@kha-marketplace
 ```
 
 Restart Claude Code, then invoke:
@@ -34,8 +34,8 @@ another `/dev` command is installed, for example a manual install (see
 That is the whole plugin install. To update the plugin later:
 
 ```bash
-claude plugin marketplace update khaentertainment-dev-skill   # refresh the catalog
-claude plugin update dev-skill@khaentertainment-dev-skill     # update the installed plugin
+claude plugin marketplace update kha-marketplace   # refresh the catalog
+claude plugin update dev-skill@kha-marketplace     # update the installed plugin
 ```
 
 Both steps are needed — refreshing the catalog does not update an installed
@@ -43,10 +43,62 @@ plugin. Restart Claude Code afterwards to apply the update.
 
 All of these commands are also available inside a session as `/plugin …`.
 
-> The marketplace entry pins a release tag, so the plugin resolves only from a
-> tagged release. See [Releasing](RELEASING.md) for how a release is cut.
+> `dev-skill` is listed in the central KHA Entertainment catalog,
+> [`KHAEntertainment/marketplace`](https://github.com/KHAEntertainment/marketplace)
+> (catalog name `kha-marketplace`), next to the other KHA plugins. The entry
+> pins a release tag, so the plugin resolves only from a tagged release and
+> moves forward when the entry is bumped after a release. See
+> [Releasing](RELEASING.md) for how a release is cut and published.
 
 No SSH key is required — the marketplace entry fetches over HTTPS.
+
+### Migrating from `dev-skill@khaentertainment-dev-skill`
+
+Up to v2.1.1 this repository hosted its own catalog, installed as
+`dev-skill@khaentertainment-dev-skill`. That catalog is retired. Once it is
+gone from `main`, `claude plugin marketplace update khaentertainment-dev-skill`
+can no longer find it, so an old install **stops tracking releases** and stays
+on the version it has. Switch to the central catalog. Adding the central
+marketplace without removing the old one loads two copies of the same plugin,
+both answering `/dev` and `/dev-skill:dev`, so retire the old one in the same sitting.
+A GitHub redirect does not carry your install across; the plugin ID is
+different.
+
+1. **Record whether the old copy is enabled.** The new copy always installs
+   enabled, so you must carry a disabled state over yourself:
+
+   ```bash
+   claude plugin list --json    # find dev-skill@khaentertainment-dev-skill and read "enabled"
+   ```
+
+2. **Install from the central catalog:**
+
+   ```bash
+   claude plugin marketplace add KHAEntertainment/marketplace
+   claude plugin install dev-skill@kha-marketplace
+   ```
+
+3. **If step 1 showed `"enabled": false`, disable the new copy too:**
+
+   ```bash
+   claude plugin disable dev-skill@kha-marketplace
+   ```
+
+4. **Retire the old copy and its catalog:**
+
+   ```bash
+   claude plugin uninstall dev-skill@khaentertainment-dev-skill
+   claude plugin marketplace remove khaentertainment-dev-skill
+   ```
+
+5. **Check, then restart Claude Code.** `claude plugin list` should show
+   exactly one `dev-skill` entry, `dev-skill@kha-marketplace`.
+
+These commands act on user scope. If you installed the old copy with
+`--scope project` or `--scope local`, repeat steps 2 to 4 with the same
+`--scope` (and read the enabled state for that scope in step 1). The
+migration is exercised end to end, in a throwaway `CLAUDE_CONFIG_DIR` and never
+your real configuration, by `tests/migration-scratch.sh`.
 
 Need an air-gapped machine, an isolated evaluation target, or a lead on Codex
 or OpenCode? See [Manual installation](#manual-installation).

@@ -94,8 +94,8 @@ QA runs when a change crosses a size or risk threshold, such as 50 or more chang
 You need Claude Code, Git, a signed-in GitHub CLI (`gh`), Python 3, and [RTK](https://github.com/rtk-ai/rtk) (`brew install rtk`).
 
 ```bash
-claude plugin marketplace add KHAEntertainment/claude-dev-skill
-claude plugin install dev-skill@khaentertainment-dev-skill
+claude plugin marketplace add KHAEntertainment/marketplace
+claude plugin install dev-skill@kha-marketplace
 ```
 
 Restart Claude Code, then start a run:
@@ -111,9 +111,11 @@ Showrunner only starts when you ask for it. Ordinary coding questions and edits 
 To update later, run both commands, then restart Claude Code:
 
 ```bash
-claude plugin marketplace update khaentertainment-dev-skill
-claude plugin update dev-skill@khaentertainment-dev-skill
+claude plugin marketplace update kha-marketplace
+claude plugin update dev-skill@kha-marketplace
 ```
+
+Installed it from the old `khaentertainment-dev-skill` marketplace? See [migrating](docs/install.md#migrating-from-dev-skillkhaentertainment-dev-skill).
 
 Prefer Homebrew, a manual install, or Windows? See [Installation](docs/install.md).
 

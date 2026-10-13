@@ -88,7 +88,7 @@ done
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." || exit 1
 
-run_check 'ShellCheck' shellcheck install.sh tests/test-install.sh scripts/check_plugin_root.sh scripts/verify.sh
+run_check 'ShellCheck' shellcheck install.sh tests/test-install.sh tests/migration-scratch.sh scripts/check_plugin_root.sh scripts/verify.sh
 run_check 'Installer syntax' bash -n install.sh
 run_check 'Verification script syntax' bash -n scripts/verify.sh
 run_check 'Skill validation' python3 scripts/validate_skill.py

@@ -41,6 +41,20 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ### Changed
 
+- The plugin is distributed through the central KHA Entertainment marketplace.
+  Install with `claude plugin marketplace add KHAEntertainment/marketplace`
+  and `claude plugin install dev-skill@kha-marketplace` (ADR-014, #79). This
+  repository's own `.claude-plugin/marketplace.json` is removed; the plugin
+  manifest and `skills/dev/` are unchanged. Existing
+  `dev-skill@khaentertainment-dev-skill` installs stop tracking releases and
+  should migrate with the steps in `docs/install.md` (a disabled copy stays
+  disabled only if you re-apply `claude plugin disable`);
+  `tests/migration-scratch.sh` exercises the migration in a scratch
+  configuration. `scripts/check_version_sync.py` no longer reads a local
+  catalog, and the new `scripts/check_central_catalog.py` verifies the central
+  entry against the tagged plugin at release time, failing closed.
+  `docs/RELEASING.md` records the cross-repository publication order and the
+  incomplete-release recovery.
 - Removed the PR-Agent fallback workflow (`.github/workflows/ai-review.yml`).
   It fired on CodeRabbit's rate-limit notice, and CodeRabbit then reviewed the
   same head anyway, so each head got two external reviews plus no-finding
@@ -93,7 +107,8 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   connection), per-role model routing, goal-mode pairing, dogfooding stories,
   a quick start, and a roadmap. The command, plugin name, and install
   commands are unchanged; the update command now uses the fully qualified
-  plugin ID `dev-skill@khaentertainment-dev-skill`. Reference material
+  plugin ID `dev-skill@khaentertainment-dev-skill` (since replaced by
+  `dev-skill@kha-marketplace`, see Changed above). Reference material
   moved out of the README: `docs/install.md` (every install path, updating,
   invocation, requirements), `docs/backends.md` (execution backends,
   detection, running the lead from Codex or OpenCode, surface status), and

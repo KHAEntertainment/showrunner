@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Verify that the plugin's release-version sites agree."""
+"""Verify that the plugin's release-version sites agree.
+
+Offline by design: it compares the Skill frontmatter, `.claude-plugin/plugin.json`,
+and an optional `--tag`. The central marketplace catalog lives in another
+repository and is checked at release time by `check_central_catalog.py`.
+"""
 
 from __future__ import annotations
 
@@ -65,26 +70,6 @@ def object_value(data: Any, key: str, path: Path) -> Any:
     return data[key]
 
 
-def marketplace_values(path: Path) -> tuple[str, str]:
-    data = load_json(path)
-    plugins = object_value(data, "plugins", path)
-    if not isinstance(plugins, list):
-        raise CheckError(f"{path}: plugins must be an array")
-
-    matching = [plugin for plugin in plugins if isinstance(plugin, dict) and plugin.get("name") == "dev-skill"]
-    if len(matching) != 1:
-        raise CheckError(f"{path}: expected exactly one plugin entry named 'dev-skill'")
-
-    plugin = matching[0]
-    version = parse_version(object_value(plugin, "version", path), f"{path} dev-skill version")
-    source = object_value(plugin, "source", path)
-    ref = object_value(source, "ref", path)
-    if not isinstance(ref, str) or not ref.startswith("v"):
-        raise CheckError(f"{path}: dev-skill source.ref must be v-prefixed semver")
-    parse_version(ref[1:], f"{path} dev-skill source.ref")
-    return version, ref
-
-
 def print_version_table(values: list[tuple[str, str]]) -> None:
     width = max(len(site) for site, _ in values)
     print("ERROR: version sites disagree", file=sys.stderr)
@@ -101,7 +86,6 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     skill_path = root / "skills" / "dev" / "SKILL.md"
     plugin_path = root / ".claude-plugin" / "plugin.json"
-    marketplace_path = root / ".claude-plugin" / "marketplace.json"
 
     try:
         skill_raw = skill_version(skill_path)
@@ -109,7 +93,6 @@ def main() -> int:
             object_value(load_json(plugin_path), "version", plugin_path),
             f"{plugin_path} version",
         )
-        marketplace_raw, ref_raw = marketplace_values(marketplace_path)
         tag_raw = None
         if args.tag is not None:
             if not args.tag.startswith("v"):
@@ -123,13 +106,11 @@ def main() -> int:
     values = [
         ("skills/dev/SKILL.md frontmatter", skill_raw),
         (".claude-plugin/plugin.json version", plugin_raw),
-        (".claude-plugin/marketplace.json version", marketplace_raw),
-        (".claude-plugin/marketplace.json source.ref", ref_raw),
     ]
     if tag_raw is not None:
         values.append(("--tag", tag_raw))
 
-    cores = [skill_raw.split("+", 1)[0], plugin_raw, marketplace_raw, ref_raw[1:]]
+    cores = [skill_raw.split("+", 1)[0], plugin_raw]
     if tag_raw is not None:
         cores.append(tag_raw[1:])
     if len(set(cores)) != 1:
