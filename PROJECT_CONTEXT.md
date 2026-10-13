@@ -8,7 +8,7 @@
 
 ## Repository Info
 
-- **Repo URL**: https://github.com/KHAEntertainment/claude-dev-skill
+- **Repo URL**: https://github.com/KHAEntertainment/showrunner
 - **Main branch**: `main` (maintained customized distribution)
 - **Mirror branch**: `master` (upstream mirror, retained for comparison — never release from it)
 - **Upstream**: https://github.com/hnaymyh123-henry/claude-dev-skill

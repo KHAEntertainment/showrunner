@@ -60,7 +60,8 @@ gone from `main`, `claude plugin marketplace update khaentertainment-dev-skill`
 can no longer find it, so an old install **stops tracking releases** and stays
 on the version it has. Switch to the central catalog. Adding the central
 marketplace without removing the old one loads two copies of the same plugin,
-both answering `/dev` and `/dev-skill:dev`, so retire the old one in the same sitting.
+both answering `/dev-skill:dev` (and `/dev` on Claude Code 2.1.265 or later), so
+retire the old one in the same sitting.
 A GitHub redirect does not carry your install across; the plugin ID is
 different.
 

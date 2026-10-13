@@ -115,6 +115,18 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   `docs/guarantees.md` (standing guarantees, integration boundaries, borrowed
   concepts). The v2.1.1 "What's new" list is covered by the v2.1.1 entry
   below, and the `skills/dev/` structure tree is dropped.
+- Repository URLs now point at `KHAEntertainment/showrunner` (the GitHub
+  repository was renamed from `claude-dev-skill`): the plugin manifest
+  `homepage` and `repository`, README and `docs/`, and `PLUGIN_URL` in
+  `scripts/check_central_catalog.py`, which compares it exactly with the
+  central entry's `source.url`. The v2.1.2 pin-bump PR in
+  `KHAEntertainment/marketplace` must change `url` and `ref` together
+  (`docs/RELEASING.md` step 5); a live check before that PR merges reports a
+  URL mismatch. The plugin name, install ID, and commands are unchanged.
+  Released changelog entries, `docs/feature-log.md`, and the upstream fork
+  `hnaymyh123-henry/claude-dev-skill` keep their original text (#111). The
+  `docs/install.md` migration text and the README opening now carry the
+  2.1.265 floor for bare `/dev`.
 - README gains the Showrunner banner (`docs/assets/showrunner-banner.webp`).
   The plugin quick start and `docs/install.md` now invoke `/dev`: Claude Code
   2.1.265 and later run a plugin skill by its bare name unless another command
