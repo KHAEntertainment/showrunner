@@ -21,6 +21,8 @@ Produce:
 
 Report the count of external-review bypasses used this round under `External-Review Bypasses`, reported explicitly, including `0` when none occurred — so repeated bypass is visible as a pattern across rounds, not only per PR.
 
+Under `External-Review Bypasses`, also report the count of rate-limit breakpoint substitutions this round (the `external_review_substitutions` entries in `.agent/dev-state.md`), again including `0` when none occurred. Keep it separate from the bypass count: a substitution is a completed review, not a bypass, and the count shows how often a reviewer's rate limits forced the breakpoint.
+
 Under `Graft Evidence Availability`, report the count of gates run this round where `graph_evidence: unavailable` was recorded (from `.agent/dev-state.md` worker entries **and Phase 2 Tech Lead change-impact assessment gates**), broken down by cause (`not_installed`, `version_mismatch`, `build_failed`, `unparseable_output`, `query_failure`). Include `0` when none occurred.
 
 Under `Post-Merge Verification`, list the post-merge verification records from `.agent/dev-state.md` for every PR merged this round (gate result and acceptance-criteria verdict) — read them, do not repeat the check itself; the procedure that produces them is `${CLAUDE_SKILL_DIR}/phases/phase4.md`'s unconditional post-merge step.
