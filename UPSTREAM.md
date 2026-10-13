@@ -4,7 +4,7 @@ This fork maintains a customized English personal Skill while retaining upstream
 
 ## Remotes
 
-- `origin`: `https://github.com/KHAEntertainment/claude-dev-skill.git`
+- `origin`: `https://github.com/KHAEntertainment/showrunner.git`
 - `upstream`: `https://github.com/hnaymyh123-henry/claude-dev-skill.git`
 - `main`: maintained customized distribution
 - `master`: upstream mirror retained for comparison
