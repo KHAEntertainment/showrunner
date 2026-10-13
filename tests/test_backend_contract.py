@@ -820,13 +820,16 @@ class BackendContractTests(unittest.TestCase):
             "a reviewer that reports each rate limit by editing a single summary comment still reaches the threshold",
             "a new event is a new head, a new limit window or reset time, or a response to a new retry request",
             "Only a re-render of the same event (same head, same window, no new request) does not count again.",
+            # Issue #69: an unrequested rate-limit at a new head counts once.
+            "An automatic rate-limit report at a new head, with no explicit request from the lead, counts once toward the threshold",
+            "so a rate-limited response to it counts as well",
             "The breakpoint is an exit from the retry loop, not a bypass",
             # Where the substitute comes from, on either backend.
             "The review fallback chain is the ordered set of available reviewer routes the lead can dispatch on the selected backend",
             "on Traycer, the agent selection guide's review routes",
             "on Claude-native, any distinct-family reviewer the lead can actually dispatch",
             # Family distinctness and the no-qualifying-family case.
-            "model family differs from the implementation worker, the QA lane, and the internal reviewer",
+            "The substitute is a fresh identity whose model family differs from the implementation worker, the QA lane, and the internal reviewer",
             "never reuses the internal reviewer's seat",
             "the gate stays `pending` and the lead reports it, with `external_reviewer_unavailable` on the PR record",
             "never falls back to the bypass or to a same-family reviewer",
@@ -890,6 +893,7 @@ class BackendContractTests(unittest.TestCase):
         )
         for token in (
             "whose only open seats are filled by a completed, current-head substitution routes as `clear`",
+            "triage every active current-head trusted-reviewer finding and every finding of a completed current-head substitute review",
             "per **Rate-limit breakpoint** in the external-review gate",
             "no finding, the substitute's included, is blocking or awaiting disposition",
             "a substitute at an older head does not count",
@@ -1034,6 +1038,15 @@ class BackendContractTests(unittest.TestCase):
             "visible as a pattern across rounds, not only per PR",
             phase5,
         )
+        # Issue #69: substitutions are counted next to bypasses, separately.
+        phase5_text = " ".join(phase5.split())
+        for token in (
+            "also report the count of rate-limit breakpoint substitutions this round",
+            "`external_review_substitutions` entries in `.agent/dev-state.md`",
+            "Keep it separate from the bypass count: a substitution is a completed review, not a bypass",
+        ):
+            with self.subTest(phase5_substitutions=token):
+                self.assertIn(token, phase5_text)
 
     def test_post_merge_verification_is_unconditional_and_pins_the_ac_language(
         self,
