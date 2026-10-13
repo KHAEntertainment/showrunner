@@ -657,6 +657,7 @@ def verify_branch_and_dry_run(
     assigned_branch: str,
     dest_ref: str | None = None,
     dry_run_runner: Callable[[list[str], Path], tuple[int, str]] | None = None,
+    lease_oid: str | None = None,
 ) -> dict[str, object]:
     """Confirm the current checkout is on the ledger-assigned branch, then run
     a `git push --dry-run` for the exact remote/refspec a real push would use.
@@ -665,6 +666,11 @@ def verify_branch_and_dry_run(
     network round-trip against the actual remote, so it is the only
     non-offline check in this module; it is also the strongest evidence that
     the push will actually succeed against the intended destination.
+
+    `lease_oid` opts in to a rebased-branch push: the live remote head of the
+    branch must equal it at every push URL (`verify_branch_lease`), and the
+    dry run then carries `--force-with-lease=<ref>:<oid>`. Without it nothing
+    here can force: a non-fast-forward stays `dry_run_failed`.
     """
     current = get_current_branch(repo_dir)
     if current is None:
@@ -688,23 +694,125 @@ def verify_branch_and_dry_run(
     if valid_ref != 0 or assigned_branch.startswith("-"):
         return {"status": "incomplete", "reason_code": "invalid_branch",
                 "reason": "assigned branch is not a valid branch name"}
-    refspec = f"{assigned_branch}:{ref}"
-    command = ["git", "push", "--dry-run", remote, refspec]
+    # Fully qualify the source. A bare `+feature` branch name would be read by
+    # Git as a forced refspec for local `feature`, silently overriding any lease.
+    refspec = f"{ref}:{ref}"
     runner = dry_run_runner or (lambda cmd, cwd: read_command(cmd, cwd=cwd))
+    command = ["git", "push", "--dry-run"]
+    if lease_oid is not None:
+        lease = verify_branch_lease(repo_dir, remote=remote, ref=ref, lease_oid=lease_oid, runner=dry_run_runner)
+        if lease["status"] != "ready":
+            return lease
+        command.append(f"--force-with-lease={ref}:{lease_oid}")
+    command += [remote, refspec]
     status, output = runner(command, repo_dir)
     if status != 0:
         return {
             "status": "incomplete",
             "reason_code": "dry_run_failed",
-            "reason": f"`git push --dry-run {remote} {refspec}` did not succeed (exit {status})",
+            "reason": f"`{' '.join(command)}` did not succeed (exit {status})",
         }
-    return {
+    verdict: dict[str, object] = {
         "status": "ready",
         "reason_code": "dry_run_confirmed",
         "reason": f"dry run of `git push {remote} {refspec}` succeeded",
         "remote": remote,
         "refspec": refspec,
     }
+    if lease_oid is not None:
+        verdict["lease"] = f"--force-with-lease={ref}:{lease_oid}"
+        verdict["reason"] = f"dry run of `git push {verdict['lease']} {remote} {refspec}` succeeded"
+    return verdict
+
+
+# --- Force-with-lease (rebased branch) verification --------------------------
+#
+# A rebased branch can only reach its remote by a non-fast-forward push. The
+# sanctioned form is an explicit lease on the exact remote head the lead
+# approved replacing -- never a bare `--force`. The lease is opt-in
+# (`--force-with-lease <oid>`), applies to the assigned branch push only, and
+# is checked twice: here against the *live* remote head (`git ls-remote`, so a
+# stale local remote-tracking ref cannot make a wrong oid look right), and again
+# by Git itself when the dry run and the real push carry the same lease.
+
+
+def validate_lease_oid(value: str) -> dict[str, object]:
+    """Offline validation of `--force-with-lease`; fails closed.
+
+    Only a full-length lowercase object id is accepted. An abbreviation,
+    a ref name, an empty or whitespace-padded value, or an uppercase id is
+    refused rather than normalized or resolved: the lease must name one exact
+    remote head.
+    """
+    if not FULL_SHA.fullmatch(value):
+        return _incomplete(
+            "invalid_lease_oid",
+            "--force-with-lease requires a full 40 or 64 character lowercase hex object id",
+        )
+    return {"status": "ready", "oid": value}
+
+
+def verify_branch_lease(
+    repo_dir: Path,
+    *,
+    remote: str,
+    ref: str,
+    lease_oid: str,
+    runner: Callable[[list[str], Path], tuple[int, str]] | None = None,
+) -> dict[str, object]:
+    """Require the live remote head of `ref` to equal `lease_oid` at every push URL.
+
+    Reads each push URL with `git ls-remote --symref -- <url> HEAD <ref>`,
+    refuses a branch that is the remote default branch (a rebase of the
+    default branch is never sanctioned), and compares the exact `ref` line.
+    Every unreadable, unparseable, missing, or differing answer is
+    `incomplete`; the mismatch reason names both oids.
+    """
+    run = runner or (lambda cmd, cwd: read_command(cmd, cwd=cwd, merge_stderr=False))
+    url_status, url_output = read_command(["git", "remote", "get-url", "--push", "--all", remote], cwd=repo_dir)
+    urls = [line.strip() for line in url_output.splitlines() if line.strip()] if url_status == 0 else []
+    if not urls:
+        return _incomplete("push_url_unavailable", f"could not read the push URL of remote `{remote}`")
+
+    for index, url in enumerate(urls, 1):
+        where = f"push URL {index} of {len(urls)} of remote `{remote}`"
+        # One read of both the remote default branch (HEAD symref) and the branch head.
+        status, output = run(["git", "ls-remote", "--symref", "--", url, "HEAD", ref], repo_dir)
+        if status != 0:
+            return _incomplete("remote_unreachable", f"could not read `{ref}` from {where} (exit {status})")
+        default_ref: str | None = None
+        heads: list[str] = []
+        for line in output.splitlines():
+            if line.startswith("ref: "):
+                target, _, name = line[len("ref: "):].partition("\t")
+                if name == "HEAD" and target.startswith("refs/heads/") and len(target) > len("refs/heads/"):
+                    default_ref = target
+                continue
+            value, _, name = line.partition("\t")
+            if name == ref:
+                if not FULL_SHA.fullmatch(value):
+                    return _incomplete("remote_head_unresolved", f"{where} reported an unparseable head for `{ref}`")
+                heads.append(value)
+        if default_ref is None:
+            return _incomplete(
+                "default_branch_unresolved",
+                f"{where} did not report a default branch; a lease cannot be checked against it",
+            )
+        if default_ref == ref:
+            return _incomplete(
+                "lease_on_default_branch",
+                f"`{ref}` is the default branch of {where}; a lease may not replace it",
+            )
+        if not heads:
+            return _incomplete("lease_branch_missing", f"`{ref}` does not exist on {where}; a lease needs an existing remote head")
+        if len(heads) != 1:
+            return _incomplete("remote_head_unresolved", f"{where} reported more than one head for `{ref}`")
+        if heads[0] != lease_oid:
+            return _incomplete(
+                "lease_mismatch",
+                f"lease oid {lease_oid} does not match the live head {heads[0]} of `{ref}` at {where}",
+            )
+    return {"status": "ready", "reason_code": "lease_verified", "reason": f"`{ref}` is at {lease_oid} at every push URL"}
 
 
 # --- Release tag push verification -------------------------------------------
@@ -1190,7 +1298,8 @@ def verify_gh_cli_login(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    # No prefix matching: `--force` must never resolve to `--force-with-lease`.
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
         "--mode",
         choices=("resolve", "check-https-account", "check-ssh-account", "check-gh-account"),
@@ -1220,6 +1329,16 @@ def parse_args() -> argparse.Namespace:
             "release-tag push mode: the commit the tag will point at. Requires --dest-ref refs/tags/<name> and "
             "replaces --assigned-branch; verifies the commit is the live remote default-branch tip and the tag "
             "does not exist yet, without requiring any branch to be checked out"
+        ),
+    )
+    parser.add_argument(
+        "--force-with-lease",
+        metavar="OID",
+        help=(
+            "rebased-branch push mode: the full object id the remote branch must currently be at. Applies only "
+            "to `--operation push --assigned-branch`. Verifies the live remote head equals OID, then dry-runs "
+            "`git push --force-with-lease=refs/heads/<branch>:OID`; the caller must push with the same lease. "
+            "Opt-in and never a bare --force; without it a non-fast-forward stays `dry_run_failed`"
         ),
     )
     parser.add_argument(
@@ -1333,6 +1452,12 @@ def _run_resolve_push(args: argparse.Namespace, config: dict[str, object]) -> in
                       "reason": "push readiness cannot skip repository verification"})
     tag_mode = args.tag_target is not None
     tag_args: dict[str, object] = {}
+    lease_oid: str | None = args.force_with_lease
+    if lease_oid is not None:
+        # Defense in depth: main() already refuses the lease on every other path.
+        lease_args = _lease_applicability(args)
+        if lease_args["status"] != "ready":
+            return _emit(lease_args)
     if tag_mode:
         try:
             tag_args = validate_tag_arguments(
@@ -1413,6 +1538,7 @@ def _run_resolve_push(args: argparse.Namespace, config: dict[str, object]) -> in
                 remote=str(decision["effective_push_remote"]),
                 assigned_branch=args.assigned_branch,
                 dest_ref=args.dest_ref,
+                lease_oid=lease_oid,
             )
         if dry_run["status"] != "ready":
             decision["status"] = "incomplete"
@@ -1423,6 +1549,8 @@ def _run_resolve_push(args: argparse.Namespace, config: dict[str, object]) -> in
             decision["repository"] = None
         else:
             decision["dry_run"] = {"remote": dry_run["remote"], "refspec": dry_run["refspec"]}
+            if "lease" in dry_run:
+                decision["dry_run"]["lease"] = dry_run["lease"]
             if tag_mode:
                 decision["tag"] = dry_run["tag"]
 
@@ -1494,8 +1622,31 @@ def _run_check_account(args: argparse.Namespace) -> int:
     return _emit(result)
 
 
+def _lease_applicability(args: argparse.Namespace) -> dict[str, object]:
+    """Fail closed unless `--force-with-lease` is a well-formed lease on a branch push.
+
+    The lease exists only for `--operation push --assigned-branch` against
+    live state. Any other combination -- an Issue/PR operation, a tag push, a
+    fixture run, an account check, a missing branch, a branch-less checkout --
+    is refused rather than silently ignoring the flag.
+    """
+    if args.mode != "resolve" or args.operation != "push" or args.fixture is not None or args.tag_target is not None:
+        return _incomplete(
+            "lease_not_applicable",
+            "--force-with-lease applies only to `--operation push --assigned-branch` (not pr/issue, --tag-target, "
+            "--fixture, or the check-* modes)",
+        )
+    if not args.assigned_branch:
+        return _incomplete("lease_not_applicable", "--force-with-lease requires --assigned-branch")
+    return validate_lease_oid(args.force_with_lease)
+
+
 def main() -> int:
     args = parse_args()
+    if args.force_with_lease is not None:
+        lease_args = _lease_applicability(args)
+        if lease_args["status"] != "ready":
+            return _emit(lease_args)
     if args.mode == "resolve":
         if args.setup_account_check:
             return _emit({"status": "incomplete", "reason_code": "invalid_mode", "reason": "setup candidate checks cannot resolve a write target"})

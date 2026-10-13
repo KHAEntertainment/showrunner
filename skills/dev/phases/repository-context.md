@@ -142,11 +142,59 @@ rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/resolve_repository.py" --repo-dir
   ```bash
   remote="$(rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/resolve_repository.py" --repo-dir <worktree> --operation push \
     --assigned-branch <branch> --print-push-remote)" || exit 1
-  rtk proxy git push "$remote" "<branch>:refs/heads/<branch>"
+  rtk proxy git push "$remote" "refs/heads/<branch>:refs/heads/<branch>"
   ```
 - Exit 2 means stop — no fallback, no default selection. `gh_default` and
   `notes` in the JSON output are informational only: an unrelated `gh repo
   set-default` disagreeing with the target does **not** block.
+
+### Before a force-with-lease push (rebased branch)
+
+A rebased branch cannot be pushed fast-forward, so the plain check above ends
+`dry_run_failed`. That is correct and stays the default: **a worker never rebases
+and force-pushes on its own.** A lease is allowed only when the lead's
+assignment or a later message explicitly instructs a rebase of that branch. Prefer
+`git merge --no-ff origin/main` (a fast-forward push) whenever the instruction
+allows it. The lease check is the only sanctioned way to push a rebase; skipping
+the pre-write check, or any bare `--force`, `-f`, or `+<refspec>`, is never allowed.
+
+Use the remote head oid the lead authorised replacing (`<oid>`, normally the PR's
+current `headRefOid`):
+
+```bash
+remote="$(rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/resolve_repository.py" --repo-dir <worktree> --operation push \
+  --assigned-branch <branch> --force-with-lease <oid> --print-push-remote)" || exit 1
+rtk proxy git -C <worktree> push --force-with-lease="refs/heads/<branch>:<oid>" "$remote" "refs/heads/<branch>:refs/heads/<branch>"
+```
+
+- Never fill `<oid>` by reading the remote yourself and pushing whatever you
+  find: that defeats the lease. If the live head is not the oid you were given,
+  the check says `lease_mismatch`; stop and report both oids.
+- `--force-with-lease <oid>` takes a full 40- or 64-character lowercase object
+  id. An abbreviation, ref name, empty, uppercase, or padded value is refused
+  (`invalid_lease_oid`).
+- It runs every check of the branch push above, then reads the live head of
+  `refs/heads/<branch>` with `git ls-remote --symref` from **every** push URL (never a
+  local `refs/remotes/*` ref) and requires it to equal the lease, then runs
+  `git push --dry-run --force-with-lease=refs/heads/<branch>:<oid> <remote> refs/heads/<branch>:refs/heads/<branch>`.
+- The real push must carry the identical lease: Git re-checks it atomically at
+  push time, so a push that landed after the check is not overwritten.
+- It applies only to `--operation push --assigned-branch`. Combined with
+  `--operation pr`/`issue`, `--tag-target`, `--fixture`, a `check-*` mode, or no
+  `--assigned-branch`, it is refused (`lease_not_applicable`).
+- A lease never replaces the remote's default branch: the same `ls-remote` read
+  includes the remote `HEAD` symref, and an assigned branch equal to it is
+  refused (`lease_on_default_branch`). If the default branch cannot be read, the
+  check fails closed (`default_branch_unresolved`).
+- The lease-specific checks add these 6 reason codes: `invalid_lease_oid`,
+  `lease_not_applicable`, `lease_mismatch` (names both oids),
+  `lease_branch_missing`, `remote_head_unresolved`, `lease_on_default_branch`.
+  They reuse the existing `remote_unreachable`, `push_url_unavailable`,
+  `default_branch_unresolved` and `dry_run_failed`. Every one is exit 2
+  with no push target; stop and report it.
+- Without the flag nothing changes: a non-fast-forward is still `dry_run_failed`.
+- After a lease push the PR head changes, so prior review and QA results for the
+  old head no longer apply; report the new head to the lead.
 
 ### Before a release tag push
 

@@ -38,6 +38,24 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   dry run to succeed. Any unreachable, unresolvable or unparseable input is
   not ready. Branch pushes are unchanged. `docs/RELEASING.md` step 3 runs the
   check before `git tag`, then tags and pushes the verified commit (#71).
+- `resolve_repository.py --operation push` accepts an opt-in `--force-with-lease
+  <oid>` so a lead-approved rebase of the assigned branch can pass the
+  pre-write check. The oid must be a full lowercase object id and must equal
+  the live remote head of `refs/heads/<branch>` (`git ls-remote --symref`, every push
+  URL); the dry run then carries `--force-with-lease=refs/heads/<branch>:<oid>`
+  and the real push must use the same lease. A stale lease, a missing branch,
+  an unreachable remote, an unparseable answer, a malformed oid, or the flag
+  on any other operation (`pr`, `issue`, `--tag-target`, `--fixture`, the
+  `check-*` modes) is not ready, with a reason code. There is no bare
+  `--force`, and argument abbreviations are off so `--force` cannot expand to
+  the lease flag. Without the flag a non-fast-forward is still `dry_run_failed`
+  (#105). The branch-push refspec now names the source as
+  `refs/heads/<branch>:refs/heads/<branch>` (documented push commands
+  included), so a branch named `+feature` is no longer read by Git as a forced
+  refspec for local `feature` that overrides a stale lease.
+  A lease is also refused for the remote's default branch
+  (`lease_on_default_branch`; unreadable default branch fails closed), and the
+  documented push commands are pinned by a test.
 
 ### Changed
 

@@ -381,7 +381,7 @@ class BranchPushUnchangedTests(TagPushFixture):
     def test_ready_branch_push_has_no_tag_key_and_the_same_dry_run_shape(self) -> None:
         code, _, verdict = self._branch_verdict(assigned_branch="main")
         self.assertEqual((0, "ready"), (code, verdict["status"]))
-        self.assertEqual({"remote": "origin", "refspec": "main:refs/heads/main"}, verdict["dry_run"])
+        self.assertEqual({"remote": "origin", "refspec": "refs/heads/main:refs/heads/main"}, verdict["dry_run"])
         self.assertNotIn("tag", verdict)
 
 
