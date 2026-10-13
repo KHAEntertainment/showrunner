@@ -154,7 +154,7 @@ Claude 会自动识别请求类型并进入对应流程。
 ## 项目结构
 
 ```
-claude-dev-skill/
+showrunner/
 ├── README.md               # 英文说明
 ├── README.zh.md            # 本文件（中文）
 ├── LICENSE

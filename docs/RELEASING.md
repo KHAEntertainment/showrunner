@@ -103,9 +103,12 @@ tag name it proposes; do not let it create the tag.
    because the central CI clones the pinned ref. In a clone of
    `KHAEntertainment/marketplace`, open a PR that changes only the `dev-skill`
    entry's `source.ref` in `.claude-plugin/marketplace.json` from the previous
-   release tag to `vX.Y.Z`. Leave `source.source` (`url`) and `source.url`
-   (`https://github.com/KHAEntertainment/claude-dev-skill.git`) alone; the
-   HTTPS transport is ADR-003's. That repository's `verify-catalog.yml` clones
+   release tag to `vX.Y.Z`, and set `source.url` to
+   `https://github.com/KHAEntertainment/showrunner.git` in the same PR if it
+   still names the old repository (`.../claude-dev-skill.git`; the v2.1.2 bump
+   is the first to change it). `url` and `ref` change together, because step 6
+   compares the URL exactly and an old URL fails it. Leave `source.source`
+   (`url`) alone; the HTTPS transport is ADR-003's. That repository's `verify-catalog.yml` clones
    every entry anonymously and checks the plugin name and any declared
    version; it must pass before the PR merges. It does not compare the plugin
    version with the tag, which is what step 6 is for. Merge the PR.
@@ -169,7 +172,7 @@ keeps serving the previous release until the pin moves.
 | State | What users get | Recovery |
 |---|---|---|
 | Tag pushed, central PR not yet merged | The previous release | Open or finish the step 5 PR. |
-| Step 6 exits 1 (mismatch) | The previous release, or a wrong pin if the PR already merged | Fix the central entry (or the tag mismatch it names) and rerun step 6. |
+| Step 6 exits 1 (mismatch) | The previous release, or a wrong pin if the PR already merged | Fix the central entry (`source.url`, `ref`, or the tag mismatch it names; a `source.url` still naming `claude-dev-skill` is a mismatch) and rerun step 6. |
 | Step 6 exits 2 (unverifiable) | Unknown | Rerun. If it persists, check the network and `KHAEntertainment/marketplace`, then repeat; never record it as a pass. |
 | Pin merged, step 7 install fails | A broken install | Roll back by reverting the central pin PR so `ref` returns to the previous tag, confirm the central CI and step 7 against it, then diagnose. |
 | The tagged content is wrong | Whatever the pin selects | Never move, delete, or recreate a published tag. Fix forward: release a new patch version through steps 1 to 7 and point the pin at it. |
@@ -191,7 +194,7 @@ After `docs/RELEASING.md` step 7 (marketplace install verification) succeeds:
 
 ```bash
 # 1. Compute the new tarball sha256
-curl -sL https://github.com/KHAEntertainment/claude-dev-skill/archive/refs/tags/vX.Y.Z.tar.gz \
+curl -sL https://github.com/KHAEntertainment/showrunner/archive/refs/tags/vX.Y.Z.tar.gz \
   | shasum -a 256 | awk '{print $1}'
 
 # 2. Update the formula in KHAEntertainment/homebrew-tap

@@ -26,7 +26,7 @@ OLD_MARKETPLACE=khaentertainment-dev-skill
 NEW_MARKETPLACE=kha-marketplace
 OLD_ID="dev-skill@$OLD_MARKETPLACE"
 NEW_ID="dev-skill@$NEW_MARKETPLACE"
-SOURCE_URL=https://github.com/KHAEntertainment/claude-dev-skill.git
+SOURCE_URL=https://github.com/KHAEntertainment/showrunner.git
 CENTRAL=KHAEntertainment/marketplace
 
 passed=0
