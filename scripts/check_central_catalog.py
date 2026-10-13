@@ -27,7 +27,7 @@ CATALOG_REPO = "https://github.com/KHAEntertainment/marketplace.git"
 CATALOG_BRANCH = "main"
 CATALOG_PATH = ".claude-plugin/marketplace.json"
 PLUGIN_NAME = "dev-skill"
-PLUGIN_URL = "https://github.com/KHAEntertainment/claude-dev-skill.git"
+PLUGIN_URL = "https://github.com/KHAEntertainment/showrunner.git"
 PLUGIN_MANIFEST = ".claude-plugin/plugin.json"
 GIT_TIMEOUT = 120
 

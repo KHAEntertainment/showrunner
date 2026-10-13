@@ -58,6 +58,21 @@ class VerifyTests(unittest.TestCase):
         self.assertTrue(any("source.url" in f for f in failures))
         self.assertTrue(any("source.source" in f for f in failures))
 
+    def test_expected_url_is_the_showrunner_repository(self):
+        self.assertEqual("https://github.com/KHAEntertainment/showrunner.git", cc.PLUGIN_URL)
+        manifest = json.loads((ROOT / cc.PLUGIN_MANIFEST).read_text())
+        self.assertEqual(cc.PLUGIN_URL.removesuffix(".git"), manifest["repository"])
+        self.assertEqual(cc.PLUGIN_URL.removesuffix(".git") + "#readme", manifest["homepage"])
+
+    def test_old_repository_url_fails_closed(self):
+        for old in ("https://github.com/KHAEntertainment/claude-dev-skill.git",
+                    "https://github.com/KHAEntertainment/claude-dev-skill",
+                    "https://github.com/KHAEntertainment/showrunner"):
+            cat = catalog()
+            cat["plugins"][1]["source"]["url"] = old
+            failures = self.verify(cat)
+            self.assertTrue(any("source.url" in f and cc.PLUGIN_URL in f for f in failures), old)
+
     def test_missing_duplicate_or_malformed_entry_fails(self):
         self.assertTrue(self.verify({"plugins": [{"name": "view-limits"}]}))
         dup = catalog()
