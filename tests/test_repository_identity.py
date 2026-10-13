@@ -1149,7 +1149,7 @@ class BranchAndDryRunTests(unittest.TestCase):
             )
             self.assertEqual("ready", result["status"])
             self.assertEqual("origin", result["remote"])
-            self.assertEqual("feature/expected:refs/heads/feature/expected", result["refspec"])
+            self.assertEqual("refs/heads/feature/expected:refs/heads/feature/expected", result["refspec"])
 
     def test_dry_run_failure_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
