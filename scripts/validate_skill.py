@@ -119,25 +119,39 @@ ROUTING_SECTION_BODY = (
 # Machine-specific absolute home-directory paths, matched by pattern rather
 # than a literal username. A literal (the maintainer's own name) is itself a
 # machine-specific leak once stored in this file, so the guard must not carry
-# one. The segment class includes spaces and apostrophes because real account
+# one. The name class includes spaces and apostrophes because real account
 # names do ("Jane Doe", "O'Connor"), on top of the usual word characters,
-# dots, and hyphens. Each pattern still requires a real path segment after
-# the home marker, which excludes template placeholders on its own: `<name>`
-# cannot match the class because `<`/`>` aren't in it, `C:\path\to\...` never
-# reaches the `C:\Users\` pattern at all, and `$HOME` is not a literal path.
+# dots, and hyphens.
+#
+# Boundaries. Left: the mac and linux patterns need a literal leading `/` that
+# is not preceded by a word character or dot, so `file:///Users/x` and
+# `//Users/x` are caught while a mid-URL `https://host/Users/svc/status`
+# (`/Users` follows `t`) and unrooted prose like `Users/alice/` or `home/ docs/`
+# are not. The Windows pattern has no left boundary: a `C:\Users\` literal is
+# never a URL segment, so `xC:\Users\bob\` is still caught as it always was.
+# Right: the name must start with a word character (so `the /Users/ folder`
+# is not a path) and be followed by a separator, whitespace, a quote, backtick,
+# closing bracket, punctuation, or end of text, so a bare `/Users/name` at end
+# of line, in backticks, or before a full stop is caught too. Template
+# placeholders stay excluded: `<name>` cannot match the name class,
+# `C:\path\to\...` never reaches the `C:\Users\` pattern, and `$HOME` is not
+# a literal path.
+_NAME = r"\w[\w.' -]*"
+_RIGHT = r"""(?=[/\\\s"'`)\]}>.,;:!?]|\Z)"""
 HOME_PATH_PATTERNS = (
-    (re.compile(r"/Users/[\w.' -]+/"), "macOS home directory"),
-    (re.compile(r"/home/[\w.' -]+/"), "Linux home directory"),
-    (re.compile(r"C:\\Users\\[\w.' -]+\\"), "Windows home directory"),
+    (re.compile(rf"(?<![\w.])/Users/{_NAME}{_RIGHT}"), "macOS home directory"),
+    (re.compile(rf"(?<![\w.])/home/{_NAME}{_RIGHT}"), "Linux home directory"),
+    (re.compile(rf"C:\\Users\\{_NAME}{_RIGHT}"), "Windows home directory"),
 )
 
 # Directories outside the Skill payload that still ship in the repository and
 # so still leak a machine-specific path if one is left in them: `en/` and
-# `zh/` are legacy/translated command mirrors, not part of the distributable
-# Skill under `skills/dev/`. Both are `.gitattributes export-ignore`d, so the
-# release-archive CI run extracts a tree without them — tolerate that rather
-# than failing closed on a directory that legitimately does not ship there.
-EXTRA_MARKDOWN_DIRS = ("en", "zh")
+# `zh/` are legacy/translated command mirrors and `docs/` holds the reference
+# docs, none of them part of the distributable Skill under `skills/dev/`. All
+# are `.gitattributes export-ignore`d, so the release-archive CI run extracts
+# a tree without them -- tolerate that rather than failing closed on a
+# directory that legitimately does not ship there.
+EXTRA_MARKDOWN_DIRS = ("en", "zh", "docs")
 
 
 def fail(errors: list[str], message: str) -> None:
@@ -184,8 +198,8 @@ def main() -> int:
 
     # Anchored on this script's own location, not `--skill-dir`: every call
     # site stages the Skill elsewhere but always runs this validator from the
-    # project or archive root, where `en/`, `zh/`, and the root-level docs
-    # ship (when they ship at all -- see EXTRA_MARKDOWN_DIRS above).
+    # project or archive root, where `en/`, `zh/`, `docs/`, and the root-level
+    # markdown ship (when they ship at all -- see EXTRA_MARKDOWN_DIRS above).
     repo_root = Path(__file__).resolve().parents[1]
 
     for relative in sorted(REQUIRED):
@@ -264,7 +278,8 @@ def main() -> int:
 
     # The home-path guard also covers markdown that ships in the repository
     # outside the Skill payload -- `en/` and `zh/` are legacy/translated
-    # command mirrors, and root-level docs ship too. A leak there is exactly
+    # command mirrors, `docs/` holds the reference docs, and root-level
+    # markdown ships too. A leak there is exactly
     # as public as one inside `skills/dev/`, and the other forbidden tokens
     # above legitimately appear in these mirrors (e.g. documenting the legacy
     # `~/.claude/commands/dev` path itself), so only the home-path check

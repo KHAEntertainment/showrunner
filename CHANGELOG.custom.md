@@ -10,6 +10,18 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ## Unreleased (v2.1.2)
 
+### Fixed
+
+- Validator home-path scan now includes `docs/` (via `EXTRA_MARKDOWN_DIRS`)
+  and bounds the macOS and Linux patterns on both sides. Left: a literal
+  leading `/` not preceded by a word character or dot, so
+  `https://api.example.com/Users/svc/status` and unrooted prose like
+  `Users/alice/` pass while a `file://` URL to a home directory is still caught. Right:
+  a bare macOS, Linux, or Windows home path with no trailing separator is
+  caught before whitespace, a quote, backtick, closing bracket, punctuation,
+  or end of text. Template placeholders such as `/Users/<name>` remain
+  excluded (#53).
+
 ### Added
 
 - The `/dev` lead can run on Codex or OpenCode under the Traycer backend
