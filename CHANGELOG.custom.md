@@ -21,6 +21,15 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   caught before whitespace, a quote, backtick, closing bracket, punctuation,
   or end of text. Template placeholders such as `/Users/<name>` remain
   excluded (#53).
+- Rate-limit breakpoint follow-ups to #48 (#69): a completed substitute
+  review with a blocking finding routes the external gate to `blocking`, so the
+  PR gets REQUEST CHANGES (the v2.1.1 entry omits this and is frozen at tag).
+  An automatic rate-limit report at a new head, with no explicit request, now
+  counts once toward the breakpoint threshold. Phase 4 triage names a completed
+  substitute's findings. The Phase 5 retro reports the substitution count next
+  to the bypass count. The validator and unit tests now pin the
+  fresh-identity requirement, and the validator checks the Result Routing
+  clear-condition inside its own section instead of anywhere in the file.
 
 ### Added
 
