@@ -762,9 +762,11 @@ def verify_branch_lease(
 ) -> dict[str, object]:
     """Require the live remote head of `ref` to equal `lease_oid` at every push URL.
 
-    Reads each push URL with `git ls-remote -- <url> <ref>` and compares the
-    exact `ref` line. Every unreadable, unparseable, missing, or differing
-    answer is `incomplete`; the mismatch reason names both oids.
+    Reads each push URL with `git ls-remote --symref -- <url> HEAD <ref>`,
+    refuses a branch that is the remote default branch (a rebase of the
+    default branch is never sanctioned), and compares the exact `ref` line.
+    Every unreadable, unparseable, missing, or differing answer is
+    `incomplete`; the mismatch reason names both oids.
     """
     run = runner or (lambda cmd, cwd: read_command(cmd, cwd=cwd, merge_stderr=False))
     url_status, url_output = read_command(["git", "remote", "get-url", "--push", "--all", remote], cwd=repo_dir)
@@ -774,16 +776,33 @@ def verify_branch_lease(
 
     for index, url in enumerate(urls, 1):
         where = f"push URL {index} of {len(urls)} of remote `{remote}`"
-        status, output = run(["git", "ls-remote", "--", url, ref], repo_dir)
+        # One read of both the remote default branch (HEAD symref) and the branch head.
+        status, output = run(["git", "ls-remote", "--symref", "--", url, "HEAD", ref], repo_dir)
         if status != 0:
             return _incomplete("remote_unreachable", f"could not read `{ref}` from {where} (exit {status})")
+        default_ref: str | None = None
         heads: list[str] = []
         for line in output.splitlines():
+            if line.startswith("ref: "):
+                target, _, name = line[len("ref: "):].partition("\t")
+                if name == "HEAD" and target.startswith("refs/heads/") and len(target) > len("refs/heads/"):
+                    default_ref = target
+                continue
             value, _, name = line.partition("\t")
             if name == ref:
                 if not FULL_SHA.fullmatch(value):
                     return _incomplete("remote_head_unresolved", f"{where} reported an unparseable head for `{ref}`")
                 heads.append(value)
+        if default_ref is None:
+            return _incomplete(
+                "default_branch_unresolved",
+                f"{where} did not report a default branch; a lease cannot be checked against it",
+            )
+        if default_ref == ref:
+            return _incomplete(
+                "lease_on_default_branch",
+                f"`{ref}` is the default branch of {where}; a lease may not replace it",
+            )
         if not heads:
             return _incomplete("lease_branch_missing", f"`{ref}` does not exist on {where}; a lease needs an existing remote head")
         if len(heads) != 1:

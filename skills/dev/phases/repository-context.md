@@ -174,7 +174,7 @@ rtk proxy git -C <worktree> push --force-with-lease="refs/heads/<branch>:<oid>" 
   id. An abbreviation, ref name, empty, uppercase, or padded value is refused
   (`invalid_lease_oid`).
 - It runs every check of the branch push above, then reads the live head of
-  `refs/heads/<branch>` with `git ls-remote` from **every** push URL (never a
+  `refs/heads/<branch>` with `git ls-remote --symref` from **every** push URL (never a
   local `refs/remotes/*` ref) and requires it to equal the lease, then runs
   `git push --dry-run --force-with-lease=refs/heads/<branch>:<oid> <remote> refs/heads/<branch>:refs/heads/<branch>`.
 - The real push must carry the identical lease: Git re-checks it atomically at
@@ -182,10 +182,15 @@ rtk proxy git -C <worktree> push --force-with-lease="refs/heads/<branch>:<oid>" 
 - It applies only to `--operation push --assigned-branch`. Combined with
   `--operation pr`/`issue`, `--tag-target`, `--fixture`, a `check-*` mode, or no
   `--assigned-branch`, it is refused (`lease_not_applicable`).
+- A lease never replaces the remote's default branch: the same `ls-remote` read
+  includes the remote `HEAD` symref, and an assigned branch equal to it is
+  refused (`lease_on_default_branch`). If the default branch cannot be read, the
+  check fails closed (`default_branch_unresolved`).
 - The lease-specific checks add these 6 reason codes: `invalid_lease_oid`,
   `lease_not_applicable`, `lease_mismatch` (names both oids),
-  `lease_branch_missing`, `remote_head_unresolved`, `remote_unreachable`.
-  `push_url_unavailable` and `dry_run_failed` are reused. Every one is exit 2
+  `lease_branch_missing`, `remote_head_unresolved`, `lease_on_default_branch`.
+  They reuse the existing `remote_unreachable`, `push_url_unavailable`,
+  `default_branch_unresolved` and `dry_run_failed`. Every one is exit 2
   with no push target; stop and report it.
 - Without the flag nothing changes: a non-fast-forward is still `dry_run_failed`.
 - After a lease push the PR head changes, so prior review and QA results for the

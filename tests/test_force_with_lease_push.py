@@ -15,6 +15,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -104,6 +105,7 @@ class LeaseFixture(unittest.TestCase):
         self.root = Path(temp.name)
         self.bare = self.root / "intended.git"
         _git("init", "--bare", "-q", str(self.bare), cwd=self.root)
+        _git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.bare)
         self.clone = self.root / "work"
         _git("clone", "-q", str(self.bare), str(self.clone), cwd=self.root)
         _git("config", "user.email", "test@example.com", cwd=self.clone)
@@ -212,6 +214,8 @@ class LeaseReadyTests(LeaseFixture):
     def test_multiple_push_urls_must_all_be_at_the_lease(self) -> None:
         second = self.root / "second.git"
         _git("init", "--bare", "-q", str(second), cwd=self.root)
+        _git("symbolic-ref", "HEAD", "refs/heads/main", cwd=second)
+        _git("push", "-q", str(second), f"{self.base}:refs/heads/main", cwd=self.clone)
         _git("push", "-q", str(second), f"{self.remote_head}:{REF}", cwd=self.clone)
         _git("remote", "set-url", "--push", "origin", str(self.bare), cwd=self.clone)
         _git("remote", "set-url", "--add", "--push", "origin", str(second), cwd=self.clone)
@@ -310,17 +314,24 @@ class LeaseRefusalTests(LeaseFixture):
         self.assertNotIn("remote", result)
 
     def test_unparseable_or_ambiguous_ls_remote_output_is_refused(self) -> None:
+        symref = f"ref: refs/heads/main\tHEAD\n{self.base}\tHEAD\n"
         cases = {
-            "garbage head": f"not-a-sha\t{REF}\n",
-            "two heads": f"{self.remote_head}\t{REF}\n{self.base}\t{REF}\n",
-            "only a different ref": f"{self.remote_head}\trefs/remotes/x/feature\n",
+            "garbage head": f"{symref}not-a-sha\t{REF}\n",
+            "two heads": f"{symref}{self.remote_head}\t{REF}\n{self.base}\t{REF}\n",
+            "only a different ref": f"{symref}{self.remote_head}\trefs/remotes/x/feature\n",
+            "no ref line": symref,
+            "no default branch reported": f"{self.remote_head}\t{REF}\n",
+            "default branch is not a branch ref": f"ref: refs/tags/v1\tHEAD\n{self.remote_head}\t{REF}\n",
             "empty": "",
         }
         expected = {
             "garbage head": "remote_head_unresolved",
             "two heads": "remote_head_unresolved",
             "only a different ref": "lease_branch_missing",
-            "empty": "lease_branch_missing",
+            "no ref line": "lease_branch_missing",
+            "no default branch reported": "default_branch_unresolved",
+            "default branch is not a branch ref": "default_branch_unresolved",
+            "empty": "default_branch_unresolved",
         }
         for label, output in cases.items():
             with self.subTest(label):
@@ -338,7 +349,7 @@ class LeaseRefusalTests(LeaseFixture):
         def fake(command, cwd):
             calls.append(command)
             if "ls-remote" in command:
-                return (0, f"{self.remote_head}\t{REF}\n")
+                return (0, f"ref: refs/heads/main\tHEAD\n{self.base}\tHEAD\n{self.remote_head}\t{REF}\n")
             return (1, "! [rejected] (stale info)")
 
         result = MODULE.verify_branch_and_dry_run(
@@ -404,6 +415,131 @@ class LeaseApplicabilityTests(LeaseFixture):
     def test_no_verify_access_stays_refused_with_a_lease(self) -> None:
         code, _, verdict = _verdict(self.clone, lease=self.remote_head, extra=["--no-verify-access"])
         self.assertNotReady(code, verdict, "verification_required")
+
+
+class DefaultBranchTests(LeaseFixture):
+    """A lease may never replace the remote default branch (QA M-1)."""
+
+    def rebase_main(self) -> str:
+        _git("checkout", "-q", "main", cwd=self.clone)
+        self.commit(self.clone, "main-extra.txt")
+        _git("push", "-q", "origin", "HEAD:refs/heads/main", cwd=self.clone)
+        main_head = _git("rev-parse", "HEAD", cwd=self.clone)
+        _git("reset", "-q", "--hard", self.base, cwd=self.clone)
+        self.commit(self.clone, "main-rebased.txt")
+        done = subprocess.run(["git", "-C", str(self.clone), "merge-base", "--is-ancestor", main_head, "HEAD"])
+        self.assertEqual(1, done.returncode, "precondition: main is now non-fast-forward")
+        return main_head
+
+    def test_lease_on_the_default_branch_is_refused_even_when_the_lease_matches(self) -> None:
+        main_head = self.rebase_main()
+        self.assertEqual(main_head, _rev(self.bare, "refs/heads/main"))
+        code, _, verdict = _verdict(self.clone, lease=main_head, assigned_branch="main")
+        self.assertNotReady(code, verdict, "lease_on_default_branch")
+        self.assertIn("refs/heads/main", verdict["reason"])
+        self.assertEqual(main_head, _rev(self.bare, "refs/heads/main"))
+
+    def test_lease_on_a_fast_forward_default_branch_is_refused_too(self) -> None:
+        main_head = _rev(self.bare, "refs/heads/main")
+        _git("checkout", "-q", "main", cwd=self.clone)
+        code, _, verdict = _verdict(self.clone, lease=main_head, assigned_branch="main")
+        self.assertNotReady(code, verdict, "lease_on_default_branch")
+
+    def test_lease_on_a_feature_branch_is_unchanged(self) -> None:
+        self.rebase_onto_new_main()
+        code, _, verdict = _verdict(self.clone, lease=self.remote_head)
+        self.assertEqual((0, "ready"), (code, verdict["status"]))
+
+    def test_no_lease_on_the_default_branch_is_unchanged(self) -> None:
+        self.rebase_main()
+        code, _, verdict = _verdict(self.clone, assigned_branch="main")
+        self.assertNotReady(code, verdict, "dry_run_failed")
+
+        _git("reset", "-q", "--hard", "origin/main", cwd=self.clone)
+        self.commit(self.clone, "ff.txt")
+        code, _, verdict = _verdict(self.clone, assigned_branch="main")
+        self.assertEqual((0, "ready"), (code, verdict["status"]))
+        self.assertNotIn("lease", verdict["dry_run"])
+
+    def test_non_default_branch_not_named_main_is_not_mistaken_for_the_default(self) -> None:
+        _git("symbolic-ref", "HEAD", f"refs/heads/{BRANCH}", cwd=self.bare)
+        code, _, verdict = _verdict(self.clone, lease=self.remote_head)
+        self.assertNotReady(code, verdict, "lease_on_default_branch")
+        _git("symbolic-ref", "HEAD", "refs/heads/main", cwd=self.bare)
+        code, _, verdict = _verdict(self.clone, lease=self.remote_head)
+        self.assertEqual((0, "ready"), (code, verdict["status"]))
+
+    def test_unresolvable_remote_default_branch_fails_closed_with_a_lease(self) -> None:
+        # HEAD names a branch that does not exist: ls-remote reports no default branch.
+        _git("symbolic-ref", "HEAD", "refs/heads/does-not-exist", cwd=self.bare)
+        code, _, verdict = _verdict(self.clone, lease=self.remote_head)
+        self.assertNotReady(code, verdict, "default_branch_unresolved")
+
+    def test_a_lease_on_the_default_branch_makes_no_dry_run(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake(command, cwd):
+            calls.append(command)
+            return (0, f"ref: refs/heads/{BRANCH}\tHEAD\n{self.remote_head}\tHEAD\n{self.remote_head}\t{REF}\n")
+
+        result = MODULE.verify_branch_and_dry_run(
+            self.clone, remote="origin", assigned_branch=BRANCH, lease_oid=self.remote_head, dry_run_runner=fake)
+        self.assertEqual("lease_on_default_branch", result["reason_code"])
+        self.assertEqual([], [c for c in calls if c[:2] == ["git", "push"]])
+
+
+class DocumentedPushCommandTests(LeaseFixture):
+    """The push commands in the docs must be exactly what the resolver validated (AC-5)."""
+
+    DOCS = (
+        "skills/dev/phases/repository-context.md",
+        "skills/dev/agents/worker-new.md",
+        "skills/dev/agents/worker-fix.md",
+    )
+
+    def doc(self, relative: str) -> str:
+        return (ROOT / relative).read_text(encoding="utf-8")
+
+    @staticmethod
+    def concrete(text: str) -> str:
+        return text.replace("<assigned-branch>", BRANCH).replace("<branch>", BRANCH).replace("<oid>", "OID").replace('"', "")
+
+    def push_commands(self, relative: str, *, lease: bool) -> list[list[str]]:
+        found = []
+        for line in self.doc(relative).splitlines():
+            for match in re.finditer(r"git (?:-C \S+ )?push (?!--dry-run)(?P<rest>.*?)(?:`|$)", line):
+                rest = self.concrete(match.group("rest")).split()
+                if rest and ("--force-with-lease" in rest[0]) == lease and "$remote" in rest:
+                    found.append(rest)
+        return found
+
+    def test_documented_plain_push_uses_the_qualified_refspec_the_resolver_emits(self) -> None:
+        code, _, verdict = _verdict(self.clone)
+        self.assertEqual(0, code)
+        emitted = [verdict["effective_push_remote"], verdict["dry_run"]["refspec"]]
+        for relative in self.DOCS:
+            with self.subTest(relative):
+                commands = self.push_commands(relative, lease=False)
+                self.assertTrue(commands, "no documented plain push command found")
+                for rest in commands:
+                    self.assertEqual(["$remote", emitted[1]], rest)
+
+    def test_documented_lease_push_matches_the_resolver_lease_and_refspec(self) -> None:
+        code, _, verdict = _verdict(self.clone, lease=self.remote_head)
+        self.assertEqual(0, code)
+        emitted = [verdict["dry_run"]["lease"].replace(self.remote_head, "OID"), "$remote", verdict["dry_run"]["refspec"]]
+        for relative in self.DOCS:
+            with self.subTest(relative):
+                commands = self.push_commands(relative, lease=True)
+                self.assertTrue(commands, "no documented lease push command found")
+                for rest in commands:
+                    self.assertEqual(emitted, rest)
+
+    def test_no_documented_push_uses_an_unqualified_source(self) -> None:
+        unqualified = re.compile(r'(?<!refs/heads/)<(?:assigned-)?branch>:refs/heads/<(?:assigned-)?branch>')
+        for relative in self.DOCS:
+            with self.subTest(relative):
+                self.assertIsNone(unqualified.search(self.doc(relative)))
 
 
 class PlusPrefixedBranchTests(LeaseFixture):
