@@ -214,6 +214,74 @@ class HomePathScopeTests(unittest.TestCase):
         self.assertEqual(1, completed.returncode)
         self.assertIn("en/commands/dev.md", completed.stderr)
 
+    def assert_leak_caught(self, content: str) -> None:
+        self.plant("en/commands/dev.md", content)
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode, content)
+        self.assertIn("en/commands/dev.md", completed.stderr, content)
+
+    def assert_passes(self, content: str) -> None:
+        self.plant("en/commands/dev.md", content)
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, f"{content!r}: {completed.stderr}")
+
+    def test_bare_home_path_without_trailing_separator_fails(self) -> None:
+        """Right boundary: separator, whitespace, quote, backtick, closing
+        bracket, punctuation, or end of text all end a leaked path."""
+        for content in (
+            "Config lives in /Users/bbrenner\n",
+            "Config lives in /Users/bbrenner",
+            "Home is /Users/bbrenner.\n",
+            "(/Users/bbrenner)\n",
+            '"/Users/bbrenner"\n',
+            "`/Users/bbrenner`\n",
+            "Home: /home/alice\n",
+            "Home: C:\\Users\\bob\n",
+        ):
+            with self.subTest(content=content):
+                self.assert_leak_caught(content)
+
+    def test_file_url_and_double_slash_home_paths_fail(self) -> None:
+        """Left boundary must not hide a leak behind a preceding `/`."""
+        for content in (
+            "file:///Users/bbrenner/x\n",
+            "//Users/bbrenner/x\n",
+        ):
+            with self.subTest(content=content):
+                self.assert_leak_caught(content)
+
+    def test_glued_prefix_windows_home_path_fails(self) -> None:
+        """Windows keeps the parent's behaviour: no left boundary."""
+        self.assert_leak_caught("xC:\\Users\\bob\\Desktop\n")
+
+    def test_unrooted_or_mid_url_prose_passes(self) -> None:
+        for content in (
+            "See https://api.example.com/Users/svc/status for status.\n",
+            "Open the Users/alice/ folder.\n",
+            "Return to home/ and docs/ then.\n",
+            "Open the /Users/ folder.\n",
+            "Open the /home/ folder.\n",
+        ):
+            with self.subTest(content=content):
+                self.assert_passes(content)
+
+    def test_placeholders_pass_with_right_boundary(self) -> None:
+        for content in (
+            "Use /Users/<name>/project here.\n",
+            "Use /Users/<name> here.\n",
+            "Use /home/<user>/x here.\n",
+            "Use C:\\path\\to\\skills\\dev here.\n",
+            "Use $HOME/project here.\n",
+        ):
+            with self.subTest(content=content):
+                self.assert_passes(content)
+
+    def test_tree_without_docs_dir_passes(self) -> None:
+        """docs/ is export-ignored, so an archive tree lacks it."""
+        self.assertFalse((self.root / "docs").exists())
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_template_placeholders_still_do_not_false_positive_under_the_wider_class(self) -> None:
         """The widened segment class (spaces, apostrophes) must not swallow
         the `<name>` placeholder boundary it was already excluding."""
