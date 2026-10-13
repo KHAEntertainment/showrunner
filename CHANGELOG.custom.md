@@ -49,7 +49,10 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   `check-*` modes) is not ready, with a reason code. There is no bare
   `--force`, and argument abbreviations are off so `--force` cannot expand to
   the lease flag. Without the flag a non-fast-forward is still `dry_run_failed`
-  (#105).
+  (#105). The branch-push refspec now names the source as
+  `refs/heads/<branch>:refs/heads/<branch>` (documented push commands
+  included), so a branch named `+feature` is no longer read by Git as a forced
+  refspec for local `feature` that overrides a stale lease.
 
 ### Changed
 

@@ -170,7 +170,7 @@ class LeaseReadyTests(LeaseFixture):
         self.assertEqual("ready", verdict["status"])
         self.assertEqual("origin", verdict["effective_push_remote"])
         self.assertEqual(f"--force-with-lease={REF}:{self.remote_head}", verdict["dry_run"]["lease"])
-        self.assertEqual(f"{BRANCH}:{REF}", verdict["dry_run"]["refspec"])
+        self.assertEqual(f"{REF}:{REF}", verdict["dry_run"]["refspec"])
         self.assertRemoteUntouched()
 
     def test_ready_verdict_supports_the_real_lease_push_and_only_it(self) -> None:
@@ -406,6 +406,87 @@ class LeaseApplicabilityTests(LeaseFixture):
         self.assertNotReady(code, verdict, "verification_required")
 
 
+class PlusPrefixedBranchTests(LeaseFixture):
+    """A valid branch named `+feature` must never be read by Git as a forced refspec.
+
+    The emitted refspec names the source as `refs/heads/+feature`; unqualified,
+    `+feature:refs/heads/+feature` means "force-push local `feature`", which
+    overrode a stale lease in a real push.
+    """
+
+    PLUS = "+feature"
+    PLUS_REF = "refs/heads/+feature"
+
+    def setUp(self) -> None:
+        super().setUp()
+        # `feature` (from LeaseFixture) stays checked out as a distinct local branch.
+        _git("checkout", "-q", "-b", self.PLUS, self.base, cwd=self.clone)
+        self.plus_remote_head = self.commit(self.clone, "plus.txt")
+        _git("push", "-q", "origin", f"{self.PLUS_REF}:{self.PLUS_REF}", cwd=self.clone)
+        self.assertNotEqual(self.plus_remote_head, _rev(self.clone, "refs/heads/feature"))
+
+    def verdict(self, **kwargs):
+        return _verdict(self.clone, assigned_branch=self.PLUS, **kwargs)
+
+    def push(self, verdict, *, lease: bool) -> subprocess.CompletedProcess:
+        command = ["git", "push"]
+        if lease:
+            command.append(verdict["dry_run"]["lease"])
+        command += [verdict["effective_push_remote"], verdict["dry_run"]["refspec"]]
+        return subprocess.run(command, cwd=str(self.clone), capture_output=True, text=True)
+
+    def test_no_lease_refspec_is_not_a_forced_refspec_and_names_the_qualified_source(self) -> None:
+        self.commit(self.clone, "plus2.txt")
+        code, _, verdict = self.verdict()
+        self.assertEqual((0, "ready"), (code, verdict["status"]))
+        refspec = verdict["dry_run"]["refspec"]
+        self.assertFalse(refspec.startswith("+"), refspec)
+        self.assertEqual(f"{self.PLUS_REF}:{self.PLUS_REF}", refspec)
+
+        done = self.push(verdict, lease=False)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(_rev(self.clone, self.PLUS_REF), _rev(self.bare, self.PLUS_REF))
+        self.assertEqual(self.remote_head, _rev(self.bare, REF), "the distinct local `feature` must not be pushed")
+
+    def test_stale_lease_still_rejects_the_real_push_of_the_emitted_refspec(self) -> None:
+        other = self.root / "other-plus"
+        _git("clone", "-q", str(self.bare), str(other), cwd=self.root)
+        _git("config", "user.email", "test@example.com", cwd=other)
+        _git("config", "user.name", "Test", cwd=other)
+        _git("checkout", "-q", "-b", "theirs", self.plus_remote_head, cwd=other)
+        self.assertEqual(self.plus_remote_head, _git("rev-parse", "HEAD", cwd=other))
+
+        code, _, verdict = self.verdict(lease=self.plus_remote_head)
+        self.assertEqual((0, "ready"), (code, verdict["status"]), "the lease holds at check time")
+        refspec = verdict["dry_run"]["refspec"]
+        self.assertFalse(refspec.startswith("+"), refspec)
+        self.assertEqual(f"{self.PLUS_REF}:{self.PLUS_REF}", refspec)
+
+        theirs = self.commit(other, "theirs-plus.txt")
+        _git("push", "-q", "origin", f"HEAD:{self.PLUS_REF}", cwd=other)
+
+        done = self.push(verdict, lease=True)
+        self.assertNotEqual(0, done.returncode, "a stale lease must reject the push")
+        self.assertNotIn("forced update", done.stderr)
+        self.assertEqual(theirs, _rev(self.bare, self.PLUS_REF), "the moved commit must survive")
+        self.assertEqual(self.remote_head, _rev(self.bare, REF))
+
+    def test_plus_branch_lease_mismatch_is_still_refused(self) -> None:
+        code, _, verdict = self.verdict(lease=self.remote_head)
+        self.assertNotReady(code, verdict, "lease_mismatch")
+        self.assertIn(self.plus_remote_head, verdict["reason"])
+
+    def test_ordinary_branch_still_emits_a_qualified_refspec_and_pushes(self) -> None:
+        _git("checkout", "-q", BRANCH, cwd=self.clone)
+        self.commit(self.clone, "ordinary.txt")
+        code, _, verdict = _verdict(self.clone)
+        self.assertEqual((0, "ready"), (code, verdict["status"]))
+        self.assertEqual(f"{REF}:{REF}", verdict["dry_run"]["refspec"])
+        done = self.push(verdict, lease=False)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(_rev(self.clone, REF), _rev(self.bare, REF))
+
+
 class NeverBareForceTests(LeaseFixture):
     def test_every_git_command_run_for_a_lease_check_is_free_of_a_bare_force(self) -> None:
         self.rebase_onto_new_main()
@@ -422,7 +503,7 @@ class NeverBareForceTests(LeaseFixture):
         pushes = [c for c in seen if c[:2] == ["git", "push"]]
         self.assertEqual(1, len(pushes))
         self.assertEqual(
-            ["git", "push", "--dry-run", f"--force-with-lease={REF}:{self.remote_head}", "origin", f"{BRANCH}:{REF}"],
+            ["git", "push", "--dry-run", f"--force-with-lease={REF}:{self.remote_head}", "origin", f"{REF}:{REF}"],
             pushes[0])
         for command in seen:
             self.assertNotIn("--force", command)
@@ -440,7 +521,7 @@ class NeverBareForceTests(LeaseFixture):
         with patch.object(MODULE, "read_command", side_effect=spy):
             _verdict(self.clone)
         pushes = [c for c in seen if c[:2] == ["git", "push"]]
-        self.assertEqual([["git", "push", "--dry-run", "origin", f"{BRANCH}:{REF}"]], pushes)
+        self.assertEqual([["git", "push", "--dry-run", "origin", f"{REF}:{REF}"]], pushes)
         self.assertFalse([c for c in seen if "ls-remote" in c], "no remote head read without a lease")
 
     def test_bare_force_and_its_prefixes_are_not_accepted_flags(self) -> None:

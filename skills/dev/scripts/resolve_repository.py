@@ -694,7 +694,9 @@ def verify_branch_and_dry_run(
     if valid_ref != 0 or assigned_branch.startswith("-"):
         return {"status": "incomplete", "reason_code": "invalid_branch",
                 "reason": "assigned branch is not a valid branch name"}
-    refspec = f"{assigned_branch}:{ref}"
+    # Fully qualify the source. A bare `+feature` branch name would be read by
+    # Git as a forced refspec for local `feature`, silently overriding any lease.
+    refspec = f"{ref}:{ref}"
     runner = dry_run_runner or (lambda cmd, cwd: read_command(cmd, cwd=cwd))
     command = ["git", "push", "--dry-run"]
     if lease_oid is not None:

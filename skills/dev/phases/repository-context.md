@@ -142,7 +142,7 @@ rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/resolve_repository.py" --repo-dir
   ```bash
   remote="$(rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/resolve_repository.py" --repo-dir <worktree> --operation push \
     --assigned-branch <branch> --print-push-remote)" || exit 1
-  rtk proxy git push "$remote" "<branch>:refs/heads/<branch>"
+  rtk proxy git push "$remote" "refs/heads/<branch>:refs/heads/<branch>"
   ```
 - Exit 2 means stop — no fallback, no default selection. `gh_default` and
   `notes` in the JSON output are informational only: an unrelated `gh repo
@@ -164,7 +164,7 @@ current `headRefOid`):
 ```bash
 remote="$(rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/resolve_repository.py" --repo-dir <worktree> --operation push \
   --assigned-branch <branch> --force-with-lease <oid> --print-push-remote)" || exit 1
-rtk proxy git -C <worktree> push --force-with-lease="refs/heads/<branch>:<oid>" "$remote" "<branch>:refs/heads/<branch>"
+rtk proxy git -C <worktree> push --force-with-lease="refs/heads/<branch>:<oid>" "$remote" "refs/heads/<branch>:refs/heads/<branch>"
 ```
 
 - Never fill `<oid>` by reading the remote yourself and pushing whatever you
@@ -176,7 +176,7 @@ rtk proxy git -C <worktree> push --force-with-lease="refs/heads/<branch>:<oid>" 
 - It runs every check of the branch push above, then reads the live head of
   `refs/heads/<branch>` with `git ls-remote` from **every** push URL (never a
   local `refs/remotes/*` ref) and requires it to equal the lease, then runs
-  `git push --dry-run --force-with-lease=refs/heads/<branch>:<oid> <remote> <branch>:refs/heads/<branch>`.
+  `git push --dry-run --force-with-lease=refs/heads/<branch>:<oid> <remote> refs/heads/<branch>:refs/heads/<branch>`.
 - The real push must carry the identical lease: Git re-checks it atomically at
   push time, so a push that landed after the check is not overwritten.
 - It applies only to `--operation push --assigned-branch`. Combined with
