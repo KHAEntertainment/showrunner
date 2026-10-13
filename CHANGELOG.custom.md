@@ -10,6 +10,12 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ## Unreleased (v2.1.2)
 
+### Fixed
+
+- Validator home-path scan now includes `docs/` and anchors patterns at
+  boundaries (start, whitespace, backtick, quote) to avoid false positives
+  on URLs like `https://api.example.com/Users/svc/status`.
+
 ### Added
 
 - The `/dev` lead can run on Codex or OpenCode under the Traycer backend

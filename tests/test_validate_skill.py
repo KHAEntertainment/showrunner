@@ -157,11 +157,50 @@ class HomePathScopeTests(unittest.TestCase):
         self.assertEqual(1, in_tree.returncode)
         self.assertIn("en/commands/dev.md", in_tree.stderr)
 
+    def test_home_path_in_url_passes(self) -> None:
+        """Mid-URL /Users/ should NOT trigger."""
+        self.plant(
+            "en/commands/dev.md",
+            "See https://api.example.com/Users/svc/status for status.\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_home_path_with_spaces_and_apostrophe_in_the_name_fails(self) -> None:
         self.plant("en/commands/dev.md", "Backup: `/Users/Jane Doe/Documents/backups`.\n")
         completed = self.run_validator()
         self.assertEqual(1, completed.returncode)
         self.assertIn("en/commands/dev.md", completed.stderr)
+
+    def test_home_path_at_start_of_line_fails(self) -> None:
+        """Bare /Users/ at start should trigger."""
+        self.plant(
+            "en/commands/dev.md",
+            "/Users/bbrenner/.ssh/id_rsa\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("en/commands/dev.md", completed.stderr)
+
+    def test_home_path_at_end_of_line_fails(self) -> None:
+        """Bare /Users/ at end of line should trigger."""
+        self.plant(
+            "en/commands/dev.md",
+            "See the file at `/Users/bbrenner/notes`.\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("en/commands/dev.md", completed.stderr)
+
+    def test_home_path_in_docs_fails(self) -> None:
+        """docs/ should be scanned."""
+        self.plant(
+            "docs/architecture.md",
+            "Config path: `/Users/bbrenner/config`.\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("docs/architecture.md", completed.stderr)
 
     def test_home_path_with_apostrophe_in_the_name_fails(self) -> None:
         self.plant("en/commands/dev.md", "Backup: `/home/O'Connor/notes`.\n")

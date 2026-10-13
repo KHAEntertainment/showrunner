@@ -126,9 +126,9 @@ ROUTING_SECTION_BODY = (
 # cannot match the class because `<`/`>` aren't in it, `C:\path\to\...` never
 # reaches the `C:\Users\` pattern at all, and `$HOME` is not a literal path.
 HOME_PATH_PATTERNS = (
-    (re.compile(r"/Users/[\w.' -]+/"), "macOS home directory"),
-    (re.compile(r"/home/[\w.' -]+/"), "Linux home directory"),
-    (re.compile(r"C:\\Users\\[\w.' -]+\\"), "Windows home directory"),
+    (re.compile(r"(?<![\w./])/?Users/[\w.' -]+/"), "macOS home directory"),
+    (re.compile(r"(?<![\w./])/?home/[\w.' -]+/"), "Linux home directory"),
+    (re.compile(r"(?<![\w./])/?C:\\Users\\[\w.' -]+\\"), "Windows home directory"),
 )
 
 # Directories outside the Skill payload that still ship in the repository and
@@ -289,7 +289,7 @@ def main() -> int:
         validating_source_tree = False
 
     if validating_source_tree:
-        for extra_name in EXTRA_MARKDOWN_DIRS:
+        for extra_name in EXTRA_MARKDOWN_DIRS + ("docs",):
             extra_dir = repo_root / extra_name
             if not extra_dir.is_dir():
                 continue
