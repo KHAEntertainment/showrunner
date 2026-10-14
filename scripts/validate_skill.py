@@ -627,7 +627,7 @@ def main() -> int:
             # counting it once would freeze a single-comment reviewer at 1.
             "An in-place edit that reports a new rate-limit event counts as a new rate-limited response",
             "a reviewer that reports each rate limit by editing a single summary comment still reaches the threshold",
-            "a new event is a new head, a new limit window or reset time, or a response to a new retry request",
+            "a new event is a new head, a new limit window or reset time, or a response to a new review request (a retry, or the re-request the Head-Commit Invariant obligates)",
             "Only a re-render of the same event (same head, same window, no new request) does not count again.",
             # Issue #69: whether an unrequested rate-limit at a new head counts.
             "An automatic rate-limit report at a new head, with no explicit request from the lead, counts once toward the threshold",
@@ -660,9 +660,11 @@ def main() -> int:
             "After a breakpoint has fired on that PR for that reviewer, the count is already at or above the threshold",
             "dispatches a fresh substitute for the new head without a second retry cycle",
             # The Result Routing clause itself is pinned by a section-scoped
-            # check (RESULT_ROUTING_PINS below): these phrases also appear in
-            # the Rate-limit breakpoint section, so whole-file matching could
-            # not tell if the routing line were deleted.
+            # check (RESULT_ROUTING_PINS below): the "no finding, the
+            # substitute's included, is blocking or awaiting disposition"
+            # wording also appears in the Rate-limit breakpoint section, so
+            # whole-file matching could not tell if the routing line were
+            # deleted.
         ),
         # Issue #33: without a named retro line, repeated bypass across
         # rounds was only ever visible per-PR, never as a pattern.

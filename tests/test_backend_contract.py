@@ -818,7 +818,7 @@ class BackendContractTests(unittest.TestCase):
             # comment must still reach the threshold.
             "An in-place edit that reports a new rate-limit event counts as a new rate-limited response",
             "a reviewer that reports each rate limit by editing a single summary comment still reaches the threshold",
-            "a new event is a new head, a new limit window or reset time, or a response to a new retry request",
+            "a new event is a new head, a new limit window or reset time, or a response to a new review request (a retry, or the re-request the Head-Commit Invariant obligates)",
             "Only a re-render of the same event (same head, same window, no new request) does not count again.",
             # Issue #69: an unrequested rate-limit at a new head counts once.
             "An automatic rate-limit report at a new head, with no explicit request from the lead, counts once toward the threshold",
@@ -875,7 +875,14 @@ class BackendContractTests(unittest.TestCase):
                 self.assertNotIn(vendor, section)
         # B1: without a routing clause the inspector's `pending` never reaches
         # APPROVE, so the bypass would stay the only way to merge.
-        routing = " ".join(external.split("## Result Routing\n", 1)[1].split())
+        # Scope exactly as the validator's markdown_section does: an exact
+        # `## Result Routing` heading line, ending at the next `## ` or EOF, so
+        # a demoted or missing heading fails here too.
+        routing_match = re.search(
+            r"^## Result Routing$(.*?)(?=^## |\Z)", external, re.M | re.S
+        )
+        self.assertIsNotNone(routing_match, "external-review.md lacks a `## Result Routing` heading")
+        routing = " ".join(routing_match.group(1).split())
         for token in (
             "whose only open seats are filled by a completed, current-head substitution routes as `clear`",
             "no finding, the substitute's included, is blocking or awaiting disposition",
