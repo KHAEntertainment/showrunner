@@ -29,15 +29,14 @@ An ignored reviewer overrides every default, required, or detected setting. Unkn
 
 ### Kilo summary evidence
 
-Kilo posts its verdict as a regular PR issue comment with the marker `<!-- kilo-review -->`, when its check run succeeds. The inspector accepts that comment as head review evidence when **all** of these hold:
+Kilo posts its verdict as a regular PR issue comment with the marker `<!-- kilo-review -->`, when its check run succeeds. The inspector accepts that comment as head review evidence when **both** of these hold (the comment is bound to the head SHA's check run, not to a merely-completed run):
 
-- it is authored by a trusted Kilo identity (`kilo-code-bot[bot]` is in the defaults);
-- it carries the `<!-- kilo-review -->` marker;
-- the comment's `createdAt` is at or after the Kilo check run for the head SHA's `startedAt` (the chronological proxy for "after the head commit was pushed"), **or** the Kilo check run for the head SHA has a `completedAt` (the safety valve: even when the comment was posted before the check completed, the completed check makes it head evidence — this is the PR #114 shape, where the summary comment was posted during the run).
+1. The Kilo check run for the head SHA **COMPLETED with `conclusion: success`**. A failed, still-running, or otherwise non-success run is not a positive head review, regardless of how the comment was last edited.
+2. The summary comment's **last update** is at or after the head SHA's Kilo run's `startedAt`. The "last update" is the comment's `updatedAt` when the comment was edited in place, or its `createdAt` when it was never edited. Kilo edits its summary in place on every re-review (PR #118: created 00:03:43Z, updated 00:26:26Z, against the head's Kilo run that started 00:22:51Z), so the `updatedAt` is the binding timestamp; `createdAt` is the binding timestamp only on the first review. **Both dates must parse as ISO 8601** — a malformed date fails closed rather than silently satisfying the rule.
 
-A summary with `Status: No Issues Found` puts Kilo in `completed_on_head` and routes the gate as `clear`. Any other status line (`Issues Found`, `Recommendation: Request Changes`, etc.) leaves Kilo out of `completed_on_head` and surfaces the summary as a current-head finding the lead triages through the existing `blocking` / `advisory` / `false_positive` disposition path — a Kilo review with findings still gates instead of clearing.
+When both hold, the summary counts as head evidence. A summary with `Status: No Issues Found` **and** `Recommendation: Merge` puts Kilo in `completed_on_head` and routes the gate as `clear`. Any other status line, or a non-`Merge` recommendation, leaves Kilo out of `completed_on_head` and surfaces the summary as a current-head finding the lead triages through the existing `blocking` / `advisory` / `false_positive` disposition path — a Kilo review with findings still gates instead of clearing.
 
-A failed Kilo check whose `description` names `rate limit` (matched case-insensitively) is a rate-limit failure: the gate stays `pending` with a distinct pending reason, not the generic `trusted review check failed without readable current-head findings` error. The rate-limit breakpoint (`Rate-limited review retries` below) counts it as one of the three consecutive rate-limits the breakpoint needs.
+A **FAILED** Kilo check whose `output.summary` (or `output.title`, `output.text`, or `description`) names the rate-limit phrase `rate limit` is a rate-limit failure: the gate stays `pending` with a distinct pending reason, not the generic `trusted review check failed without readable current-head findings` error. A **SUCCESS** Kilo check whose output merely *mentions* a past rate-limit is not a rate-limit failure — vendor retry history is not actionable infrastructure evidence, and a successful run's clear verdict is the verdict of record. The rate-limit breakpoint (`Rate-limited review retries` below) counts a real FAILED rate-limit as one of the three consecutive rate-limits the breakpoint needs.
 
 ### Ask once about unknown review bots, record the answer
 

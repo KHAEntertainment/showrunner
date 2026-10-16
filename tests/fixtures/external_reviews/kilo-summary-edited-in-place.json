@@ -1,0 +1,33 @@
+{
+  "current": {
+    "number": 118,
+    "headRefOid": "da0e3d0d2450dffad7d19714988c16b3cbb59654",
+    "reviewRequests": [],
+    "reviews": [],
+    "latestReviews": [],
+    "statusCheckRollup": [
+      {
+        "name": "Kilo Code Review",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-10-14T00:22:51Z",
+        "completedAt": "2026-10-14T00:26:24Z",
+        "app": null
+      }
+    ],
+    "comments": [
+      {
+        "id": "kilo-summary-118",
+        "author": {
+          "login": "kilo-code-bot"
+        },
+        "body": "<!-- kilo-review -->\n\n## Code Review Summary\n\n**Status:** No Issues Found | **Recommendation:** Merge\n\n<details><summary><b>Files Reviewed (3 files)</b></summary>\n\n- `scripts/validate_skill.py`\n- `skills/dev/phases/external-review.md`\n- `tests/test_backend_contract.py`\n\n</details>\n\n<!-- kilo-review-history -->\n<details><summary><b>Previous Review Summary</b> (commit a74cff9)</summary>\n\n_Current summary above is authoritative._\n</details>\n<!-- /kilo-review-history -->\n",
+        "url": "https://github.com/KHAEntertainment/showrunner/pull/118#issuecomment-6157807446",
+        "createdAt": "2026-10-14T00:03:43Z",
+        "updatedAt": "2026-10-14T00:26:26Z"
+      }
+    ]
+  },
+  "threads": [],
+  "recent": []
+}

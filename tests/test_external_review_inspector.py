@@ -635,6 +635,75 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         )
         self.assertFalse(result["errors"])
 
+    def test_issue_82_m3_success_check_mentioning_rate_limit_clears(self):
+        # M3 (QA round 1): a SUCCESS Kilo check whose description
+        # mentions a past rate-limit (e.g. "previous attempt was rate
+        # limited; this run retried") must NOT be misclassified as a
+        # rate-limit failure. The current run is a clear verdict, and
+        # vendor retry history is not actionable infrastructure
+        # evidence. The QA probe `s8` exercises this case.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        current["statusCheckRollup"][0]["description"] = (
+            "Code review completed successfully "
+            "(previous attempt was rate limited; this run retried)"
+        )
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        self.assertFalse(result["errors"])
+
+    def test_issue_82_m3_failed_check_with_rate_limit_is_rate_limited(self):
+        # M3 positive: a FAILED Kilo check whose output names a
+        # rate-limit is the rate-limit signal the #48 breakpoint
+        # counts. This is the existing kilo-rate-limited-failed-check
+        # behavior; the M3 fix is that SUCCESS no longer
+        # misclassifies. A FAILED check must still trip the rate-
+        # limit path.
+        result = inspect_fixture("kilo-rate-limited-failed-check.json")
+        self.assertEqual(result["state"], "pending", result)
+        self.assertIn("kilo", result["pending_reviewers"])
+        reasons = result["pending_reasons"]["kilo"]
+        self.assertTrue(
+            any("rate-limit" in reason for reason in reasons),
+            f"no rate-limit reason: {reasons}",
+        )
+
+    def test_issue_82_m3_unrelated_check_mentioning_rate_limit_does_not_route(self):
+        # s7: a non-trusted check (here: github-actions unit
+        # tests) whose output mentions a rate-limit phrase is not
+        # part of the rate-limit signal. The `is_rate_limited_check`
+        # gate is invoked only after `reviewer_for_check`
+        # confirms the check is from a trusted reviewer, so a
+        # github-actions check with "rate limit reached" in its
+        # output stays out of the rate-limited reviewer set.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        current["statusCheckRollup"].append(
+            {
+                "name": "unit-tests",
+                "app": {"slug": "github-actions"},
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "startedAt": "2026-10-14T05:00:00Z",
+                "completedAt": "2026-10-14T05:06:00Z",
+                "description": "3 tests failed",
+                "output": {
+                    "summary": (
+                        "FAILED tests/test_backoff.py::test_retry\n"
+                        "AssertionError: expected 'rate limit reached' "
+                        "in log, got 'ok'\n"
+                    )
+                },
+            }
+        )
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        self.assertEqual(result["errors"], [])
+
     def test_issue_82_b5_rate_limited_reviewer_with_completed_review_is_pending(self):
         # B5: a current-head Greptile COMMENTED review PLUS a
         # failed rate-limited Greptile check must NOT clear. The
@@ -698,6 +767,17 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         self.assertEqual(result["state"], "not_applicable")
         self.assertEqual(result["unknown_bot_identities"], ["super-review-bot[bot]"])
         self.assertNotIn("super-review-bot", result["observed_reviewers"])
+
+    def test_issue_117_kilo_summary_edited_in_place_fixture_clears(self):
+        # PR #118 real shape: summary was created BEFORE the head's
+        # Kilo run started (00:03:43Z) and edited in place DURING the
+        # run (00:26:26Z, two seconds after the run completed at
+        # 00:26:24Z). The `updatedAt` is the binding timestamp when
+        # the comment was edited in place.
+        result = inspect_fixture("kilo-summary-edited-in-place.json")
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        self.assertEqual(result["errors"], [])
 
     def test_issue_117_kilo_summary_clear_at_head(self):
         # The PR #114 shape: Kilo check succeeded, summary comment
@@ -921,10 +1001,13 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         # The ask-once contract: the inspector surfaces an unknown bot
         # in `unknown_bot_identities` and never silently trusts it.
         # The SOP-level "do not re-ask a recorded login" rule is
-        # pinned by `phases/external-review.md` and
-        # `test_backend_contract.py`; here we pin the inspector
+        # pinned by `phases/external-review.md` and by the
+        # `test_ask_once_*` tests in `test_backend_contract.py`
+        # (added in B6 fix round 1). Here we pin the inspector
         # side: the surface that drives the SOP exists and is
-        # stable.
+        # stable, and a previously-seen unknown bot is recorded
+        # in `unknown_bot_identities` regardless of the comment
+        # shape.
         current, threads, recent = MODULE.load_fixture(FIXTURES / "no-reviewer.json")
         current["comments"] = [
             {

@@ -337,27 +337,54 @@ def check_description(check: dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def is_rate_limited_check(check: dict[str, Any]) -> bool:
-    """True when a failed check's description names a rate-limit.
+def is_failed_check(check: dict[str, Any]) -> bool:
+    """True when a check ran to a non-success completion.
 
-    A vendor-agnostic substring match against the check's text payload
-    (description, output.text, output.summary). Kilo's exact phrase
-    (`KILO_RATE_LIMIT_PHRASE`) is also matched, so a Kilo check that
-    ships only its specific phrase still trips the gate. The broad
-    phrase (`RATE_LIMIT_PHRASE`) is the floor: a vendor that prefixes
-    its rate-limit message differently — "Greptile review failed:
-    Assistant request was rate limited" vs Kilo's wording — still trips
-    the same gate, which is what the #48 breakpoint needs to count
-    rate-limit events across all built-in reviewers (Issue #82
-    acceptance criterion).
+    Matches the same conclusion set the inspector uses for the
+    generic `check_failed` bucket, with one addition: a check whose
+    `status` is `failure` or `error` (the `gh pr view --json`
+    alternatives to the GraphQL `conclusion` field) is also failed.
+    A check with no `conclusion` field is treated as not-failed:
+    pending and queued states are not failures.
     """
     if not isinstance(check, dict):
         return False
+    conclusion = normalize(check.get("conclusion") or "")
+    if conclusion in {
+        "failure", "cancelled", "timed_out",
+        "action_required", "startup_failure",
+    }:
+        return True
+    status = normalize(check.get("status") or check.get("state") or "")
+    return status in {"failure", "error"}
+
+
+def is_rate_limited_check(check: dict[str, Any]) -> bool:
+    """True when a FAILED check's text payload names a rate-limit.
+
+    A check is rate-limited only when it both FAILED and its text
+    payload (description, output.text, output.summary, output.title)
+    carries the rate-limit phrase. A SUCCESS check whose output
+    merely *mentions* a past rate-limit is not a rate-limit failure
+    for our purposes — vendor retry history is not actionable
+    evidence of an infrastructure problem. The QA round-1 review
+    found a SUCCESS Kilo check whose description said "previous
+    attempt was rate limited; this run retried" being misclassified
+    as a rate-limit failure, which discarded a legitimate clear
+    verdict.
+
+    The match is a vendor-agnostic substring against the broader
+    `RATE_LIMIT_PHRASE` ("rate limit"). Kilo's exact phrase
+    (`KILO_RATE_LIMIT_PHRASE`) is a substring of that, so the
+    explicit Kilo check is structurally redundant; it is kept
+    only as a documentation aid for logs and tests.
+    """
+    if not isinstance(check, dict):
+        return False
+    if not is_failed_check(check):
+        return False
     description = normalize(check_description(check))
-    return (
-        KILO_RATE_LIMIT_PHRASE in description
-        or RATE_LIMIT_PHRASE in description
-    )
+    return RATE_LIMIT_PHRASE in description
 
 
 def kilo_summary_status(body: str) -> str:
