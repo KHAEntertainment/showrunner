@@ -7,15 +7,51 @@ Use trusted third-party review as an independent signal. It supplements the inte
 Unless `PROJECT_CONTEXT.md` overrides the policy:
 
 - Mode: `auto`
-- Trusted reviewers: `coderabbit`, `kilo`, `github-copilot`
+- Trusted reviewers: `coderabbit`, `kilo`, `github-copilot`, `gemini-code-assist`, `greptile`, `sourcery`, `qodo`
 - Required reviewers: none
 - Ignored reviewers: none
 - Default wait: 10 minutes
 - Allow automatic review requests: `false`
 
-Known identities include CodeRabbit review/check identities, Kilo Code review/check identities, and GitHub Copilot's API request identity `copilot-pull-request-reviewer[bot]`. GitHub review authorship may surface the same account as `copilot-pull-request-reviewer` without the suffix; both map to `github-copilot`. The `@copilot` name is only a request alias. Do not treat generic Copilot coding-agent activity as code-review evidence.
+Known identities include:
+
+- **CodeRabbit** — review (`coderabbitai[bot]`) and check (app slug `coderabbitai`). Re-reviews new pushes by default; a stale CodeRabbit review is `pending`.
+- **Kilo Code** — review (`kilo-code-bot[bot]`) and check (app slug `kilocode`). Posts its verdict as a regular PR issue comment with the marker `<!-- kilo-review -->` (see **Kilo summary evidence** below). Re-reviews on PR opened, new commits pushed, PR reopened, and draft marked ready (Kilo has no comment command, so reopening a PR is the non-code-changing re-request option).
+- **GitHub Copilot** — review (`copilot-pull-request-reviewer[bot]`, also without the suffix on review authorship). Comment-only by default; never issues APPROVED or CHANGES_REQUESTED. Triage its current-head threads directly. The `@copilot` name is only a request alias. Do not treat generic Copilot coding-agent activity as code-review evidence.
+- **Gemini Code Assist** — review (`gemini-code-assist[bot]`). Comment-only (no published check-run app). Re-reviews on new pushes by default.
+- **Greptile** — review (`greptile-apps[bot]`) and check (app slug `greptile-apps`). Re-reviews on new pushes by default.
+- **Sourcery** — review (`sourcery-ai[bot]`) and check (app slug `sourcery-ai`). Re-reviews on new pushes; comment-only summaries are also posted as PR comments.
+- **Qodo** — review (`qodo-code-review[bot]`, `qodo-free-for-open-source-projects[bot]`). Comment-only by default; a check run can be enabled per repo. The third login, `qodo-ai[bot]`, exists but its review role is unverified and is not a default identity.
+
+`github-actions[bot]` is shared by every workflow and is not a stable identity, so it is deliberately absent from the defaults. A workflow that wants to be trusted installs a dedicated GitHub App or bot account and is added per-repo under **Additional reviewer identities**. Self-hosted PR-Agent is the same shape: it runs under `github-actions[bot]` and is not a default identity, so trust it per repo only when it posts under a dedicated bot account.
 
 An ignored reviewer overrides every default, required, or detected setting. Unknown bots are evidence to surface to the user, not trusted reviewers. Ask before adding an unknown login or check-app slug to the current repository policy.
+
+### Kilo summary evidence
+
+Kilo posts its verdict as a regular PR issue comment with the marker `<!-- kilo-review -->`, when its check run succeeds. The inspector accepts that comment as head review evidence when **all** of these hold:
+
+- it is authored by a trusted Kilo identity (`kilo-code-bot[bot]` is in the defaults);
+- it carries the `<!-- kilo-review -->` marker;
+- the comment's `createdAt` is at or after the Kilo check run for the head SHA's `startedAt` (the chronological proxy for "after the head commit was pushed"), **or** the Kilo check run for the head SHA has a `completedAt` (the safety valve: even when the comment was posted before the check completed, the completed check makes it head evidence — this is the PR #114 shape, where the summary comment was posted during the run).
+
+A summary with `Status: No Issues Found` puts Kilo in `completed_on_head` and routes the gate as `clear`. Any other status line (`Issues Found`, `Recommendation: Request Changes`, etc.) leaves Kilo out of `completed_on_head` and surfaces the summary as a current-head finding the lead triages through the existing `blocking` / `advisory` / `false_positive` disposition path — a Kilo review with findings still gates instead of clearing.
+
+A failed Kilo check whose `description` names `rate limit` (matched case-insensitively) is a rate-limit failure: the gate stays `pending` with a distinct pending reason, not the generic `trusted review check failed without readable current-head findings` error. The rate-limit breakpoint (`Rate-limited review retries` below) counts it as one of the three consecutive rate-limits the breakpoint needs.
+
+### Ask once about unknown review bots, record the answer
+
+When the inspector surfaces a review-like bot or check app that is not trusted, ignored, or mapped:
+
+1. The lead asks the user **once per repository** (not per PR, not per session): trust it, ignore it, or decide later.
+2. The answer is written to `PROJECT_CONTEXT.md` External Review Policy:
+   - trust → `Additional reviewer identities` (`NAME=LOGIN[,CHECK-APP-SLUG]`) plus `Trusted reviewers`;
+   - ignore → `Ignored reviewers`;
+   - decide later → a `Pending reviewer decisions` line (login + date), so the lead does not re-ask until the user raises it.
+3. The lead never adds an identity without the user's answer. Unknown bots remain evidence, not trust, which keeps the current fail-closed rule.
+4. Also offer the question at repository setup when `PROJECT_CONTEXT.md` is first created and recent PRs already show an unmapped review bot.
+
+A login already listed under `Pending reviewer decisions` is **not re-asked**. The lead proceeds without trusting or ignoring the bot; the inspector continues to surface it as evidence, and the decision is revisited only when the user raises it or when the login changes.
 
 If Mode is `off`, record that external review was disabled by repository policy and treat the gate as `not_applicable` without running the inspector. Internal QA and review still run.
 

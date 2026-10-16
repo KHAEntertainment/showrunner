@@ -1,0 +1,25 @@
+{
+  "current": {
+    "number": 114,
+    "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+    "reviewRequests": [],
+    "reviews": [],
+    "latestReviews": [],
+    "statusCheckRollup": [
+      {
+        "name": "Kilo Code Review",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+        "startedAt": "2026-10-13T23:20:05Z",
+        "completedAt": "2026-10-13T23:25:48Z",
+        "description": "Review failed: Assistant request was rate limited. Will retry on the next push.",
+        "app": {
+          "slug": "kilocode"
+        }
+      }
+    ],
+    "comments": []
+  },
+  "threads": [],
+  "recent": []
+}

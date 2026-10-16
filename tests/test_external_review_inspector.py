@@ -477,6 +477,278 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 2)
         self.assertEqual(json.loads(completed.stdout)["state"], "incomplete")
 
+    # Issue #82: new reviewer identities and the #117 Kilo summary path.
+    # These tests pin the public surface — `DEFAULT_IDENTITIES`,
+    # `DEFAULT_CHECK_MARKERS`, the `<!-- kilo-review -->` ordering rule,
+    # the four Kilo fixture cases, the `github-actions[bot]` exclusion,
+    # and the ask-once contract. They are deliberately split so a
+    # regression in one path fails one named test rather than a
+    # kitchen-sink "new reviewers work" assertion.
+
+    def test_issue_82_default_identities_include_confirmed_reviewers(self):
+        # Every confirmed login in the Issue #82 table must map to a
+        # built-in reviewer. Adding a reviewer without a confirmed
+        # login is a defect, and the test names the expected pair so a
+        # renamed login fails loudly.
+        expected = {
+            "gemini-code-assist": {"gemini-code-assist", "gemini-code-assist[bot]"},
+            "greptile": {"greptile-apps", "greptile-apps[bot]"},
+            "sourcery": {"sourcery-ai", "sourcery-ai[bot]"},
+            "qodo": {
+                "qodo-code-review",
+                "qodo-code-review[bot]",
+                "qodo-free-for-open-source-projects",
+                "qodo-free-for-open-source-projects[bot]",
+            },
+        }
+        for reviewer, logins in expected.items():
+            with self.subTest(reviewer=reviewer):
+                self.assertIn(reviewer, MODULE.DEFAULT_IDENTITIES)
+                self.assertEqual(MODULE.DEFAULT_IDENTITIES[reviewer], logins)
+
+    def test_issue_82_github_actions_bot_is_not_a_default_reviewer(self):
+        # `github-actions[bot]` is shared by every workflow and is not a
+        # stable identity, so it must not appear in `DEFAULT_IDENTITIES`
+        # for any reviewer. A workflow that wants to be trusted installs
+        # a dedicated bot account and is added per-repo under
+        # `Additional reviewer identities`.
+        all_logins = {
+            login
+            for logins in MODULE.DEFAULT_IDENTITIES.values()
+            for login in logins
+        }
+        self.assertNotIn("github-actions", all_logins)
+        self.assertNotIn("github-actions[bot]", all_logins)
+
+    def test_issue_82_each_new_reviewer_login_is_trusted(self):
+        # Round-trip each new login through the policy. This is the
+        # call site a real `--identity` block would exercise, so a
+        # typo in a login fails here rather than at the next PR.
+        for reviewer, logins in (
+            ("gemini-code-assist", ["gemini-code-assist", "gemini-code-assist[bot]"]),
+            ("greptile", ["greptile-apps", "greptile-apps[bot]"]),
+            ("sourcery", ["sourcery-ai", "sourcery-ai[bot]"]),
+            (
+                "qodo",
+                [
+                    "qodo-code-review",
+                    "qodo-code-review[bot]",
+                    "qodo-free-for-open-source-projects",
+                    "qodo-free-for-open-source-projects[bot]",
+                ],
+            ),
+        ):
+            for login in logins:
+                with self.subTest(reviewer=reviewer, login=login):
+                    current, threads, recent = MODULE.load_fixture(
+                        FIXTURES / "no-reviewer.json"
+                    )
+                    current["reviewRequests"] = [{"login": login}]
+                    result = MODULE.inspect(current, threads, recent, policy(), {})
+                    self.assertEqual(result["state"], "pending")
+                    self.assertEqual(result["observed_reviewers"], [reviewer])
+                    self.assertEqual(result["unknown_bot_identities"], [])
+
+    def test_issue_82_new_check_markers_route_to_their_reviewer(self):
+        # Each new check marker must route a CheckRun to the matching
+        # reviewer key, so a real check on a PR is mapped to the right
+        # name in `observed_reviewers` and the right verdict in the
+        # gate. The markers are the only thing that distinguishes two
+        # reviewers that both ship a CheckRun under similar names.
+        for reviewer, marker in (
+            ("gemini-code-assist", "Gemini Code Assist"),
+            ("greptile", "Greptile"),
+            ("sourcery", "Sourcery"),
+            ("qodo", "Qodo Code Review"),
+        ):
+            with self.subTest(reviewer=reviewer, marker=marker):
+                current, threads, recent = MODULE.load_fixture(
+                    FIXTURES / "no-reviewer.json"
+                )
+                current["statusCheckRollup"] = [{"name": marker, "state": "PENDING"}]
+                result = MODULE.inspect(current, threads, recent, policy(), {})
+                self.assertEqual(result["observed_reviewers"], [reviewer])
+
+    def test_issue_82_rate_limit_breakpoint_against_new_reviewer(self):
+        # #48: the rate-limit breakpoint is reviewer-agnostic, so it
+        # must fire the same way against a newly added reviewer. We
+        # model Greptile here because Issue #82 names it as the
+        # representative case for "published check, real rate limit".
+        # The check fails; the inspector surfaces the failure with a
+        # distinct reason, and the reviewer is marked pending, not
+        # completed — so the lead can route to the breakpoint or the
+        # retry path without reading the generic
+        # "trusted review check failed" error.
+        current, threads, recent = MODULE.load_fixture(FIXTURES / "no-reviewer.json")
+        current["statusCheckRollup"] = [
+            {
+                "name": "Greptile",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "description": "Greptile review failed: Assistant request was rate limited.",
+                "app": {"slug": "greptile-apps"},
+            }
+        ]
+        custom_policy = policy(required={"greptile"})
+        result = MODULE.inspect(current, threads, recent, custom_policy, {})
+        self.assertEqual(result["state"], "pending")
+        self.assertIn("greptile", result["pending_reviewers"])
+        # The rate-limit reason names the reviewer, not the generic
+        # "trusted review check failed without readable current-head
+        # findings" message. That message is the inspector's own error
+        # list, not a pending reason.
+        reasons = result["pending_reasons"]["greptile"]
+        self.assertTrue(
+            any("rate-limit" in reason for reason in reasons),
+            f"no rate-limit reason for greptile: {reasons}",
+        )
+        self.assertFalse(result["errors"])
+
+    def test_issue_82_unknown_bot_still_surfaced_not_trusted(self):
+        # Unknown bots must remain evidence, not trust, even after the
+        # default identity set widens. A future vendor that names
+        # itself `super-review-bot[bot]` is surfaced in
+        # `unknown_bot_identities` and never auto-routes to a reviewer.
+        current, threads, recent = MODULE.load_fixture(FIXTURES / "no-reviewer.json")
+        current["reviews"] = [
+            {
+                "id": "unknown-review",
+                "author": {"login": "super-review-bot[bot]"},
+                "state": "COMMENTED",
+                "submittedAt": "2026-09-08T12:00:00Z",
+                "commit": {"oid": "head-10"},
+            }
+        ]
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "not_applicable")
+        self.assertEqual(result["unknown_bot_identities"], ["super-review-bot[bot]"])
+        self.assertNotIn("super-review-bot", result["observed_reviewers"])
+
+    def test_issue_117_kilo_summary_clear_at_head(self):
+        # The PR #114 shape: Kilo check succeeded, summary comment
+        # posted during the check run, status line `No Issues Found`.
+        # Inspector routes as `clear` with Kilo in
+        # `completed_on_head` — the exact case the Issue #117 scope
+        # comment names as the acceptance criterion.
+        result = inspect_fixture("kilo-summary-clear-at-head.json")
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        self.assertEqual(result["pending_reviewers"], [])
+        self.assertEqual(result["errors"], [])
+
+    def test_issue_117_kilo_summary_stale_does_not_complete(self):
+        # A Kilo summary from a previous run predates the Kilo check
+        # for the current head SHA, and the Kilo check has not
+        # completed. The summary is not promoted to a clear verdict;
+        # Kilo is pending with a reason the lead can act on.
+        result = inspect_fixture("kilo-summary-stale.json")
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        self.assertIn("kilo", result["pending_reviewers"])
+        self.assertEqual(result["errors"], [])
+
+    def test_issue_117_kilo_summary_with_issues_is_untriaged(self):
+        # A Kilo summary that names issues stays not-clear. The
+        # summary is surfaced as a current-head finding the lead can
+        # disposition through the existing `blocking`/`advisory`/
+        # `false_positive` path.
+        result = inspect_fixture("kilo-summary-with-issues.json")
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        self.assertEqual(len(result["untriaged_findings"]), 1)
+        self.assertEqual(result["untriaged_findings"][0]["reviewer"], "kilo")
+
+    def test_issue_117_kilo_rate_limited_check_has_distinct_pending_reason(self):
+        # A failed Kilo check whose description names the rate-limit
+        # phrase stays not-clear and is reported with a distinct
+        # pending reason. The gate is `pending`, not `incomplete`,
+        # because the rate-limit signal is known and the lead's retry
+        # path is unambiguous.
+        result = inspect_fixture("kilo-rate-limited-failed-check.json")
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        self.assertIn("kilo", result["pending_reviewers"])
+        reasons = result["pending_reasons"]["kilo"]
+        self.assertTrue(
+            any("rate-limit" in reason for reason in reasons),
+            f"no rate-limit reason for kilo: {reasons}",
+        )
+        # The generic "trusted review check failed" error must not
+        # appear; the rate-limit case has its own reason and the
+        # state must be `pending`, not `incomplete`.
+        self.assertFalse(
+            any("trusted review check failed" in error for error in result["errors"]),
+            result["errors"],
+        )
+
+    def test_issue_117_kilo_summary_completed_check_satisfies_ordering(self):
+        # Issue #117's "OR the Kilo check run for that head SHA has
+        # completed" branch: the comment was posted BEFORE the check
+        # completed (the PR #114 shape), and the completed check is
+        # what licenses the summary as head evidence.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        # Reorder: comment predates the check by a small margin.
+        current["comments"][0]["createdAt"] = "2026-10-13T23:21:00Z"
+        # Check started at 23:20:05 and completed at 23:25:48.
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+
+    def test_issue_117_kilo_summary_chronological_branch_satisfies_ordering(self):
+        # Issue #117's "after the head commit was pushed" branch: the
+        # chronological proxy `createdAt >= startedAt` suffices on
+        # its own when the check has not yet completed. This is the
+        # case the inspector sees during the Kilo run, before the
+        # check has reported.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        current["statusCheckRollup"][0]["completedAt"] = None
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+
+    def test_issue_117_kilo_ignored_does_not_consume_summary(self):
+        # When Kilo is in the `ignored` set, the summary path is a
+        # no-op: no completion, no finding, no pending reason. A repo
+        # that has explicitly turned Kilo off must not see Kilo
+        # review evidence at all.
+        result = inspect_fixture(
+            "kilo-summary-clear-at-head.json",
+            review_policy=policy(ignored={"kilo"}),
+        )
+        self.assertEqual(result["state"], "not_applicable")
+        self.assertNotIn("kilo", result["observed_reviewers"])
+
+    def test_issue_82_ask_once_contract_for_unknown_bot(self):
+        # The ask-once contract: the inspector surfaces an unknown bot
+        # in `unknown_bot_identities` and never silently trusts it.
+        # The SOP-level "do not re-ask a recorded login" rule is
+        # pinned by `phases/external-review.md` and
+        # `test_backend_contract.py`; here we pin the inspector
+        # side: the surface that drives the SOP exists and is
+        # stable.
+        current, threads, recent = MODULE.load_fixture(FIXTURES / "no-reviewer.json")
+        current["comments"] = [
+            {
+                "id": "unknown-comment",
+                "author": {"login": "brand-new-reviewer[bot]"},
+                "body": "Looks good to me.",
+                "url": "https://github.com/example/project/pull/21#issuecomment-2",
+            }
+        ]
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "not_applicable")
+        self.assertEqual(
+            result["unknown_bot_identities"], ["brand-new-reviewer[bot]"]
+        )
+        # The inspector must NOT promote the unknown bot to a
+        # reviewer under any name, even if the comment is
+        # submitted-shaped.
+        self.assertNotIn("brand-new-reviewer", result["observed_reviewers"])
+
 
 class VerdictRegressionTests(unittest.TestCase):
     def make(self, states):
