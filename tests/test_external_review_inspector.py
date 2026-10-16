@@ -713,10 +713,10 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         )
 
     def test_issue_117_kilo_summary_completed_check_satisfies_ordering(self):
-        # Issue #117's "OR the Kilo check run for that head SHA has
-        # completed" branch: the comment was posted BEFORE the check
-        # completed (the PR #114 shape), and the completed check is
-        # what licenses the summary as head evidence.
+        # B1: the Kilo check COMPLETED with SUCCESS, and the comment
+        # was posted during the run (`createdAt >= startedAt`). The
+        # PR #114 shape — summary comment at 23:25:34Z, check
+        # completed at 23:25:48Z.
         current, threads, recent = MODULE.load_fixture(
             FIXTURES / "kilo-summary-clear-at-head.json"
         )
@@ -727,19 +727,139 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         self.assertEqual(result["state"], "clear", result)
         self.assertEqual(result["completed_on_head"], ["kilo"])
 
-    def test_issue_117_kilo_summary_chronological_branch_satisfies_ordering(self):
-        # Issue #117's "after the head commit was pushed" branch: the
-        # chronological proxy `createdAt >= startedAt` suffices on
-        # its own when the check has not yet completed. This is the
-        # case the inspector sees during the Kilo run, before the
-        # check has reported.
+    def test_issue_117_kilo_summary_edited_in_place_satisfies_ordering(self):
+        # B1: the comment was UPDATED after the head's Kilo run
+        # started (PR #118: summary created 00:03:43Z, updated
+        # 00:26:26Z; head da0e3d0's run started 00:22:51Z and
+        # completed 00:26:24Z). The `updatedAt` is the binding
+        # timestamp when the comment was edited in place; the
+        # original `createdAt` predates the run.
         current, threads, recent = MODULE.load_fixture(
             FIXTURES / "kilo-summary-clear-at-head.json"
         )
-        current["statusCheckRollup"][0]["completedAt"] = None
+        current["comments"][0]["createdAt"] = "2026-10-14T00:03:43Z"
+        current["comments"][0]["updatedAt"] = "2026-10-14T00:26:26Z"
+        # Re-time the Kilo check to match PR #118's head da0e3d0
+        # run, so `updatedAt >= startedAt` and the run succeeded.
+        current["statusCheckRollup"][0]["startedAt"] = "2026-10-14T00:22:51Z"
+        current["statusCheckRollup"][0]["completedAt"] = "2026-10-14T00:26:24Z"
+        current["statusCheckRollup"][0]["conclusion"] = "SUCCESS"
         result = MODULE.inspect(current, threads, recent, policy(), {})
         self.assertEqual(result["state"], "clear", result)
         self.assertEqual(result["completed_on_head"], ["kilo"])
+
+    def test_issue_117_old_summary_with_completed_head_check_does_not_clear(self):
+        # B1 negative: a year-old summary comment is paired with a
+        # newly-completed SUCCESS Kilo check. The old `createdAt`
+        # predates the new head's `startedAt`, so the comment
+        # cannot be bound to this run. The state must be `pending`
+        # and Kilo must NOT be in `completed_on_head`, regardless
+        # of the check's success.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        current["comments"][0]["createdAt"] = "2025-01-01T00:00:00Z"
+        current["comments"][0]["updatedAt"] = None
+        # Kilo check completes SUCCESS, but it is a different
+        # head's run from the year-old comment.
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        self.assertIn("kilo", result["pending_reviewers"])
+
+    def test_issue_117_failed_check_does_not_clear_summary(self):
+        # B1 boundary: a Kilo check that COMPLETED with a non-
+        # `success` conclusion (FAILURE, TIMED_OUT, NEUTRAL,
+        # SKIPPED, etc.) does not license a clear summary, even
+        # when the comment's `createdAt` is at or after the run's
+        # `startedAt`. The previous implementation admitted any
+        # non-empty `completedAt`.
+        for conclusion in ("FAILURE", "TIMED_OUT", "NEUTRAL", "SKIPPED", "ACTION_REQUIRED"):
+            with self.subTest(conclusion=conclusion):
+                current, threads, recent = MODULE.load_fixture(
+                    FIXTURES / "kilo-summary-clear-at-head.json"
+                )
+                current["statusCheckRollup"][0]["conclusion"] = conclusion
+                result = MODULE.inspect(current, threads, recent, policy(), {})
+                self.assertEqual(result["state"], "pending", result)
+                self.assertNotIn("kilo", result["completed_on_head"])
+
+    def test_issue_117_malformed_timestamp_does_not_clear(self):
+        # B1 timestamp sub-finding: a comment whose `createdAt`
+        # is malformed (e.g. `zzzz`) must not be allowed to
+        # silently satisfy the ordering compare via a truthy
+        # non-empty string. The parse_iso8601 gate fails closed,
+        # so Kilo is pending and the gate is `pending`.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        current["comments"][0]["createdAt"] = "zzzz"
+        current["comments"][0]["updatedAt"] = None
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        self.assertIn("kilo", result["pending_reviewers"])
+
+    def test_issue_117_no_issues_found_with_request_changes_does_not_clear(self):
+        # B2: a summary with `Status: No Issues Found` but
+        # `Recommendation: Request Changes` must NOT clear. Issue
+        # #117's scope comment is explicit: any recommendation
+        # other than Merge is "blocking or untriaged until
+        # dispositioned". The previous implementation parsed the
+        # Status field only and admitted Request Changes as a
+        # clear verdict.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        current["comments"][0]["body"] = current["comments"][0]["body"].replace(
+            "Recommendation:** Merge", "Recommendation:** Request Changes"
+        )
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        # The summary is surfaced as a current-head finding the
+        # lead can disposition. B3 makes that disposition flow
+        # work end-to-end.
+        self.assertEqual(len(result["untriaged_findings"]), 1)
+        self.assertEqual(result["untriaged_findings"][0]["reviewer"], "kilo")
+
+    def test_issue_117_summary_finding_can_be_dispositioned_as_blocking(self):
+        # B3: a summary with findings must be reachable through
+        # the existing `blocking` / `advisory` / `false_positive`
+        # disposition path. The previous implementation
+        # hard-coded `disposition: None` and ignored the
+        # `dispositions` argument, so a `blocking` disposition
+        # never reached the gate's blocking state.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-with-issues.json"
+        )
+        for disposition in ("blocking", "advisory", "false_positive"):
+            with self.subTest(disposition=disposition):
+                result = MODULE.inspect(
+                    current,
+                    threads,
+                    recent,
+                    policy(),
+                    {"kilo-summary-issues": disposition},
+                )
+                if disposition == "blocking":
+                    self.assertEqual(result["state"], "blocking", result)
+                    self.assertEqual(len(result["blocking_findings"]), 1)
+                    self.assertEqual(
+                        result["blocking_findings"][0]["reviewer"], "kilo"
+                    )
+                else:
+                    # advisory and false_positive release the
+                    # seat: the finding is no longer active, so
+                    # Kilo's only remaining open seat is the
+                    # check, and the check completed successfully
+                    # without a review. A repo that has Kilo
+                    # required and an issues summary dispositioned
+                    # advisory ends up `pending` on the
+                    # check-only path, exactly like a review
+                    # thread dispositioned advisory.
+                    self.assertEqual(result["state"], "pending", result)
+                    self.assertEqual(result["untriaged_findings"], [])
 
     def test_issue_117_kilo_ignored_does_not_consume_summary(self):
         # When Kilo is in the `ignored` set, the summary path is a
