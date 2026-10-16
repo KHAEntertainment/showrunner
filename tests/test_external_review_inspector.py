@@ -550,16 +550,23 @@ class ExternalReviewInspectorTests(unittest.TestCase):
                     self.assertEqual(result["unknown_bot_identities"], [])
 
     def test_issue_82_new_check_markers_route_to_their_reviewer(self):
-        # Each new check marker must route a CheckRun to the matching
-        # reviewer key, so a real check on a PR is mapped to the right
-        # name in `observed_reviewers` and the right verdict in the
-        # gate. The markers are the only thing that distinguishes two
-        # reviewers that both ship a CheckRun under similar names.
+        # Each verified check marker must route a CheckRun to the
+        # matching reviewer key, so a real check on a PR is mapped to
+        # the right name in `observed_reviewers` and the right verdict
+        # in the gate. The markers are the only thing that
+        # distinguishes two reviewers that both ship a CheckRun under
+        # similar names. Only reviewers with a verified producing
+        # check are tested here: Greptile (verified on
+        # b-editor/beutl#3095, app slug `greptile-apps`, check name
+        # "Greptile Review") and Sourcery (verified on
+        # linuxdeepin/dde-daemon#1280, app slug `sourcery-ai`, check
+        # name "Sourcery review"). Gemini and Qodo have no verified
+        # producing check; their markers are deliberately absent
+        # from `DEFAULT_CHECK_MARKERS`, and a check that names
+        # either must be reported, not auto-routed.
         for reviewer, marker in (
-            ("gemini-code-assist", "Gemini Code Assist"),
-            ("greptile", "Greptile"),
-            ("sourcery", "Sourcery"),
-            ("qodo", "Qodo Code Review"),
+            ("greptile", "Greptile Review"),
+            ("sourcery", "Sourcery review"),
         ):
             with self.subTest(reviewer=reviewer, marker=marker):
                 current, threads, recent = MODULE.load_fixture(
@@ -568,6 +575,30 @@ class ExternalReviewInspectorTests(unittest.TestCase):
                 current["statusCheckRollup"] = [{"name": marker, "state": "PENDING"}]
                 result = MODULE.inspect(current, threads, recent, policy(), {})
                 self.assertEqual(result["observed_reviewers"], [reviewer])
+
+    def test_issue_82_gemini_and_qodo_check_markers_are_not_added(self):
+        # Gemini and Qodo have no verified producing check. Their
+        # apps grant `checks: read` only, so a check that names
+        # either must NOT auto-route to a reviewer. The login is
+        # trusted (PR comments are a known signal), but the check
+        # marker is deliberately absent: a future vendor that
+        # publishes a check must add a marker with evidence, not
+        # borrow one.
+        for marker in (
+            "Gemini Code Assist",
+            "Gemini Code Assist Review",
+            "Qodo Code Review",
+            "Qodo",
+        ):
+            with self.subTest(marker=marker):
+                current, threads, recent = MODULE.load_fixture(
+                    FIXTURES / "no-reviewer.json"
+                )
+                current["statusCheckRollup"] = [{"name": marker, "state": "PENDING"}]
+                result = MODULE.inspect(current, threads, recent, policy(), {})
+                self.assertEqual(result["observed_reviewers"], [])
+                self.assertNotIn("gemini-code-assist", result["observed_reviewers"])
+                self.assertNotIn("qodo", result["observed_reviewers"])
 
     def test_issue_82_rate_limit_breakpoint_against_new_reviewer(self):
         # #48: the rate-limit breakpoint is reviewer-agnostic, so it

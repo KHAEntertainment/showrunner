@@ -29,17 +29,29 @@ from typing import Any, Iterable
 # `Additional reviewer identities` in `PROJECT_CONTEXT.md`.
 #
 # Vendor identity notes (kept here, not in the SOP, so the data row is the
-# only thing that changes when a login does):
-#   - gemini-code-assist: comment-only (no published check-run app);
-#     re-reviews on new pushes by default, so a stale review is `pending`.
-#   - greptile: published check (app slug `greptile-apps`); re-reviews new
-#     pushes by default, so a stale review is `pending`.
-#   - sourcery: published check (app slug `sourcery-ai`); re-reviews on new
-#     pushes; comment-only summaries are also posted as PR comments.
-#   - qodo: two logins confirmed (`qodo-code-review[bot]`,
-#     `qodo-free-for-open-source-projects[bot]`); comment-only by default;
-#     a check run can be enabled per repo. The third login, `qodo-ai[bot]`,
-#     exists but its review role is unverified and is not added.
+# only thing that changes when a login does). Reviewer behavior below
+# without a `check: ...` line is comment-only and has no entry in
+# `DEFAULT_CHECK_MARKERS`; pushing re-review defaults are documented where
+# verified (CodeRabbit, Kilo, Greptile, Sourcery) and left unverified
+# otherwise (Gemini, Qodo):
+#   - gemini-code-assist: comment-only. Re-review-on-push default is
+#     UNVERIFIED here; Google's docs describe the initial review and a
+#     manual `/gemini review` trigger, not an automatic new-push
+#     re-review. Treat the documented "comment-only" as the only
+#     confirmed shape.
+#   - greptile: review (`greptile-apps[bot]`) AND check ("Greptile
+#     Review", app slug `greptile-apps`). Re-reviews new pushes by
+#     default. Verified by a real run on b-editor/beutl#3095.
+#   - sourcery: review (`sourcery-ai[bot]`) AND check ("Sourcery
+#     review", app slug `sourcery-ai`). Re-reviews on new pushes.
+#     Verified by a real run on linuxdeepin/dde-daemon#1280.
+#   - qodo: review only (`qodo-code-review[bot]`,
+#     `qodo-free-for-open-source-projects[bot]`). Both Qodo apps grant
+#     `checks: read` only (no `checks: write`, no `statuses: write`),
+#     so no published CheckRun or StatusContext is produced.
+#     `qodo-ai[bot]` exists but its review role is unverified and is
+#     not added. Comment-only by default; a check run is not added
+#     because no producing app was found.
 #   - pr-agent (self-hosted): excluded — runs under `github-actions[bot]`,
 #     which is shared with every workflow and therefore not a stable
 #     identity. Trust per repo only when it posts under a dedicated bot
@@ -85,16 +97,16 @@ DEFAULT_IDENTITIES: dict[str, set[str]] = {
 
 # Check-run markers: a check matches a reviewer if any marker appears in the
 # check's combined identity (name, context, app slug, app name, workflow
-# name). Only added where verified by a real check-run app slug; comment-only
+# name). Only added where a real check producer was verified; comment-only
 # reviewers leave this empty and complete through review evidence alone.
+# The Kilo marker covers the historical "kilocode" and the current
+# "kilo-code-bot" app slugs (renamed 2025-10-28).
 DEFAULT_CHECK_MARKERS: dict[str, set[str]] = {
     "coderabbit": {"coderabbit", "coderabbitai"},
-    "kilo": {"kilo code", "kilocode", "kilo-code"},
+    "kilo": {"kilo code", "kilocode", "kilo-code", "kilo-code-bot"},
     "github-copilot": {"copilot code review", "github copilot review"},
-    "gemini-code-assist": {"gemini code assist", "gemini-code-assist"},
-    "greptile": {"greptile", "greptile-apps"},
-    "sourcery": {"sourcery", "sourcery-ai"},
-    "qodo": {"qodo", "qodo code review"},
+    "greptile": {"greptile", "greptile review", "greptile-apps"},
+    "sourcery": {"sourcery", "sourcery review", "sourcery-ai"},
 }
 
 # Issue #117: Kilo posts a PR issue comment with this marker as its
