@@ -635,6 +635,50 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         )
         self.assertFalse(result["errors"])
 
+    def test_issue_82_b5_rate_limited_reviewer_with_completed_review_is_pending(self):
+        # B5: a current-head Greptile COMMENTED review PLUS a
+        # failed rate-limited Greptile check must NOT clear. The
+        # review is valid evidence, but the rate-limit is a
+        # separate signal that the lead's retry or breakpoint path
+        # must see. The state is `pending` with a rate-limit
+        # reason; the completed review is still recorded in
+        # `completed_on_head` for the lead's audit.
+        current, threads, recent = MODULE.load_fixture(FIXTURES / "no-reviewer.json")
+        current["reviews"] = [
+            {
+                "id": "greptile-review",
+                "author": {"login": "greptile-apps[bot]"},
+                "state": "COMMENTED",
+                "submittedAt": "2026-10-13T23:24:00Z",
+                "commit": {"oid": current["headRefOid"]},
+            }
+        ]
+        current["statusCheckRollup"] = [
+            {
+                "name": "Greptile Review",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "description": "Greptile review failed: Assistant request was rate limited.",
+                "app": {"slug": "greptile-apps"},
+            }
+        ]
+        custom_policy = policy(required={"greptile"})
+        result = MODULE.inspect(current, threads, recent, custom_policy, {})
+        # The state is `pending`, not `clear`. The rate-limit
+        # reason overrides the completed review: the lead must
+        # decide whether to retry or take the breakpoint.
+        self.assertEqual(result["state"], "pending", result)
+        self.assertIn("greptile", result["pending_reviewers"])
+        # The completed review is still recorded so the lead's
+        # audit trail sees both signals.
+        self.assertIn("greptile", result["completed_on_head"])
+        reasons = result["pending_reasons"]["greptile"]
+        self.assertTrue(
+            any("rate-limit" in reason for reason in reasons),
+            f"no rate-limit reason for greptile: {reasons}",
+        )
+        self.assertFalse(result["errors"])
+
     def test_issue_82_unknown_bot_still_surfaced_not_trusted(self):
         # Unknown bots must remain evidence, not trust, even after the
         # default identity set widens. A future vendor that names

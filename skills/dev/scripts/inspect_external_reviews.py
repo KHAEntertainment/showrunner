@@ -1151,6 +1151,7 @@ def inspect(
     pending_reviewers = (
         check_pending | requested | stale_reviewers | untriaged_reviewers
         | kilo_pending
+        | rate_limited_reviewers
         | (expected - completed_on_head)
     )
     check_only_reviewers = check_complete - completed_on_head
