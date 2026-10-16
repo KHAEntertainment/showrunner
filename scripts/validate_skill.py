@@ -171,6 +171,15 @@ def routing_section(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+# Issue #69: wording that must live inside external-review.md's Result Routing
+# section itself (checked section-scoped in main), not merely anywhere in the file.
+RESULT_ROUTING_PINS = (
+    "whose only open seats are filled by a completed, current-head substitution routes as `clear`, provided no finding, the substitute's included, is blocking or awaiting disposition",
+    "a substitute at an older head does not count",
+    "A completed, current-head substitute review with a blocking finding routes as `blocking`, not as any other `pending`.",
+)
+
+
 def markdown_section(text: str, heading: str) -> str | None:
     """Return a top-level (`## …`) section body by exact heading, or None if absent.
 
@@ -604,9 +613,10 @@ def main() -> int:
             # the deadline choices. These pin the threshold, the per-reviewer
             # count and what resets it, the backend-neutral fallback chain,
             # the family-distinct substitute (never the internal reviewer's
-            # seat), the seat and required-check limits, the new-head path,
-            # and the Result Routing clause that lets a completed substitution
-            # reach `clear` — without it the substitute cannot reach APPROVE.
+            # seat), the seat and required-check limits, and the new-head
+            # path. The Result Routing clause that lets a completed
+            # substitution reach `clear` (without it the substitute cannot
+            # reach APPROVE) is pinned in its own section below.
             "After 3 consecutive rate-limited responses to review requests on the same PR",
             "send that reviewer no further retries",
             "external_reviewer_unavailable: rate_limited",
@@ -617,13 +627,18 @@ def main() -> int:
             # counting it once would freeze a single-comment reviewer at 1.
             "An in-place edit that reports a new rate-limit event counts as a new rate-limited response",
             "a reviewer that reports each rate limit by editing a single summary comment still reaches the threshold",
-            "a new event is a new head, a new limit window or reset time, or a response to a new retry request",
+            "a new event is a new head, a new limit window or reset time, or a response to a new review request (a retry, or the re-request the Head-Commit Invariant obligates)",
             "Only a re-render of the same event (same head, same window, no new request) does not count again.",
+            # Issue #69: whether an unrequested rate-limit at a new head counts.
+            "An automatic rate-limit report at a new head, with no explicit request from the lead, counts once toward the threshold",
+            "so a rate-limited response to it counts as well",
             "The breakpoint is an exit from the retry loop, not a bypass",
             "The review fallback chain is the ordered set of available reviewer routes the lead can dispatch on the selected backend",
             "on Traycer, the agent selection guide's review routes",
             "on Claude-native, any distinct-family reviewer the lead can actually dispatch",
-            "differs from the implementation worker, the QA lane, and the internal reviewer",
+            # Issue #69: the fresh-identity requirement was unpinned; a
+            # substitute that reuses an existing seat adds no diversity.
+            "The substitute is a fresh identity whose model family differs from the implementation worker, the QA lane, and the internal reviewer",
             "never reuses the internal reviewer's seat",
             "never falls back to the bypass or to a same-family reviewer",
             "the lead never bypasses unilaterally",
@@ -644,16 +659,22 @@ def main() -> int:
             "that re-request is not a retry",
             "After a breakpoint has fired on that PR for that reviewer, the count is already at or above the threshold",
             "dispatches a fresh substitute for the new head without a second retry cycle",
-            "whose only open seats are filled by a completed, current-head substitution routes as `clear`",
-            "no finding, the substitute's included, is blocking or awaiting disposition",
-            "a substitute at an older head does not count",
-            "A completed, current-head substitute review with a blocking finding routes as `blocking`, not as any other `pending`.",
+            # The Result Routing clause itself is pinned by a section-scoped
+            # check (RESULT_ROUTING_PINS below): the "no finding, the
+            # substitute's included, is blocking or awaiting disposition"
+            # wording also appears in the Rate-limit breakpoint section, so
+            # whole-file matching could not tell if the routing line were
+            # deleted.
         ),
         # Issue #33: without a named retro line, repeated bypass across
         # rounds was only ever visible per-PR, never as a pattern.
         "phases/phase5.md": (
             "External-Review Bypasses",
             "reported explicitly, including `0`",
+            # Issue #69: substitutions are reported next to bypasses, kept
+            # separate because a substitution is a completed review.
+            "also report the count of rate-limit breakpoint substitutions this round",
+            "Keep it separate from the bypass count: a substitution is a completed review, not a bypass",
             # Issue #26: the retro reads post-merge verification records
             # rather than re-running the check phase4.md already performed.
             "### Post-Merge Verification",
@@ -681,6 +702,8 @@ def main() -> int:
             # Issue #48: the rating is decided here, so a completed current-head
             # substitution must route as `clear` here too, not only in the gate.
             "whose only open seats are filled by a completed, current-head substitution routes as `clear`",
+            # Issue #69: triage must name a completed substitute's findings.
+            "and every finding of a completed current-head substitute review",
             "per **Rate-limit breakpoint** in the external-review gate",
             "no finding, the substitute's included, is blocking or awaiting disposition",
             "a substitute at an older head does not count",
@@ -798,6 +821,27 @@ def main() -> int:
             for token in tokens:
                 if token not in target_text:
                     fail(errors, f"{relative} missing required policy: {token}")
+
+    # Issue #69: the Result Routing clear-condition shares its wording with the
+    # Rate-limit breakpoint section, so per_file_policy's whole-file matching
+    # would still pass after the routing line itself was deleted. Pin it inside
+    # the `## Result Routing` section, so the validator fails on its own (the
+    # export-ignored `tests/` are absent from archive validation).
+    external_review = skill_dir / "phases" / "external-review.md"
+    if external_review.is_file():
+        routing_body = markdown_section(
+            external_review.read_text(encoding="utf-8"), "## Result Routing"
+        )
+        if routing_body is None:
+            fail(errors, "phases/external-review.md missing required section: Result Routing")
+        else:
+            routing_text = " ".join(routing_body.split())
+            for token in RESULT_ROUTING_PINS:
+                if token not in routing_text:
+                    fail(
+                        errors,
+                        f"phases/external-review.md Result Routing missing required policy: {token}",
+                    )
 
     # Issue #54: SKILL.md must hook the reply contract in BOTH required
     # sections (Session State Anchor + Global Rules), not merely anywhere in

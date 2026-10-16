@@ -143,7 +143,7 @@ Launch and observe it through the selected adapter. If its identity, route, resp
 
 ## Review Rating
 
-Before assigning a rating, rerun the external-review inspector, triage every active current-head trusted-reviewer finding, and verify that the PR's current `headRefOid` still matches `.agent/dev-state.md`.
+Before assigning a rating, rerun the external-review inspector, triage every active current-head trusted-reviewer finding and every finding of a completed current-head substitute review, and verify that the PR's current `headRefOid` still matches `.agent/dev-state.md`.
 
 If the head changed, invalidate QA, internal review, and external-review completion
 for the new head, retain historical evidence, and follow **Review after fixes**
