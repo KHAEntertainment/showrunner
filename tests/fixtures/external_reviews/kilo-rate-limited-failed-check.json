@@ -10,11 +10,14 @@
         "name": "Kilo Code Review",
         "status": "COMPLETED",
         "conclusion": "FAILURE",
-        "startedAt": "2026-10-13T23:20:05Z",
-        "completedAt": "2026-10-13T23:25:48Z",
-        "description": "Review failed: Assistant request was rate limited. Will retry on the next push.",
+        "startedAt": "2026-10-13T22:48:19Z",
+        "completedAt": "2026-10-13T22:59:16Z",
         "app": {
-          "slug": "kilocode"
+          "slug": "kilo-code-bot"
+        },
+        "output": {
+          "title": "Kilo Code Review failed",
+          "summary": "Review failed: Assistant request was rate limited"
         }
       }
     ],

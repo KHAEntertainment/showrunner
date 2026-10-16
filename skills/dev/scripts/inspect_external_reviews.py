@@ -287,9 +287,14 @@ def check_timestamps(check: dict[str, Any]) -> tuple[str, str]:
 def check_description(check: dict[str, Any]) -> str:
     """Read a check's text payload for vendor-specific markers.
 
-    GitHub exposes a CheckRun's `description` (and, for newer APIs, an
-    `output.text`). The rate-limit phrase lives there. Concatenated so a
-    future field can be added without changing the call sites.
+    The rate-limit phrase lives in `output.summary` (and `output.title`,
+    for vendors that name their failure mode there) of the head SHA's
+    check run. GitHub's `gh pr view --json statusCheckRollup` does not
+    expose this field; the live `fetch_pr` path augments each check
+    with `output` by querying the head's check-runs REST endpoint
+    (see `fetch_pr_with_check_output`). The `description` field is
+    kept for backward compatibility with fixtures that pre-date the
+    REST augmentation.
     """
     if not isinstance(check, dict):
         return ""
@@ -297,6 +302,7 @@ def check_description(check: dict[str, Any]) -> str:
         str(check.get("description") or ""),
         str(nested(check, "output", "text") or ""),
         str(nested(check, "output", "summary") or ""),
+        str(nested(check, "output", "title") or ""),
     ]
     return "\n".join(part for part in parts if part)
 
@@ -614,6 +620,116 @@ def fetch_pr(repo: str, pr_number: int, snapshot: Path | None = None) -> dict[st
     if not isinstance(value, dict):
         raise InspectionError("gh pr view did not return an object")
     return value
+
+
+def fetch_check_output(repo: str, head_sha: str, name: str) -> dict[str, Any] | None:
+    """Return the live `output` (and timing) of the head SHA's named check.
+
+    `gh pr view --json statusCheckRollup` returns a CheckRun shape that
+    omits both `output` and the run id; the rate-limit phrase lives in
+    `output.summary`. To detect a rate-limited Kilo check on live data
+    (#117), we call the check-runs REST endpoint for the head SHA and
+    return the most recent matching run's output. Failures (network,
+    permissions, malformed response) are reported as `None`: the
+    inspector's `check_description` will then fall back to the
+    `description` field the rollup does carry, and a missing output
+    fails closed only as a check the inspector cannot read.
+
+    `name` is matched against the check's `name` field; the returned
+    object is the same shape the rollup would carry if `output` were
+    on it, so callers can splat it back into a rollup entry.
+    """
+    if not repo or not head_sha or not name:
+        return None
+    owner, separator, name_repo = repo.partition("/")
+    if not separator or not owner or not name_repo:
+        return None
+    response = run_json(
+        [
+            "rtk",
+            "gh",
+            "api",
+            f"repos/{owner}/{name_repo}/commits/{head_sha}/check-runs",
+            "-f",
+            f"check_name={name}",
+            "--jq",
+            ".check_runs | sort_by(.started_at) | last // null",
+        ]
+    )
+    if not isinstance(response, dict):
+        return None
+    output = response.get("output") or {}
+    if not isinstance(output, dict):
+        return None
+    return {
+        "id": response.get("id"),
+        "name": response.get("name"),
+        "status": response.get("status"),
+        "conclusion": response.get("conclusion"),
+        "startedAt": response.get("started_at"),
+        "completedAt": response.get("completed_at"),
+        "detailsUrl": response.get("details_url"),
+        "app": response.get("app"),
+        "output": output,
+    }
+
+
+def augment_checks_with_output(
+    current: dict[str, Any], repo: str
+) -> dict[str, Any]:
+    """Augment each check in the rollup with its live `output` field.
+
+    Live data requires an extra REST call per check; fixture data
+    already carries `output`. To keep fixtures authoritative (so a
+    fixture can deliberately model an absent output), this function
+    only augments a check that lacks `output`; the existing
+    `output`/`description` payload is never overwritten.
+
+    Failures are silent: the inspector will report the check as
+    unreadable via the generic "trusted review check failed without
+    readable current-head findings" error path, which is the safe
+    side. The rate-limit path therefore needs a fixture or a
+    successful REST call; the SOP names a `description` field as a
+    documented fallback for vendors that expose the rate-limit text
+    on the rollup itself.
+    """
+    if not isinstance(current, dict):
+        return current
+    head_sha = str(current.get("headRefOid") or "")
+    if not head_sha:
+        return current
+    rollup = current.get("statusCheckRollup")
+    if not isinstance(rollup, list):
+        return current
+    for index, check in enumerate(rollup):
+        if not isinstance(check, dict):
+            continue
+        # Skip checks that already carry the augmenting fields
+        # (fixtures) or that have a `description` (the documented
+        # fallback path). The REST call only adds value when both
+        # are absent.
+        if isinstance(check.get("output"), dict) and check.get("output"):
+            continue
+        if check.get("description"):
+            continue
+        name = str(check.get("name") or "")
+        if not name:
+            continue
+        try:
+            augmented = fetch_check_output(repo, head_sha, name)
+        except InspectionError:
+            continue
+        if not augmented:
+            continue
+        merged = dict(check)
+        # Fill only the timing fields when the rollup did not
+        # carry them; the REST values are the canonical ones for
+        # the head SHA and so outrank the rollup's.
+        for field in ("id", "startedAt", "completedAt", "detailsUrl", "app", "output"):
+            if augmented.get(field) and not merged.get(field):
+                merged[field] = augmented[field]
+        rollup[index] = merged
+    return current
 
 
 def fetch_recent(repo: str, current_pr: int, limit: int) -> list[dict[str, Any]]:
@@ -1102,6 +1218,12 @@ def main() -> int:
             current, threads, recent = load_fixture(args.fixture)
         else:
             current = fetch_pr(args.repo, args.pr, args.payload_snapshot)
+            # `gh pr view --json statusCheckRollup` does not expose
+            # `output` or the run id, so the rate-limit phrase on a
+            # failed Kilo check would otherwise be unreachable on
+            # live data. Augment checks with the head SHA's
+            # REST-fetched output when the rollup is silent.
+            augment_checks_with_output(current, args.repo)
             threads = fetch_threads(args.repo, args.pr)
             recent = fetch_recent(args.repo, args.pr, args.recent_pr_limit)
         result = inspect(
