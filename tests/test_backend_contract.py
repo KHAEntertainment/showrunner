@@ -1001,6 +1001,281 @@ class BackendContractTests(unittest.TestCase):
         self.assertIn("A current-head `CHANGES_REQUESTED` remains blocking", external)
         self.assertIn("A timeout bypass cannot clear a known actionable finding", external)
 
+    def test_ask_once_contract_pins_section_and_each_outcome(self) -> None:
+        """Issue #82: the ask-once contract has a single load-bearing
+        SOP paragraph and three discrete outcomes (trust, ignore,
+        decide later) whose wording names the recording site.
+
+        Issue #82 acceptance criterion: deleting the section, or
+        any one outcome, fails both the validator and the unit
+        suite. The test pins each load-bearing sentence (validator
+        pins added in `scripts/validate_skill.py` per-file policy
+        for `phases/external-review.md`; this test exercises the
+        same tokens against the live file). Mutations are
+        performed outside the worktree and are not part of this
+        test body.
+        """
+        external = " ".join(self.read("phases/external-review.md").split())
+        for requirement in (
+            # Section heading and the rule's scope.
+            "Ask once about unknown review bots, record the answer",
+            "asks the user **once per repository**",
+            # Each of the three outcomes names the recording
+            # site, so a reworded outcome still has to name it
+            # to keep the validator and the suite green.
+            "trust → `Additional reviewer identities`",
+            "ignore → `Ignored reviewers`",
+            "decide later → a `Pending reviewer decisions` line",
+            # The no-re-ask rule: a recorded `Pending reviewer
+            # decisions` login does not re-trigger the question.
+            "A login already listed under `Pending reviewer decisions` is **not re-asked**",
+            # The trust-or-ignore rule: the lead never adds
+            # without the user's answer.
+            "The lead never adds an identity without the user's answer",
+        ):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, external)
+
+    def test_ask_once_mutation_each_outcome_fails_validation(self) -> None:
+        """B6 acceptance criterion: deleting the ask-once section
+        or any one outcome fails both the validator and the
+        unit suite.
+
+        The test performs seven `validate_skill.py` invocations
+        against mutated copies in a scratch tempdir. Each
+        mutation deletes ONE of:
+          - the entire `### Ask once` section;
+          - the trust → `Additional reviewer identities` line;
+          - the ignore → `Ignored reviewers` line;
+          - the decide later → `Pending reviewer decisions` line;
+          - the "not re-asked" paragraph;
+          - the `Pending reviewer decisions` line in
+            `templates/PROJECT_CONTEXT_TEMPLATE.md`;
+          - the `Pending reviewer decisions` line in the
+            root `PROJECT_CONTEXT.md`.
+
+        All seven mutations must produce a validator error. A
+        `clear_path` mutation (an unrelated, additive change)
+        must NOT produce an error: that is the negative
+        control that proves the assertions are scoped to the
+        ask-once contract rather than to the file in general.
+
+        The mutation is performed outside the worktree: the
+        Skill is copied into a tempdir, the target file is
+        mutated, and `validate_skill.py --skill-dir <scratch>`
+        is run against the copy.
+        """
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+        # The validator pins tokens in three files: the
+        # Skill's `phases/external-review.md`, the Skill's
+        # `templates/PROJECT_CONTEXT_TEMPLATE.md`, and the
+        # root `PROJECT_CONTEXT.md`. The first two are
+        # reachable via `--skill-dir`; the third is
+        # resolved against the validator's own parent
+        # directory. To exercise all three in a single
+        # process without touching the worktree, we copy
+        # the entire repo into a scratch dir, copy the
+        # validator script too so its `repo_root` is the
+        # scratch root, and run the validator against the
+        # scratch copy.
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch_path = Path(scratch)
+            # Copy only what the validator reads. The
+            # validator's `repo_root` is
+            # `Path(__file__).resolve().parents[1]`, so we
+            # place `scripts/validate_skill.py` under
+            # `<scratch>/scripts/validate_skill.py` and pass
+            # `--skill-dir <scratch>/skills/dev` to make
+            # the validator's tree-root = `<scratch>`.
+            for relative in (
+                "scripts/validate_skill.py",
+                "skills",
+                "PROJECT_CONTEXT.md",
+            ):
+                source = ROOT / relative
+                if source.is_dir():
+                    shutil.copytree(source, scratch_path / relative)
+                else:
+                    target_file = scratch_path / relative
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target_file)
+            # Now run the validator with a CWD of
+            # `<scratch>` so `Path(__file__).resolve().parents[1]`
+            # = `<scratch>` and `repo_root` = `<scratch>`.
+            skill_dir = scratch_path / "skills" / "dev"
+            external_review = skill_dir / "phases" / "external-review.md"
+            template = skill_dir / "templates" / "PROJECT_CONTEXT_TEMPLATE.md"
+            project = scratch_path / "PROJECT_CONTEXT.md"
+            text = external_review.read_text(encoding="utf-8")
+            # The whole ask-once section, terminated by the
+            # next `##` heading (here: "Start Observation in
+            # Phase 3.5"). Built deterministically from the
+            # heading text.
+            ask_once = (
+                "### Ask once about unknown review bots, record the answer"
+            )
+            ask_once_section_re = (
+                re.escape(ask_once) + r".*?(?=^## |\Z)"
+            )
+            # The "not re-asked" paragraph: the sentence that
+            # names the no-re-ask rule, anchored on the unique
+            # **not re-asked** marker.
+            not_re_asked_paragraph_re = (
+                r"A login already listed under `Pending reviewer decisions` "
+                r"is \*\*not re-asked\*\*.*?(?=^A login already listed|^\n|"
+                r"^## |\Z)"
+            )
+
+            def run_validator():
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        "scripts/validate_skill.py",
+                        "--skill-dir",
+                        str(skill_dir),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    cwd=scratch_path,
+                )
+
+            # Negative control: an additive change unrelated to
+            # the ask-once contract must not fail the validator.
+            baseline = run_validator()
+            self.assertEqual(
+                baseline.returncode, 0,
+                f"baseline validator failed: {baseline.stderr}",
+            )
+            mutated = text + "\n<!-- unrelated additive change -->\n"
+            external_review.write_text(mutated, encoding="utf-8")
+            control = run_validator()
+            self.assertEqual(
+                control.returncode, 0,
+                f"additive control must not fail validator: "
+                f"stderr={control.stderr} stdout={control.stdout}",
+            )
+
+            # Restore target before each named mutation so the
+            # ones below operate on a known starting state.
+            external_review.write_text(text, encoding="utf-8")
+
+            # Mutation 1: delete the whole section.
+            external_review.write_text(
+                re.sub(ask_once_section_re, "", text, count=1, flags=re.S | re.M),
+                encoding="utf-8",
+            )
+            removed_section = run_validator()
+            self.assertNotEqual(
+                removed_section.returncode, 0,
+                "deleting the ask-once section must fail the validator",
+            )
+            self.assertTrue(
+                any(
+                    "Ask once" in line
+                    for line in removed_section.stderr.splitlines()
+                ),
+                f"missing ask-once error in: {removed_section.stderr}",
+            )
+
+            # Mutation 2: drop the trust outcome line.
+            external_review.write_text(
+                text.replace(
+                    "trust → `Additional reviewer identities`",
+                    "trust outcome: pin removed",
+                ),
+                encoding="utf-8",
+            )
+            no_trust = run_validator()
+            self.assertNotEqual(
+                no_trust.returncode, 0,
+                "deleting the trust outcome must fail the validator",
+            )
+
+            # Mutation 3: drop the ignore outcome line.
+            external_review.write_text(
+                text.replace(
+                    "ignore → `Ignored reviewers`",
+                    "ignore outcome: pin removed",
+                ),
+                encoding="utf-8",
+            )
+            no_ignore = run_validator()
+            self.assertNotEqual(
+                no_ignore.returncode, 0,
+                "deleting the ignore outcome must fail the validator",
+            )
+
+            # Mutation 4: drop the decide-later outcome line.
+            external_review.write_text(
+                text.replace(
+                    "decide later → a `Pending reviewer decisions` line",
+                    "decide later outcome: pin removed",
+                ),
+                encoding="utf-8",
+            )
+            no_decide = run_validator()
+            self.assertNotEqual(
+                no_decide.returncode, 0,
+                "deleting the decide-later outcome must fail the validator",
+            )
+
+            # Mutation 5: drop the "not re-asked" paragraph.
+            external_review.write_text(
+                re.sub(
+                    not_re_asked_paragraph_re, "",
+                    text, count=1, flags=re.S | re.M,
+                ),
+                encoding="utf-8",
+            )
+            no_re_asked = run_validator()
+            self.assertNotEqual(
+                no_re_asked.returncode, 0,
+                "deleting the not-re-asked paragraph must fail the validator",
+            )
+
+            # Mutation 6: drop the template's
+            # `Pending reviewer decisions` line. The validator
+            # checks the template by per-file policy; the
+            # copy is in scratch_path / "templates" / ...
+            template_text = template.read_text(encoding="utf-8")
+            template.write_text(
+                template_text.replace(
+                    "**Pending reviewer decisions**: none",
+                    "**Pending reviewer decisions**: removed for QA",
+                ),
+                encoding="utf-8",
+            )
+            no_template = run_validator()
+            self.assertNotEqual(
+                no_template.returncode, 0,
+                "deleting the template's `Pending reviewer decisions` "
+                "line must fail the validator",
+            )
+
+            # Mutation 7: drop the root PROJECT_CONTEXT.md
+            # `Pending reviewer decisions` line.
+            template.write_text(template_text, encoding="utf-8")
+            project = scratch_path / "PROJECT_CONTEXT.md"
+            project_text = project.read_text(encoding="utf-8")
+            project.write_text(
+                project_text.replace(
+                    "**Pending reviewer decisions**: none",
+                    "**Pending reviewer decisions**: removed for QA",
+                ),
+                encoding="utf-8",
+            )
+            no_project = run_validator()
+            self.assertNotEqual(
+                no_project.returncode, 0,
+                "deleting PROJECT_CONTEXT.md's `Pending reviewer "
+                "decisions` line must fail the validator",
+            )
+
     def test_bypass_is_scoped_to_unavailable_review_and_records_commit_range(self) -> None:
         """Issue #33: bypass must never excuse a self-invalidated review.
 
