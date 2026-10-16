@@ -605,6 +605,25 @@ def main() -> int:
         # read as "unavailable". These tokens pin the scope narrowing and the
         # commit-range requirement in the file that states the policy itself.
         "phases/external-review.md": (
+            # Issue #82: the ask-once contract. The contract is the
+            # single piece of SOP prose that keeps the unknown-bot
+            # surface from becoming a re-ask every PR, and it has
+            # three discrete outcomes whose wording names the
+            # recording site. Each token below is a single
+            # per-outcome load-bearing sentence: deleting the
+            # trust → ... line, or the ignore → ... line, or the
+            # decide later → ... line, fails the validator closed
+            # rather than degrading silently. The pair
+            # (`Pending reviewer decisions`, "not re-asked") is the
+            # no-re-ask rule the contract needs to function; the
+            # `once per repository` sentence is the rule's scope.
+            "Ask once about unknown review bots, record the answer",
+            "asks the user **once per repository**",
+            "trust → `Additional reviewer identities`",
+            "ignore → `Ignored reviewers`",
+            "decide later → a `Pending reviewer decisions` line",
+            "A login already listed under `Pending reviewer decisions` is **not re-asked**",
+            "The lead never adds an identity without the user's answer",
             "never for a review that arrived and was invalidated by the author's own response",
             "obligates a re-request at the new head, not a bypass",
             "the exact unreviewed commit range",
@@ -811,6 +830,19 @@ def main() -> int:
             "never `graft init` in managed projects",
             "graph_evidence: unavailable",
         ),
+        # Issue #82: the template's External Review Policy
+        # section is the recording site for a freshly created
+        # `PROJECT_CONTEXT.md`. The `Pending reviewer decisions`
+        # line and the ask-once outcomes must be present so
+        # initializing repos carry the contract forward. The QA
+        # round 1 M4 mutation showed deleting the template line
+        # (or any one outcome) passed both the validator and
+        # the unit suite, so each token is pinned here.
+        "templates/PROJECT_CONTEXT_TEMPLATE.md": (
+            "External Review Policy (optional)",
+            "**Pending reviewer decisions**: none",
+            "`Ignored reviewers` takes precedence over every other setting",
+        ),
     }
     for relative, tokens in SWAP_EVIDENCE_PINS.items():
         per_file_policy[relative] = per_file_policy.get(relative, ()) + tokens
@@ -921,6 +953,21 @@ def main() -> int:
         fail(errors, "missing required file: PROJECT_CONTEXT.md")
     else:
         project_text = project_context.read_text(encoding="utf-8")
+        # Issue #82 / #117: the project's own
+        # `PROJECT_CONTEXT.md` External Review Policy must
+        # carry the `Pending reviewer decisions` line so the
+        # ask-once contract has a recording site. Without
+        # this pin, removing the line from the live policy
+        # would drop the decide-later outcome and the
+        # no-re-ask rule would have no place to land; the
+        # QA round 1 M5 mutation showed the absence.
+        if "**Pending reviewer decisions**" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "carry the `Pending reviewer decisions` line "
+                "(Issue #82 ask-once contract)",
+            )
         section = routing_section(project_text)
         if section is None:
             fail(errors, f"PROJECT_CONTEXT.md missing section: {ROUTING_HEADING}")

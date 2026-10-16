@@ -1,0 +1,34 @@
+{
+  "current": {
+    "number": 114,
+    "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+    "reviewRequests": [],
+    "reviews": [],
+    "latestReviews": [],
+    "statusCheckRollup": [
+      {
+        "name": "Kilo Code Review",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "startedAt": "2026-10-13T23:20:05Z",
+        "completedAt": "2026-10-13T23:25:48Z",
+        "app": {
+          "slug": "kilocode"
+        }
+      }
+    ],
+    "comments": [
+      {
+        "id": "kilo-summary-1",
+        "author": {
+          "login": "kilo-code-bot"
+        },
+        "body": "<!-- kilo-review -->\n\n## Code Review Summary\n\n**Status:** No Issues Found | **Recommendation:** Merge\n\n<details><summary>Files Reviewed</summary></details>\n",
+        "url": "https://github.com/example/project/pull/114#issuecomment-1",
+        "createdAt": "2026-10-13T23:25:34Z"
+      }
+    ]
+  },
+  "threads": [],
+  "recent": []
+}
