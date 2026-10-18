@@ -670,6 +670,192 @@ class ExternalReviewInspectorTests(unittest.TestCase):
             f"no rate-limit reason: {reasons}",
         )
 
+    def test_issue_82_qa_n1_latest_kilo_run_decides_success_then_failed(self):
+        # QA-N1: when TWO Kilo check runs exist on the head SHA, the
+        # LATEST (by `started_at` DESC with `id` DESC tie-break) is
+        # the one that decides. Order 1: SUCCESS first, FAILED
+        # second (i.e. the FAILED is newer). The FAILED run decides
+        # and the older SUCCESS must NOT clear.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        # Two Kilo runs on the head. First is the older SUCCESS.
+        current["statusCheckRollup"] = [
+            {
+                "id": 100,
+                "name": "Kilo Code Review",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "startedAt": "2026-10-13T23:20:05Z",
+                "completedAt": "2026-10-13T23:25:48Z",
+                "app": None,
+            },
+            {
+                "id": 200,
+                "name": "Kilo Code Review",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "startedAt": "2026-10-13T23:30:00Z",
+                "completedAt": "2026-10-13T23:35:00Z",
+                "app": None,
+            },
+        ]
+        # The comment was created during the SUCCESS run, but the
+        # FAILED run is now the latest. The comment is NOT bound to
+        # the FAILED run's `startedAt`, so it does not clear.
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        # Both runs are consumed, so no generic check_failed error.
+        self.assertEqual(result["errors"], [])
+
+    def test_issue_82_qa_n1_latest_kilo_run_decides_failed_then_success(self):
+        # QA-N1 order 2: FAILED first (older), SUCCESS second
+        # (newer). The SUCCESS decides and the older FAILED must
+        # NOT fall through to the generic `check_failed` path and
+        # produce a self-contradictory `incomplete`.
+        current, threads, recent = MODULE.load_fixture(
+            FIXTURES / "kilo-summary-clear-at-head.json"
+        )
+        # The summary's `createdAt`/`updatedAt` must bind to the
+        # NEWER (SUCCESS) run's `startedAt`. The older FAILED run
+        # is consumed but must not gate.
+        current["comments"][0]["createdAt"] = "2026-10-13T23:21:00Z"
+        current["statusCheckRollup"] = [
+            {
+                "id": 100,
+                "name": "Kilo Code Review",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "startedAt": "2026-10-13T22:48:19Z",
+                "completedAt": "2026-10-13T22:59:16Z",
+                "app": None,
+                "output": {
+                    "title": "Kilo Code Review failed",
+                    "summary": "Review failed: Assistant request was rate limited",
+                },
+            },
+            {
+                "id": 200,
+                "name": "Kilo Code Review",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "startedAt": "2026-10-13T23:20:05Z",
+                "completedAt": "2026-10-13T23:25:48Z",
+                "app": None,
+            },
+        ]
+        result = MODULE.inspect(current, threads, recent, policy(), {})
+        # The latest run is SUCCESS, the comment is bound to it
+        # (createdAt 23:21:00 >= startedAt 23:20:05), so the
+        # verdict is `clear`.
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        # Both runs are consumed. The older FAILED run must NOT
+        # produce a generic check_failed error.
+        self.assertEqual(result["errors"], [])
+
+    def test_issue_82_qa_n1_both_orders_consume_all_runs(self):
+        # QA-N1 invariant: whichever order the Kilo runs appear
+        # in the rollup, both are consumed (no generic error) and
+        # the LATEST decides. The test flips the rollup order and
+        # asserts the same result either way.
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse):
+                current, threads, recent = MODULE.load_fixture(
+                    FIXTURES / "kilo-summary-clear-at-head.json"
+                )
+                current["comments"][0]["createdAt"] = "2026-10-13T23:21:00Z"
+                runs = [
+                    {
+                        "id": 100,
+                        "name": "Kilo Code Review",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                        "startedAt": "2026-10-13T22:48:19Z",
+                        "completedAt": "2026-10-13T22:59:16Z",
+                        "app": None,
+                        "output": {
+                            "title": "Kilo Code Review failed",
+                            "summary": "Review failed: Assistant request was rate limited",
+                        },
+                    },
+                    {
+                        "id": 200,
+                        "name": "Kilo Code Review",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "startedAt": "2026-10-13T23:20:05Z",
+                        "completedAt": "2026-10-13T23:25:48Z",
+                        "app": None,
+                    },
+                ]
+                current["statusCheckRollup"] = list(reversed(runs)) if reverse else runs
+                result = MODULE.inspect(current, threads, recent, policy(), {})
+                # Latest run is the SUCCESS (200) either way.
+                self.assertEqual(result["state"], "clear", result)
+                self.assertEqual(result["completed_on_head"], ["kilo"])
+                self.assertEqual(result["errors"], [])
+
+    def test_issue_82_n1_transport_contract_uses_get_method(self):
+        # N1: the live REST call to fetch a check's `output` must
+        # use `--method GET` with the `check_name` in the URL's
+        # query string. `gh api` defaults to POST whenever
+        # request parameters are supplied (via `-f`/`-F`), and a
+        # POST to the check-runs endpoint would silently create
+        # or mutate a check run. The test asserts the exact argv.
+        # The listing also passes `filter=all` so older runs on
+        # the same head are visible (the default `filter=latest`
+        # hides them — QA-N1).
+        captured: list[list[str]] = []
+
+        def fake_run_json(command, **kwargs):
+            captured.append(list(command))
+            return {"id": 1, "name": "Kilo Code Review", "output": {"summary": "ok"}}
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            MODULE.fetch_check_output("owner/repo", "deadbeef", "Kilo Code Review")
+        self.assertEqual(len(captured), 1)
+        argv = captured[0]
+        # Must contain `--method` and `GET` as separate argv entries.
+        self.assertIn("--method", argv, argv)
+        method_idx = argv.index("--method")
+        self.assertEqual(argv[method_idx + 1], "GET", argv)
+        # Must NOT use `-f` or `-F` for query parameters (that
+        # would force POST).
+        self.assertNotIn("-f", argv, argv)
+        self.assertNotIn("-F", argv, argv)
+        # The URL must carry the check_name and filter=all in its
+        # query string, URL-encoded.
+        url = next((a for a in argv if "check-runs" in a), "")
+        self.assertIn("check_name=Kilo+Code+Review", url.replace("%20", "+"), argv)
+        self.assertIn("filter=all", url, argv)
+
+    def test_issue_82_n1_transport_contract_batch_uses_get_method(self):
+        # N1 for the batch (A1) fetch: the same GET-method rule
+        # applies to `fetch_check_outputs_for_head`. The endpoint
+        # returns every run on the head SHA (filter=all) and we
+        # filter to the names we care about locally.
+        captured: list[list[str]] = []
+
+        def fake_run_json(command, **kwargs):
+            captured.append(list(command))
+            return {"check_runs": []}
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            MODULE.fetch_check_outputs_for_head(
+                "owner/repo", "deadbeef", {"Kilo Code Review"}
+            )
+        self.assertEqual(len(captured), 1)
+        argv = captured[0]
+        self.assertIn("--method", argv, argv)
+        method_idx = argv.index("--method")
+        self.assertEqual(argv[method_idx + 1], "GET", argv)
+        self.assertNotIn("-f", argv, argv)
+        self.assertNotIn("-F", argv, argv)
+        url = next((a for a in argv if "check-runs" in a), "")
+        self.assertIn("filter=all", url, argv)
+
     def test_issue_82_m3_unrelated_check_mentioning_rate_limit_does_not_route(self):
         # s7: a non-trusted check (here: github-actions unit
         # tests) whose output mentions a rate-limit phrase is not
@@ -803,13 +989,19 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         self.assertEqual(result["errors"], [])
 
     def test_issue_117_kilo_summary_with_issues_is_untriaged(self):
-        # A Kilo summary that names issues stays not-clear. The
-        # summary is surfaced as a current-head finding the lead can
-        # disposition through the existing `blocking`/`advisory`/
-        # `false_positive` path.
+        # B2+B3: a Kilo summary that names issues is NOT a clear
+        # verdict (B2), but it IS review completion (B3) — Kilo
+        # counts in `completed_on_head` regardless. The summary is
+        # surfaced as an untriaged current-head finding the lead
+        # can disposition through the existing `blocking` /
+        # `advisory` / `false_positive` path. Until then the gate
+        # is `pending` (untriaged).
         result = inspect_fixture("kilo-summary-with-issues.json")
         self.assertEqual(result["state"], "pending", result)
-        self.assertNotIn("kilo", result["completed_on_head"])
+        # B3: the summary IS review completion, so Kilo is in
+        # `completed_on_head` even though the gate is pending on
+        # the untriaged finding.
+        self.assertIn("kilo", result["completed_on_head"])
         self.assertEqual(len(result["untriaged_findings"]), 1)
         self.assertEqual(result["untriaged_findings"][0]["reviewer"], "kilo")
 
@@ -925,13 +1117,12 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         self.assertIn("kilo", result["pending_reviewers"])
 
     def test_issue_117_no_issues_found_with_request_changes_does_not_clear(self):
-        # B2: a summary with `Status: No Issues Found` but
-        # `Recommendation: Request Changes` must NOT clear. Issue
-        # #117's scope comment is explicit: any recommendation
-        # other than Merge is "blocking or untriaged until
-        # dispositioned". The previous implementation parsed the
-        # Status field only and admitted Request Changes as a
-        # clear verdict.
+        # B2+B3: a summary with `Status: No Issues Found` but
+        # `Recommendation: Request Changes` is NOT a clear verdict
+        # (B2), but it IS review completion (B3) — Kilo counts in
+        # `completed_on_head`. The summary is surfaced as an
+        # untriaged current-head finding the lead must disposition.
+        # Until then the gate is `pending` (untriaged).
         current, threads, recent = MODULE.load_fixture(
             FIXTURES / "kilo-summary-clear-at-head.json"
         )
@@ -940,24 +1131,29 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         )
         result = MODULE.inspect(current, threads, recent, policy(), {})
         self.assertEqual(result["state"], "pending", result)
-        self.assertNotIn("kilo", result["completed_on_head"])
-        # The summary is surfaced as a current-head finding the
-        # lead can disposition. B3 makes that disposition flow
-        # work end-to-end.
+        # B3: the summary IS review completion, so Kilo is in
+        # `completed_on_head` even though the gate is pending on
+        # the untriaged finding.
+        self.assertIn("kilo", result["completed_on_head"])
         self.assertEqual(len(result["untriaged_findings"]), 1)
         self.assertEqual(result["untriaged_findings"][0]["reviewer"], "kilo")
 
     def test_issue_117_summary_finding_can_be_dispositioned_as_blocking(self):
-        # B3: a summary with findings must be reachable through
-        # the existing `blocking` / `advisory` / `false_positive`
-        # disposition path. The previous implementation
-        # hard-coded `disposition: None` and ignored the
-        # `dispositions` argument, so a `blocking` disposition
-        # never reached the gate's blocking state.
+        # B3: a summary with findings IS review completion; the
+        # finding's disposition then decides the gate exactly as
+        # any reviewer's finding would:
+        #   - blocking → gate is `blocking`;
+        #   - advisory or false_positive on every finding → gate
+        #     is `clear` when nothing else is open;
+        #   - untriaged → gate is `pending`.
         current, threads, recent = MODULE.load_fixture(
             FIXTURES / "kilo-summary-with-issues.json"
         )
-        for disposition in ("blocking", "advisory", "false_positive"):
+        for disposition, expected_state, expected_completed, expected_blocking in (
+            ("blocking", "blocking", ["kilo"], 1),
+            ("advisory", "clear", ["kilo"], 0),
+            ("false_positive", "clear", ["kilo"], 0),
+        ):
             with self.subTest(disposition=disposition):
                 result = MODULE.inspect(
                     current,
@@ -966,24 +1162,11 @@ class ExternalReviewInspectorTests(unittest.TestCase):
                     policy(),
                     {"kilo-summary-issues": disposition},
                 )
-                if disposition == "blocking":
-                    self.assertEqual(result["state"], "blocking", result)
-                    self.assertEqual(len(result["blocking_findings"]), 1)
-                    self.assertEqual(
-                        result["blocking_findings"][0]["reviewer"], "kilo"
-                    )
-                else:
-                    # advisory and false_positive release the
-                    # seat: the finding is no longer active, so
-                    # Kilo's only remaining open seat is the
-                    # check, and the check completed successfully
-                    # without a review. A repo that has Kilo
-                    # required and an issues summary dispositioned
-                    # advisory ends up `pending` on the
-                    # check-only path, exactly like a review
-                    # thread dispositioned advisory.
-                    self.assertEqual(result["state"], "pending", result)
-                    self.assertEqual(result["untriaged_findings"], [])
+                self.assertEqual(result["state"], expected_state, result)
+                self.assertEqual(result["completed_on_head"], expected_completed)
+                self.assertEqual(len(result["blocking_findings"]), expected_blocking)
+                self.assertEqual(result["untriaged_findings"], [])
+                self.assertIn("kilo", result["observed_reviewers"])
 
     def test_issue_117_kilo_ignored_does_not_consume_summary(self):
         # When Kilo is in the `ignored` set, the summary path is a

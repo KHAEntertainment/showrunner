@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -128,12 +129,6 @@ KILO_CLEAR_STATUS = "No Issues Found"
 # Request Changes` summary must NOT clear. The two constants are
 # paired in `kilo_summary_evidence_for_head` below.
 KILO_CLEAR_RECOMMENDATION = "Merge"
-# A failed Kilo check whose output names this phrase is the rate-limit
-# failure the rate-limit breakpoint (#48) needs to count. Matched
-# case-insensitively against the check's `description` (or `output.text`,
-# when a future API surfaces it), so a vendor that changes its prefix
-# string still trips the same gate.
-KILO_RATE_LIMIT_PHRASE = "assistant request was rate limited"
 # A failed check whose output names this general phrase is a
 # vendor-agnostic rate-limit failure. Used by the #48 breakpoint to
 # count a rate-limit event against any reviewer (the Issue #82
@@ -292,26 +287,38 @@ def check_timestamps(check: dict[str, Any]) -> tuple[str, str]:
     return (str(check.get("startedAt") or ""), str(check.get("completedAt") or ""))
 
 
-def parse_iso8601(value: str) -> str | None:
-    """Return `value` iff it parses as an ISO 8601 timestamp, else None.
+def parse_iso8601(value: str) -> datetime | None:
+    """Parse `value` as an ISO 8601 UTC instant, else None.
 
-    GitHub returns timestamps in the form
-    `2026-10-14T00:22:51Z` (or with milliseconds and a `+00:00`
-    offset). The inspector compares these lexicographically: a value
-    that fails to parse must NOT be allowed to silently satisfy the
-    comparison, so the lexical compare stays on strings. This helper
-    is the gate.
+    GitHub returns timestamps in the form `2026-10-14T00:22:51Z`
+    (or with milliseconds and a `+00:00` offset). We normalize the
+    trailing `Z` to `+00:00` and delegate to
+    `datetime.fromisoformat`, which is the standard library's
+    validator: it rejects impossible calendar values like
+    `2026-99-99T99:99:99Z` and the original `zzzz` case, and returns
+    a real instant rather than a string.
+
+    The returned value is always UTC (with `tzinfo=timezone.utc`),
+    so two parsed instants can be compared directly. A malformed or
+    impossible date returns `None` and the caller fails closed (a
+    summary whose edit timestamp cannot be parsed is not bound to
+    the head's run).
     """
     text = str(value or "").strip()
     if not text:
         return None
-    pattern = (
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
-        r"(\.\d{1,6})?(Z|[+\-]\d{2}:\d{2})$"
-    )
-    if not re.match(pattern, text):
+    # Normalize a trailing Z to +00:00 so fromisoformat accepts it.
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except (TypeError, ValueError):
         return None
-    return text
+    if parsed.tzinfo is None:
+        # Treat a naive ISO timestamp as UTC. GitHub's API returns
+        # explicit offsets, so this branch is defensive only.
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def check_description(check: dict[str, Any]) -> str:
@@ -322,7 +329,7 @@ def check_description(check: dict[str, Any]) -> str:
     check run. GitHub's `gh pr view --json statusCheckRollup` does not
     expose this field; the live `fetch_pr` path augments each check
     with `output` by querying the head's check-runs REST endpoint
-    (see `fetch_pr_with_check_output`). The `description` field is
+    (see `fetch_check_output`). The `description` field is
     kept for backward compatibility with fixtures that pre-date the
     REST augmentation.
     """
@@ -374,10 +381,7 @@ def is_rate_limited_check(check: dict[str, Any]) -> bool:
     verdict.
 
     The match is a vendor-agnostic substring against the broader
-    `RATE_LIMIT_PHRASE` ("rate limit"). Kilo's exact phrase
-    (`KILO_RATE_LIMIT_PHRASE`) is a substring of that, so the
-    explicit Kilo check is structurally redundant; it is kept
-    only as a documentation aid for logs and tests.
+    `RATE_LIMIT_PHRASE` ("rate limit").
     """
     if not isinstance(check, dict):
         return False
@@ -385,20 +389,6 @@ def is_rate_limited_check(check: dict[str, Any]) -> bool:
         return False
     description = normalize(check_description(check))
     return RATE_LIMIT_PHRASE in description
-
-
-def kilo_summary_status(body: str) -> str:
-    """Backwards-compat shim for the legacy single-field Status reader.
-
-    Issue #117's scope comment requires both `Status` AND
-    `Recommendation` to be parsed: `Status: No Issues Found |
-    Recommendation: Request Changes` is NOT a clear verdict. The new
-    verdict function is `kilo_summary_fields`, which returns both.
-    This shim keeps any external caller working; the inspector uses
-    `kilo_summary_fields` directly.
-    """
-    status, _ = kilo_summary_fields(body)
-    return status
 
 
 def kilo_summary_fields(body: str) -> tuple[str, str]:
@@ -446,25 +436,33 @@ def kilo_summary_evidence_for_head(
     would otherwise clear against a fresh head (the B1 finding). The
     invariant:
 
-      1. The Kilo check for the head SHA COMPLETED with `conclusion`
-         equal to `success` (or its upper-case form). A failed or
-         still-running run is not a head review.
+      1. The **LATEST** Kilo check run for the head SHA is the one
+         that decides (by `started_at` DESC with `id` DESC as a
+         deterministic tie-break). All Kilo runs on the head are
+         consumed so an older failed run does not fall through to
+         the generic `check_failed` path and produce a
+         self-contradictory `incomplete`. A successful run is a
+         positive head review; a failed or still-running run is
+         not.
       2. The summary comment's `updatedAt` (or `createdAt` when the
-         comment was never edited) parses as ISO 8601 and is at or
-         after the run's `startedAt`. Kilo edits its summary in
-         place, so a comment whose `updatedAt` is at or after the
-         run started belongs to this run. A comment whose date
-         predates the run, or whose date is malformed, does not
-         belong to this run and must not clear the gate.
+         comment was never edited) parses as a UTC instant and is
+         at or after the latest run's `startedAt`. Kilo edits its
+         summary in place, so a comment whose `updatedAt` is at or
+         after the run started belongs to this run. A comment whose
+         date predates the run, or whose date is malformed or
+         impossible, does not belong to this run and must not clear
+         the gate.
 
-    A summary with `Status: No Issues Found` AND `Recommendation:
-    Merge` puts Kilo in `completed_on_head` and routes the gate as
-    `clear`. Any other status line, or a non-`Merge`
-    recommendation, leaves Kilo out of `completed_on_head` and
-    surfaces the summary as a finding the lead triages through the
-    existing `blocking` / `advisory` / `false_positive` disposition
-    path — a Kilo review with findings still gates instead of
-    clearing.
+    A summary that is bound to a successful head run IS review
+    completion (B3): it counts in `completed_on_head` regardless of
+    what findings it carries. Findings gate via the normal
+    `blocking` / `advisory` / `false_positive` disposition path:
+
+    - `Status: No Issues Found` AND `Recommendation: Merge` -> no
+      findings, gate is `clear` when nothing else is open;
+    - any other status or recommendation -> the summary is surfaced
+      as a current-head finding and the verdict is decided by the
+      finding's disposition.
 
     Returns:
         completed_reviewers: reviewers completed on head by the summary
@@ -474,12 +472,11 @@ def kilo_summary_evidence_for_head(
                              to feed `pending_reasons` so the
                              breakpoint (#48) can count it.
         consumed_check_ids:  the set of Kilo check identifiers the
-                             helper has handled. The main `inspect()`
-                             uses this to exclude those checks from
-                             the generic `check_failed` path, which
-                             would otherwise add a duplicate
-                             "trusted review check failed without
-                             readable current-head findings" error.
+                             helper has handled. ALL Kilo runs on
+                             the head are added, not just the
+                             chosen one, so an older failed run
+                             does not fall through to the generic
+                             `check_failed` path.
 
     """
     completed: set[str] = set()
@@ -490,32 +487,53 @@ def kilo_summary_evidence_for_head(
     if "kilo" in policy.ignored:
         return completed, findings, pending, rate_limit_reasons, consumed_check_ids
 
-    # The Kilo check for the head SHA is the one in the rollup. We
-    # use its `startedAt`, `completedAt`, and `conclusion` for the
-    # ordering rule, and its `output` (or `description`) to spot
-    # the rate-limit failure. A check that is not a successful head
-    # run cannot license a clear summary, regardless of how old or
-    # new the comment is.
-    kilo_check: dict[str, Any] | None = None
-    rate_limited_check: dict[str, Any] | None = None
+    # QA-N1: gather ALL Kilo runs on the head SHA and pick the LATEST
+    # one by `started_at` (DESC) with `id` (DESC) as a deterministic
+    # tie-break. Mark all as consumed so an older run cannot fall
+    # through to the generic `check_failed` path. The REST listing
+    # defaults to `filter=latest` and hides older runs; the live
+    # `fetch_check_outputs_for_head` call passes `filter=all`, and
+    # the fixture shape can carry multiple runs directly.
+    kilo_runs: list[dict[str, Any]] = []
     for check in list_value(current.get("statusCheckRollup")):
         if not isinstance(check, dict):
             continue
         if reviewer_for_check(check, policy) != "kilo":
             continue
-        if is_rate_limited_check(check):
-            rate_limited_check = check
-            continue
-        if kilo_check is None:
-            kilo_check = check
+        kilo_runs.append(check)
+        check_id = check.get("id") or check.get("name")
+        if check_id is not None:
+            consumed_check_ids.add(check_id)
+    if not kilo_runs:
+        # No Kilo check at all. A summary comment (if any) is not
+        # bound to a run and stays pending.
+        has_kilo_marker = any(
+            isinstance(c, dict)
+            and reviewer_for_login(login_from(c), policy) == "kilo"
+            and KILO_REVIEW_MARKER in str(c.get("body") or "")
+            for c in list_value(current.get("comments"))
+        )
+        if has_kilo_marker:
+            pending.add("kilo")
+        return completed, findings, pending, rate_limit_reasons, consumed_check_ids
 
-    # A failed Kilo check whose description names the rate-limit
-    # phrase is the rate-limit signal the rate-limit breakpoint
-    # needs. We surface it as a distinct pending reason (not the
-    # generic "trusted review check failed without readable
-    # current-head findings" the inspector would otherwise add) so
-    # the lead's retry path is unambiguous.
-    if rate_limited_check is not None:
+    # Latest by started_at DESC, then id DESC (numeric when possible,
+    # falling back to 0) for a deterministic tie-break.
+    def run_sort_key(check: dict[str, Any]) -> tuple[str, int]:
+        started = str(check.get("startedAt") or "")
+        run_id = check.get("id") or 0
+        try:
+            run_id_int = int(run_id)
+        except (TypeError, ValueError):
+            run_id_int = 0
+        return (started, run_id_int)
+
+    kilo_runs.sort(key=run_sort_key, reverse=True)
+    kilo_check = kilo_runs[0]
+
+    # The LATEST run decides. If it is a rate-limited failure,
+    # the rate-limit signal is what the #48 breakpoint counts.
+    if is_rate_limited_check(kilo_check):
         pending.add("kilo")
         rate_limit_reasons.append(
             {
@@ -523,22 +541,18 @@ def kilo_summary_evidence_for_head(
                 "reason": "Kilo review check failed with a rate-limit response; retry or take the rate-limit breakpoint",
             }
         )
-        consumed_check_ids.add(rate_limited_check.get("id") or rate_limited_check.get("name"))
         return completed, findings, pending, rate_limit_reasons, consumed_check_ids
 
     started_at_raw, completed_at_raw = check_timestamps(kilo_check or {})
     started_at = parse_iso8601(started_at_raw)
     completed_at = parse_iso8601(completed_at_raw)
     conclusion = normalize(kilo_check.get("conclusion") or "") if isinstance(kilo_check, dict) else ""
-    # B1: the Kilo check must COMPLETE with `success` (case-folded).
-    # Any other conclusion (failure, neutral, skipped, timed_out,
-    # empty) is not a positive head review. The previous
-    # implementation admitted any non-empty `completedAt`, which a
-    # year-old failed run could satisfy; binding to `success` here
-    # closes that hole. A malformed `completedAt` also fails closed,
-    # which closes the B1 timestamp-parsing sub-finding.
+    # B1: the LATEST Kilo check must COMPLETE with `success`
+    # (case-folded). Any other conclusion (failure, neutral,
+    # skipped, timed_out, empty) is not a positive head review.
+    # A malformed `completedAt` or `startedAt` also fails closed.
     head_run_succeeded = (
-        conclusion == "success" and bool(completed_at) and bool(started_at)
+        conclusion == "success" and completed_at is not None and started_at is not None
     )
     if not head_run_succeeded:
         # No successful head run to license the summary. The
@@ -553,8 +567,6 @@ def kilo_summary_evidence_for_head(
         )
         if has_kilo_marker:
             pending.add("kilo")
-        if kilo_check is not None:
-            consumed_check_ids.add(kilo_check.get("id") or kilo_check.get("name"))
         return completed, findings, pending, rate_limit_reasons, consumed_check_ids
 
     dispositions = dispositions or {}
@@ -577,7 +589,7 @@ def kilo_summary_evidence_for_head(
         updated_at = parse_iso8601(str(comment.get("updatedAt") or ""))
         created_at = parse_iso8601(str(comment.get("createdAt") or ""))
         last_update = updated_at or created_at
-        if not last_update or not started_at:
+        if last_update is None or started_at is None:
             # A comment without a usable date is not bound to this
             # run. Kilo stays pending until the lead re-runs with
             # a comment that has a parseable timestamp, and the
@@ -585,28 +597,34 @@ def kilo_summary_evidence_for_head(
             pending.add("kilo")
             continue
         # B1: bind the comment to this run by requiring
-        # `last_update >= started_at`. Lexical compare is correct
-        # for ISO 8601 in the same zone; both `updated_at` and
-        # `created_at` are stored as `...Z` UTC by `gh pr view`,
-        # so no zone normalization is needed.
+        # `last_update >= started_at`. Both values are UTC
+        # `datetime` objects, so this is an instant comparison
+        # rather than a lexical string compare.
         bound = last_update >= started_at
         if not bound:
             pending.add("kilo")
             continue
-        # The summary is from the head's successful run. Apply
-        # the verdict rule (Status: No Issues Found AND
-        # Recommendation: Merge) and the disposition path for
-        # findings.
+        # The summary is from the head's successful run. B3: the
+        # summary IS review completion regardless of its findings.
+        # Add `kilo` to `completed_on_head` here (not only in the
+        # clear-status branch) so a finding dispositioned
+        # `advisory` or `false_positive` releases the seat while a
+        # `blocking` disposition still routes the gate to
+        # `blocking` and an untriaged finding routes to `pending`.
+        completed.add("kilo")
         status, recommendation = kilo_summary_fields(body)
         if (
             status == normalize(KILO_CLEAR_STATUS)
             and recommendation == normalize(KILO_CLEAR_RECOMMENDATION)
         ):
-            completed.add("kilo")
+            # No Issues Found + Merge: no finding, gate is `clear`
+            # when nothing else is open.
             continue
         # A summary with findings is surfaced as a current-head
         # finding the lead can disposition through the existing
-        # `blocking`/`advisory`/`false_positive` path.
+        # `blocking`/`advisory`/`false_positive` path. Kilo is
+        # already in `completed_on_head`, so the only remaining
+        # gate is the finding itself.
         finding_id = str(comment.get("id") or comment.get("url") or "kilo-summary")
         disposition = dispositions.get(finding_id)
         if disposition and disposition not in VALID_DISPOSITIONS:
@@ -627,8 +645,6 @@ def kilo_summary_evidence_for_head(
                 "disposition": disposition,
             }
         )
-    if kilo_check is not None:
-        consumed_check_ids.add(kilo_check.get("id") or kilo_check.get("name"))
     return completed, findings, pending, rate_limit_reasons, consumed_check_ids
 
 
@@ -780,28 +796,44 @@ def fetch_check_output(repo: str, head_sha: str, name: str) -> dict[str, Any] | 
     `output.summary`. To detect a rate-limited Kilo check on live data
     (#117), we call the check-runs REST endpoint for the head SHA and
     return the most recent matching run's output. Failures (network,
-    permissions, malformed response) are reported as `None`: the
-    inspector's `check_description` will then fall back to the
-    `description` field the rollup does carry, and a missing output
-    fails closed only as a check the inspector cannot read.
+    permissions, malformed response) raise `InspectionError` so the
+    caller can record a named reason rather than silently falling
+    back to a check that may or may not be rate-limited.
 
     `name` is matched against the check's `name` field; the returned
     object is the same shape the rollup would carry if `output` were
     on it, so callers can splat it back into a rollup entry.
+
+    The query is sent as a GET (the `check_name` parameter is encoded
+    into the URL) because `gh api` defaults to POST when request
+    parameters are supplied; a POST would silently create or update a
+    check run on the head SHA. The listing also passes
+    `filter=all` so an older run on the same head is visible (the
+    default `filter=latest` hides it).
     """
     if not repo or not head_sha or not name:
         return None
     owner, separator, name_repo = repo.partition("/")
     if not separator or not owner or not name_repo:
         return None
+    # GET with query-encoded parameters. `gh api` sends a POST
+    # whenever `-f`/`-F` is used, so `check_name` is placed in the
+    # URL's query string. `filter=all` lists every run on the head
+    # SHA, not just the latest (the default).
+    from urllib.parse import quote
+    query = quote(name, safe="")
+    url = (
+        f"repos/{owner}/{name_repo}/commits/{head_sha}/check-runs"
+        f"?check_name={query}&filter=all"
+    )
     response = run_json(
         [
             "rtk",
             "gh",
             "api",
-            f"repos/{owner}/{name_repo}/commits/{head_sha}/check-runs",
-            "-f",
-            f"check_name={name}",
+            "--method",
+            "GET",
+            url,
             "--jq",
             ".check_runs | sort_by(.started_at) | last // null",
         ]
@@ -824,24 +856,105 @@ def fetch_check_output(repo: str, head_sha: str, name: str) -> dict[str, Any] | 
     }
 
 
+def fetch_check_outputs_for_head(
+    repo: str, head_sha: str, names: set[str]
+) -> dict[str, dict[str, Any]]:
+    """Return the latest matching check-run `output` per name for the head SHA.
+
+    One REST call fetches every run on the head SHA (filter=all) and
+    we filter to the names we care about locally, instead of one call
+    per name. The returned mapping is `name -> {id, startedAt,
+    completedAt, output, ...}` — the most recent run per name,
+    selected by `started_at` descending with `id` as a deterministic
+    tie-break. This is the A1 / QA-N4 N+1 fix: fetch once and reuse.
+    """
+    if not repo or not head_sha or not names:
+        return {}
+    owner, separator, name_repo = repo.partition("/")
+    if not separator or not owner or not name_repo:
+        return {}
+    from urllib.parse import quote
+    url = (
+        f"repos/{owner}/{name_repo}/commits/{head_sha}/check-runs"
+        f"?filter=all&per_page=100"
+    )
+    try:
+        response = run_json(
+            [
+                "rtk",
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                url,
+            ]
+        )
+    except InspectionError:
+        return {}
+    if not isinstance(response, dict):
+        return {}
+    runs = response.get("check_runs") or []
+    if not isinstance(runs, list):
+        return {}
+    by_name: dict[str, dict[str, Any]] = {}
+    wanted = {normalize(name) for name in names}
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        name = normalize(str(run.get("name") or ""))
+        if name not in wanted:
+            continue
+        existing = by_name.get(name)
+        started = str(run.get("started_at") or "")
+        existing_started = str((existing or {}).get("started_at") or "")
+        run_id = run.get("id")
+        existing_id = (existing or {}).get("id")
+        # Sort by started_at DESC, then id DESC as tie-break, so the
+        # LATEST run wins deterministically regardless of REST order.
+        if (
+            existing is None
+            or started > existing_started
+            or (started == existing_started and (run_id or 0) > (existing_id or 0))
+        ):
+            by_name[name] = run
+    result: dict[str, dict[str, Any]] = {}
+    for name, run in by_name.items():
+        output = run.get("output") or {}
+        if not isinstance(output, dict):
+            output = {}
+        result[name] = {
+            "id": run.get("id"),
+            "name": run.get("name"),
+            "status": run.get("status"),
+            "conclusion": run.get("conclusion"),
+            "startedAt": run.get("started_at"),
+            "completedAt": run.get("completed_at"),
+            "detailsUrl": run.get("details_url"),
+            "app": run.get("app"),
+            "output": output,
+        }
+    return result
+
+
 def augment_checks_with_output(
     current: dict[str, Any], repo: str
 ) -> dict[str, Any]:
-    """Augment each check in the rollup with its live `output` field.
+    """Augment each trusted-reviewer check in the rollup with live `output`.
 
-    Live data requires an extra REST call per check; fixture data
-    already carries `output`. To keep fixtures authoritative (so a
-    fixture can deliberately model an absent output), this function
-    only augments a check that lacks `output`; the existing
-    `output`/`description` payload is never overwritten.
+    One REST call fetches every check run on the head SHA (filter=all)
+    and we use the result to fill in `output` (and `id`) for checks
+    the rollup left silent. Only checks from a trusted reviewer (i.e.
+    a check that would participate in the gate) are augmented; a
+    `github-actions` check is left alone so we never leak unrelated
+    payload into a reviewer verdict.
 
-    Failures are silent: the inspector will report the check as
-    unreadable via the generic "trusted review check failed without
-    readable current-head findings" error path, which is the safe
-    side. The rate-limit path therefore needs a fixture or a
-    successful REST call; the SOP names a `description` field as a
-    documented fallback for vendors that expose the rate-limit text
-    on the rollup itself.
+    Live data requires the REST call; fixture data already carries
+    `output`. To keep fixtures authoritative (so a fixture can
+    deliberately model an absent output), this function only augments
+    a check that lacks `output`; the existing `output`/`description`
+    payload is never overwritten. A REST failure is recorded as an
+    empty mapping so the caller falls back to the rollup's
+    `description` field, which is the documented safe side.
     """
     if not isinstance(current, dict):
         return current
@@ -851,13 +964,11 @@ def augment_checks_with_output(
     rollup = current.get("statusCheckRollup")
     if not isinstance(rollup, list):
         return current
-    for index, check in enumerate(rollup):
+    # Collect trusted reviewer check names that need augmentation.
+    names: set[str] = set()
+    for check in rollup:
         if not isinstance(check, dict):
             continue
-        # Skip checks that already carry the augmenting fields
-        # (fixtures) or that have a `description` (the documented
-        # fallback path). The REST call only adds value when both
-        # are absent.
         if isinstance(check.get("output"), dict) and check.get("output"):
             continue
         if check.get("description"):
@@ -865,10 +976,23 @@ def augment_checks_with_output(
         name = str(check.get("name") or "")
         if not name:
             continue
-        try:
-            augmented = fetch_check_output(repo, head_sha, name)
-        except InspectionError:
+        names.add(name)
+    if not names:
+        return current
+    fetched = fetch_check_outputs_for_head(repo, head_sha, names)
+    if not fetched:
+        return current
+    for index, check in enumerate(rollup):
+        if not isinstance(check, dict):
             continue
+        if isinstance(check.get("output"), dict) and check.get("output"):
+            continue
+        if check.get("description"):
+            continue
+        name = str(check.get("name") or "")
+        if not name:
+            continue
+        augmented = fetched.get(normalize(name))
         if not augmented:
             continue
         merged = dict(check)
@@ -1087,22 +1211,25 @@ def inspect(
         reviewer = reviewer_for_check(check, policy)
         if not reviewer or reviewer in policy.ignored:
             continue
-        if is_rate_limited_check(check):
-            rate_limited_reviewers.add(reviewer)
-            continue
         # The Kilo summary helper handles every Kilo check it sees
-        # (success → clear, rate-limited → distinct reason, non-
-        # success → pending). A Kilo check that survives the helper
-        # was either not a Kilo check at all (covered by the helper's
-        # own scan) or was deliberately ignored (e.g. Kilo is in
-        # `policy.ignored`). In either case the generic
-        # `check_failed` path would add the same "trusted review
-        # check failed without readable current-head findings" error
-        # the helper exists to replace, so the check is consumed.
+        # (latest success -> clear, latest rate-limited -> distinct
+        # reason, latest non-success -> pending). A Kilo check that
+        # survives the helper was either not a Kilo check at all
+        # (covered by the helper's own scan) or was deliberately
+        # ignored (e.g. Kilo is in `policy.ignored`). In either case
+        # the generic `check_failed` path would add the same
+        # "trusted review check failed without readable current-head
+        # findings" error the helper exists to replace, and the
+        # rate-limit scan below would add a reason for ANY rate-
+        # limited Kilo run even when the LATEST run is a success
+        # (QA-N1). So the check is consumed and skipped entirely.
         if reviewer == "kilo" and (
             check.get("id") in kilo_consumed_check_ids
             or check.get("name") in kilo_consumed_check_ids
         ):
+            continue
+        if is_rate_limited_check(check):
+            rate_limited_reviewers.add(reviewer)
             continue
         status = normalize(check.get("status") or check.get("state"))
         conclusion = normalize(check.get("conclusion"))
