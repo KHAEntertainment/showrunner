@@ -684,6 +684,23 @@ def main() -> int:
             # wording also appears in the Rate-limit breakpoint section, so
             # whole-file matching could not tell if the routing line were
             # deleted.
+            #
+            # Issue #82 / round-3 coverage pins (QA M6): the four new
+            # Known-identities bullets in the Default Policy. Each
+            # bullet is one load-bearing per-reviewer contract line
+            # naming the login, the check (if any), and the
+            # push-re-review behavior. Deleting any one bullet
+            # (or the `github-actions[bot]` non-addition) fails
+            # the validator closed. QA mutation M6 previously
+            # deleted all four and passed every suite.
+            "**Gemini Code Assist** — review (`gemini-code-assist[bot]`). Comment-only (no published check-run app)",
+            "**Greptile** — review (`greptile-apps[bot]`) and check (app slug `greptile-apps`)",
+            "**Sourcery** — review (`sourcery-ai[bot]`) and check (app slug `sourcery-ai`)",
+            "**Qodo** — review (`qodo-code-review[bot]`, `qodo-free-for-open-source-projects[bot]`)",
+            "`github-actions[bot]` is shared by every workflow and is not a stable identity",
+            # Issue #82: the ask-once contract is pinned above;
+            # the four Known-identities bullets above are the
+            # M6 coverage fix.
         ),
         # Issue #33: without a named retro line, repeated bypass across
         # rounds was only ever visible per-PR, never as a pattern.
@@ -968,6 +985,81 @@ def main() -> int:
                 "carry the `Pending reviewer decisions` line "
                 "(Issue #82 ask-once contract)",
             )
+        if "**Pending reviewer decisions**: none" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "carry the `Pending reviewer decisions: none` line "
+                "(Issue #82 ask-once contract; a value other than "
+                "`none` is a runtime decision recorded per-login "
+                "below the line, never a replacement for it)",
+            )
+        # Round-3 coverage pin (QA M8): the External Review
+        # Policy values are load-bearing (Issue #117):
+        # `Required reviewers: kilo` (Kilo is the reviewer of
+        # record) and `Ignored reviewers: coderabbit` (CodeRabbit
+        # is summary/walkthrough-only, not review evidence).
+        # QA mutation M8 previously reverted the section to
+        # `Required: none` / `Ignored: none` and passed every
+        # suite. Pin each value so a silent revert fails closed.
+        if "**Required reviewers**: kilo" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "set `Required reviewers: kilo` (Issue #117: Kilo "
+                "is the reviewer of record)",
+            )
+        if "**Ignored reviewers**: coderabbit" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "set `Ignored reviewers: coderabbit` (Issue #117: "
+                "CodeRabbit is summary/walkthrough-only)",
+            )
+        # Round-3 coverage pin (QA M7): the CHANGELOG.custom.md
+        # `Unreleased (v2.1.2)` entry must record the Issue
+        # #82/#117 switch (added reviewers, ask-once contract,
+        # Kilo summary evidence path). QA mutation M7 previously
+        # deleted the whole v2.1.2 Kilo/CodeRabbit entry and
+        # passed every suite. The entry is one of the few
+        # user-facing places the behavior change is recorded, so
+        # losing it silently is a real regression.
+        changelog = repo_root / "CHANGELOG.custom.md"
+        if not changelog.is_file():
+            fail(errors, "missing required file: CHANGELOG.custom.md")
+        else:
+            changelog_text = changelog.read_text(encoding="utf-8")
+            # Locate the Unreleased (v2.1.2) section and assert
+            # it mentions the Issue #82 / #117 switch.
+            unreleased_match = re.search(
+                r"^## Unreleased \(v2\.1\.2\)$(.*?)(?=^## |\Z)",
+                changelog_text,
+                re.M | re.S,
+            )
+            if unreleased_match is None:
+                fail(
+                    errors,
+                    "CHANGELOG.custom.md must have an "
+                    "`## Unreleased (v2.1.2)` section",
+                )
+            else:
+                unreleased_body = unreleased_match.group(1)
+                for token in (
+                    "gemini-code-assist",
+                    "greptile",
+                    "sourcery",
+                    "qodo",
+                    "Ask-once contract",
+                    "Kilo summary evidence",
+                    "kilo` is required",
+                    "coderabbit` is ignored",
+                ):
+                    if token not in unreleased_body:
+                        fail(
+                            errors,
+                            f"CHANGELOG.custom.md Unreleased (v2.1.2) "
+                            f"section missing required token: {token}",
+                        )
         section = routing_section(project_text)
         if section is None:
             fail(errors, f"PROJECT_CONTEXT.md missing section: {ROUTING_HEADING}")
