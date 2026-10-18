@@ -670,6 +670,117 @@ class ExternalReviewInspectorTests(unittest.TestCase):
             f"no rate-limit reason: {reasons}",
         )
 
+    def test_issue_82_n2_fetch_path_supplies_updated_at(self):
+        # N2: the Kilo summary path consumes `updatedAt` to bind
+        # an edited-in-place summary to the head's run. The
+        # `gh pr view --json comments` shape does NOT carry
+        # `updatedAt`, so the live path must fetch it from the
+        # REST issues/comments endpoint and merge it in. This
+        # test asserts the fetch path supplies `updatedAt` and
+        # that it is the value the inspector uses.
+        captured: list[list[str]] = []
+        rest_payload = [
+            {
+                "id": 6157807446,
+                "node_id": "IC_kwDOUEhYLs8AAAABbwivVg",
+                "created_at": "2026-10-14T00:03:43Z",
+                "updated_at": "2026-10-14T00:26:26Z",
+            }
+        ]
+
+        def fake_run_json(command, **kwargs):
+            captured.append(list(command))
+            return rest_payload
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            metadata = MODULE.fetch_pr_comments_with_metadata(
+                "owner/repo", 118
+            )
+        # The mapping is keyed by both `id` and `node_id` so the
+        # caller can match a `gh pr view` comment by either.
+        self.assertIn("6157807446", metadata)
+        self.assertIn("IC_kwDOUEhYLs8AAAABbwivVg", metadata)
+        record = metadata["6157807446"]
+        self.assertEqual(record["createdAt"], "2026-10-14T00:03:43Z")
+        self.assertEqual(record["updatedAt"], "2026-10-14T00:26:26Z")
+        # Transport contract: the call must use GET with the
+        # issues/comments endpoint and `--paginate`.
+        argv = captured[0]
+        self.assertIn("--method", argv, argv)
+        method_idx = argv.index("--method")
+        self.assertEqual(argv[method_idx + 1], "GET", argv)
+        self.assertIn("issues/118/comments", " ".join(argv), argv)
+        self.assertIn("--paginate", argv, argv)
+
+    def test_issue_82_n2_augment_merges_metadata_into_comments(self):
+        # N2 integration: `augment_comments_with_metadata` merges
+        # REST timestamps into the gh-shaped comments and records
+        # a provenance block under `_restMeta`. The gh `createdAt`
+        # is preserved as a fallback; the REST `updatedAt` is
+        # populated where gh had none.
+        current = {
+            "comments": [
+                {
+                    "id": "IC_kwDOUEhYLs8AAAABbwivVg",
+                    "author": {"login": "kilo-code-bot"},
+                    "createdAt": "2026-10-14T00:03:43Z",
+                }
+            ]
+        }
+
+        def fake_run_json(command, **kwargs):
+            return [
+                {
+                    "id": 6157807446,
+                    "node_id": "IC_kwDOUEhYLs8AAAABbwivVg",
+                    "created_at": "2026-10-14T00:03:43Z",
+                    "updated_at": "2026-10-14T00:26:26Z",
+                }
+            ]
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            result = MODULE.augment_comments_with_metadata(
+                current, "owner/repo", 118
+            )
+        comment = result["comments"][0]
+        self.assertEqual(comment["updatedAt"], "2026-10-14T00:26:26Z")
+        self.assertEqual(comment["createdAt"], "2026-10-14T00:03:43Z")
+        # Provenance is recorded so a test or a follow-up reader
+        # can see which values came from REST.
+        self.assertEqual(
+            comment["_restMeta"]["updated_at"], "2026-10-14T00:26:26Z"
+        )
+        self.assertEqual(
+            comment["_restMeta"]["created_at"], "2026-10-14T00:03:43Z"
+        )
+        self.assertIn("issues/118/comments", comment["_restMeta"]["source"])
+
+    def test_issue_82_n2_fallback_when_rest_fails(self):
+        # N2 fail-closed: a REST failure leaves the gh values
+        # intact. The edited-in-place case (where gh lacks
+        # `updatedAt`) then fails closed to `pending`, matching
+        # the B1 invariant.
+        current = {
+            "comments": [
+                {
+                    "id": "IC_kwDOUEhYLs8AAAABbwivVg",
+                    "createdAt": "2026-10-14T00:03:43Z",
+                }
+            ]
+        }
+
+        def fake_run_json(command, **kwargs):
+            raise MODULE.InspectionError("network down")
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            result = MODULE.augment_comments_with_metadata(
+                current, "owner/repo", 118
+            )
+        # No REST metadata is recorded; the gh `createdAt`
+        # remains and `updatedAt` is absent.
+        self.assertNotIn("updatedAt", result["comments"][0])
+        self.assertNotIn("_restMeta", result["comments"][0])
+
     def test_issue_82_qa_n1_latest_kilo_run_decides_success_then_failed(self):
         # QA-N1: when TWO Kilo check runs exist on the head SHA, the
         # LATEST (by `started_at` DESC with `id` DESC tie-break) is

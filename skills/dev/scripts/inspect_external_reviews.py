@@ -788,6 +788,125 @@ def fetch_pr(repo: str, pr_number: int, snapshot: Path | None = None) -> dict[st
     return value
 
 
+def fetch_pr_comments_with_metadata(repo: str, pr_number: int) -> dict[str, dict[str, Any]]:
+    """Return real `created_at` / `updated_at` for every PR issue comment.
+
+    `gh pr view --json comments` returns a `createdAt` field but no
+    `updatedAt`, and the inspector's Kilo summary path needs
+    `updatedAt` to bind an edited-in-place summary to the head's
+    run (Issue #117 B1). This function fetches the REST
+    `GET repos/{owner}/{repo}/issues/{pr}/comments` endpoint, which
+    returns both `created_at` and `updated_at` for every top-level
+    issue comment. Returns a mapping keyed by both the comment's
+    `id` (stringified) and its `node_id`, so the caller can match
+    a `gh pr view` comment by either identifier.
+
+    On failure (network, permissions, malformed response) returns
+    an empty mapping; the caller falls back to the `createdAt` the
+    `gh pr view` shape already carries, which is the safe side
+    (a missing `updatedAt` degrades to `createdAt` for the
+    never-edited case, and fails closed for the edited case).
+    """
+    if not repo or not pr_number:
+        return {}
+    owner, separator, name_repo = repo.partition("/")
+    if not separator or not owner or not name_repo:
+        return {}
+    try:
+        response = run_json(
+            [
+                "rtk",
+                "gh",
+                "api",
+                "--method",
+                "GET",
+                f"repos/{owner}/{name_repo}/issues/{pr_number}/comments",
+                "--paginate",
+            ]
+        )
+    except InspectionError:
+        return {}
+    # `--paginate` returns a flat JSON array of comment objects.
+    if not isinstance(response, list):
+        return {}
+    by_key: dict[str, dict[str, Any]] = {}
+    for comment in response:
+        if not isinstance(comment, dict):
+            continue
+        created = comment.get("created_at")
+        updated = comment.get("updated_at")
+        if not created and not updated:
+            continue
+        payload = {
+            "createdAt": created,
+            "updatedAt": updated,
+        }
+        comment_id = comment.get("id")
+        node_id = comment.get("node_id")
+        if comment_id is not None:
+            by_key[str(comment_id)] = payload
+        if node_id:
+            by_key[str(node_id)] = payload
+    return by_key
+
+
+def augment_comments_with_metadata(
+    current: dict[str, Any], repo: str, pr_number: int
+) -> dict[str, Any]:
+    """Fill in `createdAt` / `updatedAt` on each PR comment from REST.
+
+    N2: the Kilo summary path needs a real `updatedAt` to bind an
+    edited-in-place summary to the head's run (PR #118: created
+    00:03:43Z, updated 00:26:26Z, run started 00:22:51Z). The
+    `gh pr view --json comments` shape does not carry `updatedAt`,
+    so this function fetches it from the REST endpoint and merges
+    it into the payload in-place.
+
+    Provenance: the merged values are recorded under a `_restMeta`
+    key on each comment so a test or a follow-up reader can see
+    which values came from REST and which from the gh shape. The
+    REST values take precedence (they are the canonical edit
+    timestamps); a missing REST value falls back to the gh
+    `createdAt`. The `_restMeta` shape is:
+
+        {"source": "repos/{owner}/{repo}/issues/{n}/comments",
+         "created_at": ..., "updated_at": ...}
+
+    Failures are silent: an empty mapping means no REST metadata,
+    and the gh values remain (which fail closed for the edited
+    case, matching the B1 invariant).
+    """
+    if not isinstance(current, dict):
+        return current
+    comments = current.get("comments")
+    if not isinstance(comments, list):
+        return current
+    metadata = fetch_pr_comments_with_metadata(repo, pr_number)
+    if not metadata:
+        return current
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        # Match by id first (gh's comments shape uses `id` as a
+        # string like `IC_kwDOUEhYLs8AAAABbwivVg`), then by node_id.
+        comment_id = str(comment.get("id") or "")
+        node_id = str(comment.get("node_id") or "")
+        record = metadata.get(comment_id) or metadata.get(node_id)
+        if not record:
+            continue
+        # REST values are authoritative; keep gh's as a fallback.
+        if record.get("createdAt"):
+            comment["createdAt"] = record["createdAt"]
+        if record.get("updatedAt") is not None:
+            comment["updatedAt"] = record["updatedAt"]
+        comment["_restMeta"] = {
+            "source": f"repos/.../issues/{pr_number}/comments",
+            "created_at": record.get("createdAt"),
+            "updated_at": record.get("updatedAt"),
+        }
+    return current
+
+
 def fetch_check_output(repo: str, head_sha: str, name: str) -> dict[str, Any] | None:
     """Return the live `output` (and timing) of the head SHA's named check.
 
@@ -1515,8 +1634,15 @@ def main() -> int:
             # `output` or the run id, so the rate-limit phrase on a
             # failed Kilo check would otherwise be unreachable on
             # live data. Augment checks with the head SHA's
-            # REST-fetched output when the rollup is silent.
+            # REST-fetched output when the rollup is silent. One
+            # REST call per PR (filter=all).
             augment_checks_with_output(current, args.repo)
+            # `gh pr view --json comments` does not expose
+            # `updatedAt`, so an edited-in-place Kilo summary
+            # cannot be bound to the head's run without it. Fetch
+            # real edit timestamps from the REST issues/comments
+            # endpoint and merge them in, with provenance.
+            augment_comments_with_metadata(current, args.repo, args.pr)
             threads = fetch_threads(args.repo, args.pr)
             recent = fetch_recent(args.repo, args.pr, args.recent_pr_limit)
         result = inspect(
