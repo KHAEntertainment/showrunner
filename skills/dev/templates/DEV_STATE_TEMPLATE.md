@@ -179,10 +179,11 @@ checkouts).
 `role` is the lane role (the same vocabulary `workers[].role` carries) so
 a postmortem can join inventory rows to lanes without a second lookup.
 `created_at` is the UTC time the row was first written and never changes
-after that. Removing a worktree still goes through `traycer worktree delete
---path`, after user approval, with review-tier rows approved one at a time
-— that rule lives with the cleanup line in `reply-contract.md` and a row's
-`state` cannot reach `cleaned` without that approval.
+after that. Removing a worktree still goes through the wrapper's
+`worktree delete --path`, after user approval, with review-tier rows
+approved one at a time — that rule lives with the cleanup line in
+`reply-contract.md` and a row's `state` cannot reach `cleaned` without
+that approval.
 
 ## Workspace-debt gauge record (Issue #73)
 

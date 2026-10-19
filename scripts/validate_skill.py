@@ -631,7 +631,7 @@ def main() -> int:
             "cleanup acts only on inventory rows",
             "landed-eligible-and-approved",
             "Removing a worktree still goes through",
-            "review-tier rows approved one at a time",
+            "review-tier rows",
             "Workspace-debt gauge record",
             "`python3 ${CLAUDE_SKILL_DIR}/scripts/workspace_debt.py`",
             "Two `unavailable`",

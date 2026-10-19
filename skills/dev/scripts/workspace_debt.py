@@ -212,8 +212,6 @@ def _run_traycer_cli(traycer_args: list[str]) -> dict[str, Any]:
     """
     if not WRAPPER.is_file():
         raise ScriptError(f"traycer_cli.py wrapper missing at {WRAPPER}")
-    if shutil.which("python3") is None:
-        raise ScriptError("python3 not on PATH")
     try:
         completed = subprocess.run(
             [sys.executable, str(WRAPPER), *traycer_args],
@@ -335,8 +333,7 @@ def _matches_repo(identifier: Any, repo: dict[str, str]) -> bool:
     Records whose `repoIdentifier` is null (a local-only worktree, or a
     porcelain row) are treated as out-of-scope: without an owner/repo pair
     we cannot tell which project it belongs to, and Issue #73's scope
-    amendment forbids guessing. Such records are recorded in
-    `undistinguishable_records` for the lead to read; they never count.
+    amendment forbids guessing. They never count toward this project.
     """
     if not isinstance(identifier, dict):
         return False
@@ -384,7 +381,10 @@ def _is_lead_created_review(worktree: dict[str, Any]) -> bool:
     than one, so over-marking only makes the lead slow down, never
     accidentally remove a foreign worktree.
     """
-    return _worktree_tier(worktree) == "review"
+    if _worktree_tier(worktree) != "review":
+        return False
+    worktree_path = worktree.get("worktreePath")
+    return isinstance(worktree_path, str) and bool(worktree_path)
 
 
 def _summarise_worktrees_traycer(worktrees: list[dict[str, Any]]) -> dict[str, Any]:

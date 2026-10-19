@@ -81,7 +81,7 @@ A threshold trip is **report-only**. The lead surfaces it so the user can decide
 
 ### 7.2 Consolidation offer
 
-When the threshold debt line reports `gauge=ok` and `worktrees.total > threshold` (the worktree half of the threshold, not the union), the lead closes the reply with one **consolidation offer** that names the run's project, the count of landed-eligible worktrees, and the user action required (`traycer worktree delete --path`, with review-tier rows approved one at a time). The offer is one line, ends in a single approval question, never commits to a deletion in the same turn:
+When the threshold debt line reports `gauge=ok` and `worktrees.total > threshold` (the worktree half of the threshold, not the union), the lead closes the reply with one **consolidation offer** that names the run's project, the count of landed-eligible worktrees, and the user action required (the wrapper's `worktree delete --path`, with review-tier rows approved one at a time). The offer is one line, ends in a single approval question, never commits to a deletion in the same turn:
 
 ```
 Consolidation: <project> has <landed-eligible> landed-eligible worktrees (review-tier approved one at a time). Approve the deletion batch?

@@ -261,7 +261,7 @@ each answer "yes" to individually while it stays unasked.
    the lead created) is the scope: cleanup acts on those rows, never on
    anything off the inventory. Concretely, in this turn and without asking:
    - Archive the lane's worker, QA, and reviewer agents via
-     `rtk proxy traycer agent archive --id <id>`. Archiving is
+     `rtk proxy python3 ${CLAUDE_SKILL_DIR}/scripts/traycer_cli.py agent archive --id <id>`. Archiving is
      reversible: a later message unarchives and wakes the same transcript
      and checklist context, so a re-review needs no new agent.
    - Stop any background shells the lane owns whose work is done (the
