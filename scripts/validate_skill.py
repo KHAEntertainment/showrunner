@@ -593,9 +593,8 @@ def main() -> int:
             "No tags",
             "no flow syntax",
             # Issue #85: SOP references to validator.
-            "dev_state.py --validate",
-            "On recovery",
-            "End-of-turn replies",
+            "If validation fails",
+            "report the named error to the user",
             # Issue #89: the ledger must be able to say which source the
             # identity came from.
             "`supplied` (the detector chose `traycer` from identifiers in `.agent/traycer.env`)",

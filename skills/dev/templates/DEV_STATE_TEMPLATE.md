@@ -8,8 +8,7 @@ ledger_profile: |
   Hand-editable without a parser. Strict enough for a fail-closed reader.
   Additive fields under schema_version: 2 are allowed; validators accept new keys.
 
-# On recovery: run dev_state.py --validate
-# End-of-turn replies: run dev_state.py --validate
+# If validation fails: report the named error to the user and repair the ledger
 execution:
   execution_backend: incomplete
   detection_status: incomplete
@@ -259,5 +258,4 @@ line; merging them would make the line dishonest about ownership.
 - Transition:
 - Next action:
 
-# On recovery: run dev_state.py --validate
-# End-of-turn replies: run dev_state.py --validate
+# If validation fails: report the named error to the user and repair the ledger

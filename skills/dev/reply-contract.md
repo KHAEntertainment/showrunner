@@ -4,7 +4,7 @@ Delegated lanes report to the Tech Lead through `${CLAUDE_SKILL_DIR}/agents/repo
 
 ## 1. Scope
 
-This contract governs only the Tech Lead's end-of-turn replies to the user in the main `/dev` conversation. Before sending, run `dev_state.py --validate` on `.agent/dev-state.md` to confirm ledger integrity. It never governs:
+This contract governs only the Tech Lead's end-of-turn replies to the user in the main `/dev` conversation. Before sending, run `${CLAUDE_SKILL_DIR}/scripts/dev_state.py --validate` on `.agent/dev-state.md` to confirm ledger integrity; if validation fails, report the named error to the user and repair the ledger. It never governs:
 
 - Agent-to-lead reports (`${CLAUDE_SKILL_DIR}/agents/report-back.md` is unchanged and still required in full from every delegated lane).
 - Issue or PR bodies, which are the durable record and keep whatever detail they need.

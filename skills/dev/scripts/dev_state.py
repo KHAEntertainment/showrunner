@@ -158,9 +158,10 @@ def validate_profile(data: dict) -> None:
     if run_status is not None and run_status not in VALID_RUN_STATUSES:
         fail(f"run_status must be one of {sorted(VALID_RUN_STATUSES)}, got '{run_status}'")
     
-    # Check run_id is present
-    if "run_id" not in data:
-        fail("run_id is required")
+    # Check run_id and run_status when present
+    run_id = data.get("run_id")
+    if run_id is not None and (run_id == "" or run_id is None):
+        fail("run_id must be non-empty when present")
 
 
 def main() -> int:

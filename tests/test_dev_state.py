@@ -135,6 +135,29 @@ run_status: invalid
         self.assertNotEqual(code, 0)
         self.assertIn("run_status", stderr.lower())
 
+    def test_missing_run_id_passes(self):
+        """Missing run_id (optional) should pass."""
+        content = """---
+schema_version: 2
+run_status: active
+next_action: test
+---
+"""
+        code, _, _ = run_validator(content)
+        self.assertEqual(code, 0)
+
+    def test_empty_run_id_fails(self):
+        """Empty run_id should fail."""
+        content = """---
+schema_version: 2
+run_id: ""
+run_status: active
+---
+"""
+        code, _, stderr = run_validator(content)
+        self.assertNotEqual(code, 0)
+        self.assertIn("run_id", stderr.lower())
+
     def test_missing_lead_checkpoint_passes(self):
         """Missing lead_checkpoint (optional) should pass."""
         content = """---
