@@ -587,6 +587,14 @@ def main() -> int:
             "report_back_termination",
             "termination, reply correlation, and section presence",
             "Every bounded read records how it ended",
+            # Issue #85: ledger profile and validator (ADR-015).
+            "ledger_profile:",
+            "No anchors",
+            "No tags",
+            "no flow syntax",
+            # Issue #85: SOP references to validator.
+            "If validation fails",
+            "report the named error to the user",
             # Issue #89: the ledger must be able to say which source the
             # identity came from.
             "`supplied` (the detector chose `traycer` from identifiers in `.agent/traycer.env`)",
