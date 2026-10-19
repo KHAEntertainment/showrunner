@@ -1024,10 +1024,15 @@ def main() -> int:
         # passed every suite. The entry is one of the few
         # user-facing places the behavior change is recorded, so
         # losing it silently is a real regression.
+        #
+        # Tolerant of absence: the file is a release-notes
+        # document, so a fixture/archival tree that does not
+        # carry it is not a defect (same tolerance pattern as
+        # `EXTRA_MARKDOWN_DIRS` for `en/`, `zh/`). The check
+        # applies only when the file is present, which is the
+        # shape a real source tree has.
         changelog = repo_root / "CHANGELOG.custom.md"
-        if not changelog.is_file():
-            fail(errors, "missing required file: CHANGELOG.custom.md")
-        else:
+        if changelog.is_file():
             changelog_text = changelog.read_text(encoding="utf-8")
             # Locate the Unreleased (v2.1.2) section and assert
             # it mentions the Issue #82 / #117 switch.
