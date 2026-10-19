@@ -27,6 +27,17 @@ reviewer:
   reasoning_effort: null
   route_source: null
 workers: []
+inventory: []
+workspace_debt:
+  gauge_status: null
+  gauge_reason_code: null
+  gauge_reason: null
+  project: null
+  backend: null
+  observed_at: null
+  counts: null
+  threshold: null
+  threshold_tripped: null
 pull_requests: []
 blockers: []
 next_action: run_backend_detection
@@ -137,6 +148,93 @@ closed/open state.
 When the merge used the external-review bypass, this record cross-references
 that PR's `review_debt` entry above rather than restating its commit-range
 rule.
+
+## Inventory record schema (Issue #73)
+
+`inventory` is additive under `schema_version: 2`. Per the 2026-10-13 scope
+amendment, the inventory **is** the scope boundary: every agent, worktree,
+read-only review checkout, and background shell the lead creates gets one
+row, and cleanup acts only on inventory rows. Off-inventory objects are
+report-only and never stop/archived by the lead. Each `inventory` row holds
+`id`, `kind`, `pr`, `role`, `created_at`, `state`, and the kind-specific
+fields below.
+
+Allowed `kind` values: `agent`, `worktree`, `review_checkout`, `shell`. The
+`agent` and `worktree` kinds read their primary id from the underlying
+Traycer object (`agent.id`, `worktree.worktreePath`); the others use a
+locally minted id (`review:<path>`, `shell:<hostid>:<name>`).
+
+Allowed `state` values, by kind:
+
+- `agent`: `planned`, `active`, `report-back-pending`, `report-back-complete`, `report-back-incomplete`, `archived-on-accept`, `archived-on-closeout`, `foreign-idle`, `foreign-archived`. The two `foreign` states name agents the lead did not spawn; cleanup rows in those states never appear in a `Not mine` entry of the reply-contract cleanup line without a separate row write.
+- `worktree`: `in-progress`, `review-only`, `landed-eligible`, `landed-eligible-and-approved`, `cleaned`, `foreign`. `landed-eligible` flips automatically after the lane's post-merge verification record lands; transition to `landed-eligible-and-approved` happens only after the user approves the row in a consolidation batch.
+- `review_checkout`: `in-use`, `clean`, `removed`.
+- `shell`: `running`, `stopped`, `exited`.
+
+Allowed `pr` values: a PR number (int) or `null` when no PR is associated.
+A row whose `pr` matches a `pull_requests[].number` is part of that PR's
+lane; rows with `pr: null` are non-PR work (research lanes, scratch
+checkouts).
+
+`role` is the lane role (the same vocabulary `workers[].role` carries) so
+a postmortem can join inventory rows to lanes without a second lookup.
+`created_at` is the UTC time the row was first written and never changes
+after that. Removing a worktree still goes through the wrapper's
+`worktree delete --path`, after user approval, with review-tier rows
+approved one at a time — that rule lives with the cleanup line in
+`reply-contract.md` and a row's `state` cannot reach `cleaned` without
+that approval.
+
+## Workspace-debt gauge record (Issue #73)
+
+`workspace_debt` is additive under `schema_version: 2`. It is the snapshot
+side of Issue #73: the inventory is the row-by-row ledger, `workspace_debt`
+is the single-shot gauge result so the lead's reply-contract cleanup line
+has a number to quote without re-running the script every turn.
+
+A `workspace_debt` entry holds `gauge_status`, `gauge_reason_code`,
+`gauge_reason`, `project`, `backend`, `observed_at`, `counts`, `threshold`,
+and `threshold_tripped`.
+
+`gauge_status` is the JSON status from
+`python3 ${CLAUDE_SKILL_DIR}/scripts/workspace_debt.py`: `ok` when the
+gauge ran, or `unavailable` when any fault path fired (missing CLI,
+timeout, unparseable output, `incomplete` backend). When
+`gauge_status: unavailable`, `counts` is `null` and is recorded as `null`
+in the ledger — never rewritten to a placeholder zero. Two `unavailable`
+runs are recorded as two readings, never collapsed into one. A zero count
+means the gauge measured zero; a null count means the gauge did not
+measure.
+
+`gauge_reason_code` and `gauge_reason` mirror the script's `reason_code`
+and `reason` so a later lead can fault-trace an `unavailable` record
+without re-running the gauge. `project` is the `OWNER/REPO` from
+`.dev.json`; `backend` is `traycer`, `claude-native`, or `unavailable`.
+
+`observed_at` is the UTC time the gauge ran. `counts` mirrors the
+script's `counts` object verbatim: the `worktrees` and `agents`
+breakdowns, including `tier_null` and `landed_eligible`, are recorded
+exactly as the gauge returned them. Downstream consumers do not
+recompute: a row's `counts.worktrees.total` is always the value the
+gauge measured at `observed_at`, not a derived view. Removal of a row's
+worktree still updates the row's `state`, never its `counts`.
+
+`threshold` is the per-project workspace-debt threshold (an integer
+worktree count, default `5`) at which the lead appends the threshold
+debt line in § 7.1 of `reply-contract.md`. `threshold_tripped` is the
+derived boolean (`counts.worktrees.total > threshold` OR
+`counts.agents.active_not_mine > 0` OR `gauge_status: unavailable`), set
+by the lead at the same time the threshold debt line is emitted. The
+field is `null` when `counts` is `null` (an unavailable gauge is itself
+a trip, but the boolean is recorded after `counts` is filled in).
+
+The gauge and the inventory are not interchangeable: the inventory is
+the *rows* the lead authored and now owns; `workspace_debt` is a
+single observation across the project's Traycer state, including rows
+the lead did not author (the ones whose `kind: agent` `parentId` does
+not match this lead). The reply-contract cleanup line names inventory
+rows under `Still open` and gauge totals under the threshold debt
+line; merging them would make the line dishonest about ownership.
 
 ## Recovery entries
 

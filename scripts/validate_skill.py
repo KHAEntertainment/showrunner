@@ -38,6 +38,7 @@ REQUIRED = {
     "scripts/inspect_external_reviews.py",
     "scripts/dev_config.py",
     "scripts/resolve_repository.py",
+    "scripts/workspace_debt.py",
     "graft.md",
 }
 
@@ -569,6 +570,12 @@ def main() -> int:
             "not a required field",
             "must not manufacture uncertainty",
             "specification defect found before implementation beats a faithful implementation of a flawed spec",
+            # Issue #125 (round 2): the provider-neutral assignment envelope
+            # carries the lead's effective `GH_CONFIG_DIR` (literal
+            # "default" when unset) so the lane's pre-write
+            # `check-gh-account` verifies the same login the lead used.
+            "literal `\"default\"` when unset",
+            "check-gh-account",
         ),
         # The ledger is the other half of Issue #3's "recorded in
         # .agent/dev-state.md": a contract pointing at a field that does not
@@ -616,6 +623,19 @@ def main() -> int:
             "it is the ledger record of the still-`pending` gate",
             "the model families of the substitute, the implementation worker, the QA lane, and the internal reviewer",
             "A substitution is a completed review, not an `approved_bypasses` or `review_debt` entry.",
+            # Issue #73: the snapshot side of lane close-out. Every clause
+            # pins one way the gauge could be softened away from its
+            # fail-closed contract.
+            "Inventory record schema",
+            "the inventory **is** the scope boundary",
+            "cleanup acts only on inventory rows",
+            "landed-eligible-and-approved",
+            "Removing a worktree still goes through",
+            "review-tier rows",
+            "Workspace-debt gauge record",
+            "`python3 ${CLAUDE_SKILL_DIR}/scripts/workspace_debt.py`",
+            "Two `unavailable`",
+            "A zero count",
         ),
         # Issue #33: the gate's own bypass path had become the routine path
         # because a review invalidated by the author's own fix-commit push
@@ -763,6 +783,17 @@ def main() -> int:
             "a completed, current-head substitute review with a blocking finding → REQUEST CHANGES",
             "Any other `pending`, or `incomplete`, external review → do not merge",
             "a `pending` routed as `clear` by a completed, current-head substitution counts",
+            # Issue #73: lane close-out step 5 in Post-Merge Verification.
+            # Each clause pins one way the close-out could be softened
+            # away from the user-approved-amendment contract.
+            "Lane close-out (unconditional)",
+            "the inventory",
+            "anything off the inventory",
+            "Archive the lane's worker, QA, and reviewer agents",
+            "landed-eligible",
+            "`python3 ${CLAUDE_SKILL_DIR}/scripts/workspace_debt.py`",
+            "Quote the gauge and write the cleanup line",
+            "never quote a zero from a null",
         ),
         "phases/phase1.md": (
             "### B.0 Document-first mode (Situation A only)",
@@ -801,6 +832,15 @@ def main() -> int:
             "Phase 3's Backend-Neutral Task Board",
             "Phase 4's review rating",
             "Phase 5's retro and technical-debt-sweep templates",
+            # Issue #73: the cleanup-line contract. Each clause pins the
+            # structured shape so the line never degrades to prose.
+            "Cleanup line and consolidation offer",
+            "Cleanup: retired",
+            "Still open:",
+            "Not mine:",
+            "Threshold: debt",
+            "Consolidation:",
+            "Approve the deletion batch?",
         ),
         # Each adapter must state its own bound; `contract.md` requires one to
         # exist but cannot supply a page size or a timeout for a transport it
