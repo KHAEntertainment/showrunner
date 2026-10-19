@@ -1,6 +1,6 @@
 ---
 name: dev
-version: 2.1.1+upstream.3e87db0
+version: 2.1.2+upstream.3e87db0
 description: Run the RTK-efficient Issue-to-PR development SOP through Claude-native or Traycer execution, with recovery state, isolated ownership, QA, review, and retro gates. Use only when the user explicitly asks for the dev skill or for the full Issue-to-PR workflow, including after plan approval and before implementation begins; do not use it for ordinary coding, debugging, refactoring, or review requests.
 argument-hint: "[optional project or feature description]"
 disable-model-invocation: false
