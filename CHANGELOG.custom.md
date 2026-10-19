@@ -10,6 +10,65 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ## Unreleased (v2.1.2)
 
+### Added
+
+- External-review inspector widens built-in reviewers (#82):
+  `gemini-code-assist`, `greptile`, `sourcery`, and `qodo` (with
+  confirmed logins from `commenter:app/<name>` / users API on
+  2026-09-28). `github-actions[bot]` stays out: shared by every
+  workflow, not a stable identity. Greptile and Sourcery ship
+  verified CheckRuns (`greptile-apps` / `sourcery-ai`); Gemini and
+  Qodo are comment-only, so no check marker is added for either
+  until a future vendor publishes a run. New push re-review
+  defaults are documented for verified reviewers only; unverified
+  ones carry an "unverified" tag. Behavior change: a repo
+  already running one of these reviewers goes from
+  `not_applicable` to waiting on it; restore via `Ignored
+  reviewers`.
+- Ask-once contract for unknown review bots (#82): lead asks
+  the user **once per repository** — trust, ignore, or decide
+  later — and records the answer on the new `Pending reviewer
+  decisions` line in `PROJECT_CONTEXT.md` and the template.
+  Logins already listed there are **not re-asked**.
+- Kilo summary evidence path (#117): a Kilo `<!-- kilo-review -->`
+  PR comment is head review evidence when the head's Kilo run
+  succeeded AND the comment's last update (`updatedAt` falling
+  back to `createdAt`) is at or after that run's `startedAt`,
+  both as parseable ISO 8601. `Status: No Issues Found` AND
+  `Recommendation: Merge` clear; anything else routes through
+  the existing `blocking` / `advisory` / `false_positive`
+  disposition path. A **FAILED** Kilo check whose `output`
+  names `rate limit` keeps the gate `pending` with a distinct
+  reason and counts toward the #48 rate-limit breakpoint.
+  Vendor retry history on a SUCCESS run is not a rate-limit
+  signal. External Review Policy is now Kilo-led: `kilo`
+  required, `coderabbit` ignored (summary only), Kilo's
+  documented triggers (PR opened, new commits pushed, PR
+  reopened, draft marked ready) replace the coderabbit-only
+  auto-request paragraph.
+
+### Changed
+
+- External Review Policy is now Kilo-led in `PROJECT_CONTEXT.md`:
+  `kilo` is required, `coderabbit` is ignored (summary /
+  walkthrough only; its walkthrough comments are not review
+  evidence), and the auto-request paragraph is rewritten to name
+  Kilo's documented triggers (PR opened, new commits pushed,
+  PR reopened, draft marked ready) instead of CodeRabbit alone
+  (#117). The lead may use PR opened, new commits pushed, and
+  draft marked ready without explicit approval (each is a
+  deliberate review moment); PR reopened is a non-code-changing
+  re-request also covered by this automatic allowance. The
+  Trusted reviewers list keeps `coderabbit` so an
+  ignored-but-trusted reviewer still surfaces walkthrough comments
+  the maintainer wants to see; the Kilo summary evidence path
+  is a separate mechanism and is the only thing that satisfies
+  the gate. The `PROJECT_CONTEXT_TEMPLATE.md` External Review
+  Policy section keeps its generic defaults; only the new
+  `Pending reviewer decisions` line is added so a repo created
+  from the template has a recording site for the ask-once
+  contract.
+
 ### Fixed
 
 - Validator home-path scan now includes `docs/` (via `EXTRA_MARKDOWN_DIRS`)

@@ -1,0 +1,33 @@
+{
+  "_provenance": {
+    "note": "Real failed Kilo run from PR #114 at head 91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8. Run id 115580659602. Fetched with `gh api repos/KHAEntertainment/showrunner/commits/91e1cb4.../check-runs?filter=all` (the default `filter=latest` hides this older run; the LATEST run on that SHA is the success 115591827668 at 23:20:05-23:25:48). The rate-limited failure ran 22:48:19-22:59:16Z with `output.summary: \"Review failed: Assistant request was rate limited\"`. Confirmed live by the lead with filter=all.",
+    "run_id": 115580659602,
+    "filter": "all",
+    "fetch_command": "gh api repos/KHAEntertainment/showrunner/commits/91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8/check-runs?filter=all"
+  },
+  "current": {
+    "number": 114,
+    "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+    "reviewRequests": [],
+    "reviews": [],
+    "latestReviews": [],
+    "statusCheckRollup": [
+      {
+        "id": 115580659602,
+        "name": "Kilo Code Review",
+        "status": "COMPLETED",
+        "conclusion": "FAILURE",
+        "startedAt": "2026-10-13T22:48:19Z",
+        "completedAt": "2026-10-13T22:59:16Z",
+        "app": null,
+        "output": {
+          "title": "Kilo Code Review failed",
+          "summary": "Review failed: Assistant request was rate limited"
+        }
+      }
+    ],
+    "comments": []
+  },
+  "threads": [],
+  "recent": []
+}
