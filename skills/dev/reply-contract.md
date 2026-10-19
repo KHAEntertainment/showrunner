@@ -52,3 +52,39 @@ Internal lane output is pulled, not pushed: the lead reads a worker/QA/reviewer 
 ## 6. Composition note
 
 `/dev` never claims a task-requirements override to justify verbosity. A session brevity skill that requires explicit activation and permits overriding task requirements when it is active is not overridden by this Skill's own reporting habits — `/dev`'s reply behavior composes with whatever brevity skill governs the session, rather than treating its report-back detail as license to ignore one. This note is intentionally third-party-agnostic: it names no specific brevity skill. Skill-specific compatibility notes belong in project documentation, not in this payload.
+
+## 7. Cleanup line and consolidation offer (Issue #73)
+
+The end-of-turn reply carries exactly **one** `Cleanup:` line whenever this turn retired something or inventory rows from `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md` remain open. The line is a structured summary, not prose; it surfaces so the user can scan it without scrolling past the verdict. The shape is fixed so a single parser can teach the lead what each field means:
+
+```
+Cleanup: retired <N> (<comma-separated kind:count>). Still open: <role-or-id> (<status reason>). Not mine: <id> idle (<backend hint>).
+```
+
+Fields, in order:
+
+- `retired <N>` — the count of artifacts this turn archived, stopped, or removed (with their kind), grouped by what the lead actually did (lanes archived, shells stopped, review checkouts removed, agents archived on accept). Zero is itself a value and must be quoted as `retired 0`.
+- `Still open:` — every inventory row whose `state` is anything other than `archived`, `landed-eligible-and-approved`, or `cleaned`. The reason field is the row's `state`, never a paraphrase (e.g. `worker (PR not merged)`, `qa-blocked`, `review-checkout-uncommitted`). Rows the lead did not spawn appear here, not under `Not mine`.
+- `Not mine:` — agents in this task whose `parentId` is not this lead, listed by id and a single backend hint (`idle`, `archived`, `sandbox-blocked`). The lead never stops or archives these. On the claude-native backend this field is always empty.
+
+The cleanup line is a fixed-shape record; it does not bury debt or migration status, which live in the inventory and the post-merge verification record respectively. The cap of § 2 still applies to the prose around it.
+
+### 7.1 Threshold-based debt line
+
+When the project's workspace-debt gauge (Issue #73, `python3 ${CLAUDE_SKILL_DIR}/scripts/workspace_debt.py`) returns counts for this run's project that exceed the issue's threshold, the lead appends one **threshold debt line** to the cleanup line on the same line, separated by a single space, so a single regex can split them. The threshold is configured per project in `.agent/dev-state.md`; the default for the v2.1.2 dogfood is `worktrees.total > 5` OR `agents.active_not_mine > 0` OR `status == unavailable`. The line shape:
+
+```
+Threshold: debt <project> worktrees=<n>/<threshold> agents=<n> backend=<traycer|claude-native|unavailable> gauge=<ok|unavailable>
+```
+
+A threshold trip is **report-only**. The lead surfaces it so the user can decide whether to act, never acts unilaterally; the action is the consolidation offer below.
+
+### 7.2 Consolidation offer
+
+When the threshold debt line reports `gauge=ok` and `worktrees.total > threshold` (the worktree half of the threshold, not the union), the lead closes the reply with one **consolidation offer** that names the run's project, the count of landed-eligible worktrees, and the user action required (the wrapper's `worktree delete --path`, with review-tier rows approved one at a time). The offer is one line, ends in a single approval question, never commits to a deletion in the same turn:
+
+```
+Consolidation: <project> has <landed-eligible> landed-eligible worktrees (review-tier approved one at a time). Approve the deletion batch?
+```
+
+The lead never invents a count: the offer's number is the gauge's `counts.worktrees.landed_eligible` for this run's project, and the offer is omitted entirely when that field is `null` (an unavailable gauge) or `0`. Removing a worktree still goes through user approval per the consolidation batch in fix item 5 of Issue #73; the offer is a question, not a commit, and the lead does not pre-empt it by listing the paths in the reply body (they belong in the proposal the user reviews out-of-band).

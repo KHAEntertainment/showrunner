@@ -53,6 +53,28 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   documented triggers (PR opened, new commits pushed, PR
   reopened, draft marked ready) replace the coderabbit-only
   auto-request paragraph.
+- Lane close-out and the workspace-debt gauge (#73):
+  `phases/phase4.md` Post-Merge Verification now closes the
+  lane unconditionally after merge — archives the lane's
+  worker/QA/reviewer agents without asking, stops lane shells,
+  removes lead-created detached review checkouts whose
+  `git status` is clean, and marks the lane worktree
+  `landed-eligible` in the new `inventory` schema (removal
+  still goes through `traycer worktree delete --path`, after
+  user approval, with review-tier rows approved one at a time).
+  `reply-contract.md` § 7 adds the fixed-shape `Cleanup:` line
+  (retired / Still open / Not mine), the threshold debt line,
+  and the consolidation offer; `DEV_STATE_TEMPLATE.md` carries
+  the `inventory` schema (one row per agent, worktree, review
+  checkout, background shell the lead creates) and the additive
+  `workspace_debt` snapshot. New
+  `skills/dev/scripts/workspace_debt.py` is stdlib-only, scoped
+  to `.dev.json` `pushRepository`, fails closed (`status:
+  unavailable`, `counts: null`) on any CLI error, timeout,
+  missing binary, or unparseable output, and never deletes,
+  stops, or archives anything. Claude-native backend reads
+  worktrees from `git worktree list --porcelain` and reports
+  agents as `not_applicable`.
 
 ### Changed
 
