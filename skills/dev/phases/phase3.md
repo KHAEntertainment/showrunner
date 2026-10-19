@@ -56,6 +56,6 @@ Use only ledger statuses: `planned`, `worktree_ready`, `active`, `blocked`, `pr_
 - New feature: `${CLAUDE_SKILL_DIR}/agents/worker-new.md`
 - Fix/improvement: `${CLAUDE_SKILL_DIR}/agents/worker-fix.md`
 
-Fill the Issue number and include: role, topology, backend, agent ID after launch, route/source, branch, absolute source/worktree mapping, base OID, ownership, RTK-first requirement, plan-approval requirement, reporting path, and stop condition.
+Fill the Issue number and include: role, topology, backend, agent ID after launch, route/source, branch, absolute source/worktree mapping, base OID, ownership, the lead's open questions (when genuine uncertainty exists), RTK-first requirement, plan-approval requirement, reporting path, and stop condition.
 
 On PR creation or blocker, execute adapter `observe`, update the task board and ledger, and preserve the communication evidence. Never infer completion from silence.

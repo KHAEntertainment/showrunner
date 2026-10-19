@@ -58,6 +58,8 @@ Whether launched through Claude-native or Traycer execution:
 
    **Safety carve-out — non-negotiable.** Validation, error handling, security, and accessibility are never cut for minimality. Minimizing scope must never mean removing a guard. A fix that gets smaller by deleting a check is not a smaller fix; it is a second defect.
 
+   **Challenge the assignment.** Challenging the specification is in scope for this lane, exactly as questioning whether the code needs to change at all is: where the envelope names the lead's open questions, answer or overturn them instead of implementing around them. A specification defect found before implementation beats a faithful implementation of a flawed spec, because it is corrected in one paragraph rather than a review round-trip. Flag what you believe is wrong before you depart from it; never silently ship the version you think was meant.
+
 ---
 
 ## [Step 3: Self-Check (all items mandatory)]

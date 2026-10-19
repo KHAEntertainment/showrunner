@@ -77,6 +77,16 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   A lease is also refused for the remote's default branch
   (`lease_on_default_branch`; unreadable default branch fails closed), and the
   documented push commands are pinned by a test.
+- Assignment envelopes name the lead's open questions as a provider-neutral
+  envelope element beside the acceptance criteria (#34). It is included only
+  where genuine uncertainty exists; a lead must not manufacture uncertainty to
+  fill it. The worker and QA prompts state that challenging the specification
+  is in scope and that a specification defect found before implementation
+  beats a faithful implementation of a flawed spec, and the report-back's
+  Deviations section gains the upstream half — flag the specification as wrong
+  *before* departing from it. `phases/phase3.md`'s restated dispatch list keeps
+  the two lists in sync. The validator and doc-assertion tests pin the element,
+  its not-mandatory clause, and each prompt's sentence.
 
 ### Changed
 
