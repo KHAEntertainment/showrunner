@@ -382,6 +382,49 @@ try {
     }
     Pass "install.ps1 archives the captured commit, not HEAD, at staging time"
 
+    # An archive failure must name git's own cause: Invoke-GitClean captures
+    # the child's stderr and the thrown error carries it (Issue #51, L1).
+    # Deleting a loose blob object from a scratch git checkout makes
+    # `git archive` fail while rev-parse/ls-tree still validate the checkout,
+    # so this reaches the real archive-failure throw rather than a validation
+    # abort, and the deleted object's id only ever appears in git's stderr.
+    $archiveFailSource = Join-Path $testRoot "archive-fail-source"
+    New-Item -ItemType Directory -Force -Path (Join-Path $archiveFailSource "skills\dev") | Out-Null
+    Copy-Item -LiteralPath $installer -Destination (Join-Path $archiveFailSource "install.ps1")
+    Set-Content -Path (Join-Path $archiveFailSource "skills\dev\SKILL.md") -Value "# payload for the archive-failure case"
+    & git init --quiet -- $archiveFailSource
+    & git -C $archiveFailSource add -A
+    & git -c user.name=test -c user.email=test@example.com `
+        -C $archiveFailSource commit --quiet -m "archive-failure fixture commit"
+    $missingBlob = (& git -C $archiveFailSource rev-parse "HEAD:skills/dev/SKILL.md").Trim()
+    $missingObjectPath = Join-Path (Join-Path (Join-Path $archiveFailSource ".git\objects") $missingBlob.Substring(0, 2)) $missingBlob.Substring(2)
+    Remove-Item -LiteralPath $missingObjectPath -Force
+    $archiveFailTarget = Join-Path $testRoot "archive-fail target"
+    $archiveFailError = $null
+    try {
+        & (Join-Path $archiveFailSource "install.ps1") -ConfigDir $archiveFailTarget -Lang en 2>$null | Out-Null
+    }
+    catch {
+        $archiveFailError = $_.Exception.Message
+    }
+    if (-not $archiveFailError) { throw "Install with an unreadable archive object unexpectedly succeeded" }
+    if ($archiveFailError -notmatch "git archive failed with exit code") {
+        throw "Archive failure did not report git's exit code: $archiveFailError"
+    }
+    if ($archiveFailError -notmatch [regex]::Escape($missingBlob)) {
+        throw "Archive failure did not surface git's stderr (expected the missing object $missingBlob): $archiveFailError"
+    }
+    Assert-Absent $archiveFailTarget
+    Pass "git archive failure surfaces git's stderr in the thrown error"
+
+    # The PowerShell 7 requirement that ProcessStartInfo.ArgumentList implies
+    # must be declared up front, so a 5.1 host fails immediately with a
+    # version error instead of midway through an install (Issue #51, M1).
+    if ($installerSource -notmatch '(?m)^#Requires -Version 7\s*$') {
+        throw "install.ps1 does not declare '#Requires -Version 7'"
+    }
+    Pass "install.ps1 declares its PowerShell 7 requirement"
+
     # GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR inherited from the caller's
     # environment override git's repository discovery entirely, so without
     # neutralizing them a perfectly valid own-.git checkout could silently

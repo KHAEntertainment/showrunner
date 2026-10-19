@@ -109,10 +109,10 @@ bash install.sh --lang zh
 # macOS / Linux — 安装英文版
 bash install.sh --lang en
 
-# Windows PowerShell — 中文版
+# PowerShell 7+ — 中文版
 .\install.ps1 -Lang zh
 
-# Windows PowerShell — 英文版
+# PowerShell 7+ — 英文版
 .\install.ps1 -Lang en
 ```
 

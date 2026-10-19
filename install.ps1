@@ -45,6 +45,11 @@ Do not create or touch the "$env:USERPROFILE\.agents\skills\dev" Codex discovery
 .PARAMETER DryRun
 Validate and report without changing any files.
 #>
+#Requires -Version 7
+# Windows PowerShell 5.1 cannot run this installer (Invoke-GitClean uses
+# ProcessStartInfo.ArgumentList, a PowerShell 7 / modern .NET API). Declaring
+# the requirement here fails a 5.1 host immediately with this version error
+# instead of partway through an install (Issue #51).
 [CmdletBinding()]
 param(
     [string]$Lang = "en",
@@ -143,10 +148,11 @@ function Invoke-GitClean {
     # sequentially - rather than asynchronously - cannot deadlock in
     # practice: neither stream ever approaches the OS pipe buffer size.
     $stdout = $proc.StandardOutput.ReadToEnd()
-    $null = $proc.StandardError.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
     $proc.WaitForExit()
     [PSCustomObject]@{
         StdOut   = $stdout
+        StdErr   = $stderr
         ExitCode = $proc.ExitCode
     }
 }
@@ -199,7 +205,13 @@ function Export-CommittedSkillsDev([string]$Destination) {
         # PowerShell can reinterpret/corrupt binary streams (encoding and
         # newline translation), which a file handoff avoids entirely.
         $archiveResult = Invoke-GitClean -ArgumentList @("-C", $PSScriptRoot, "archive", "-o", $archiveFile, $installCommit, "--", "skills/dev")
-        if ($archiveResult.ExitCode -ne 0) { throw "git archive failed with exit code $($archiveResult.ExitCode)" }
+        if ($archiveResult.ExitCode -ne 0) {
+            # Name git's own cause (Issue #51, L1): its stderr is the only
+            # thing that says why the archive failed.
+            $gitStderr = $archiveResult.StdErr.Trim()
+            $archiveDetail = if ($gitStderr) { ": $gitStderr" } else { "" }
+            throw "git archive failed with exit code $($archiveResult.ExitCode)$archiveDetail"
+        }
         # Extract from inside the destination instead of `tar -C`: GNU tar
         # processes backslash escapes in a -C argument, and $Destination can
         # live under a caller-chosen path (TMPDIR, or the target's parent).
