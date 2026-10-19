@@ -30,6 +30,10 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   to the bypass count. The validator and unit tests now pin the
   fresh-identity requirement, and the validator checks the Result Routing
   clear-condition inside its own section instead of anywhere in the file.
+- `install.ps1` requires PowerShell 7 (`#Requires -Version 7`) rather than
+  failing on Windows PowerShell 5.1 with a `.NET` property error
+  (`ProcessStartInfo.ArgumentList`), and a failing `git archive` now names
+  git's own stderr alongside the exit code (#51).
 
 ### Added
 

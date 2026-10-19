@@ -233,7 +233,9 @@ Compatibility forms `--lang en` and `--lang=en` are accepted. Chinese installati
 There is no uninstall command. To reverse an install, restore the most recent
 directory under `~/.claude/backups/dev/`.
 
-### Windows PowerShell
+### PowerShell 7+
+
+Requires PowerShell 7 or later (`pwsh`). Windows PowerShell 5.1 is not supported: `install.ps1` declares `#Requires -Version 7`, so 5.1 fails immediately with a version error rather than midway through the install.
 
 ```powershell
 .\install.ps1 -DryRun
