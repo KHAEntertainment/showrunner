@@ -54,13 +54,7 @@ def parse_simple_yaml(text: str) -> dict:
     if re.search(r"!\w+", yaml_content):
         fail("tag syntax detected")
     
-    # Check for YAML flow mappings { } in YAML content only
-    if re.search(r"\{[^}]+\}", yaml_content):
-        fail("flow mapping syntax detected")
-    
-    # Check for YAML flow sequences [ ] in YAML content only
-    if re.search(r"\[[^\]]+\]", yaml_content):
-        fail("flow sequence syntax detected")
+    # Flow mapping/sequence checks will be done per-value during parsing
     
     # Parse frontmatter if present - only the YAML portion before closing ---
     if not text.startswith("---\n"):
@@ -131,6 +125,17 @@ def parse_simple_yaml(text: str) -> dict:
                 elif value == "false" or value == "False":
                     result[key] = False
                 else:
+                    # Check for flow syntax in UNQUOTED values only
+                    stripped = value.lstrip()
+                    if stripped and not stripped.startswith('"') and not stripped.startswith("'"):
+                        # Check for non-empty flow syntax (exclude empty [] or {})
+                        if ("{" in value or "[" in value) and value.strip() not in ["{}", "[]"]:
+                                fail(f"flow mapping syntax detected on line {i}")
+                    
+                    # Check for unterminated quotes
+                    if (value.startswith('"') and not value.endswith('"')) or                        (value.startswith("'") and not value.endswith("'")):
+                        fail(f"unterminated quote on line {i}")
+                    
                     # Try to convert to number
                     try:
                         result[key] = int(value.strip('"').strip("'"))

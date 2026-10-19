@@ -68,8 +68,7 @@ execution:
 schema_version: 2
 run_id: test
 run_status: active
-execution:
-  backend: {name: traycer}
+data: {name: traycer}
 ---
 """
         code, _, stderr = run_validator(content)
@@ -82,8 +81,7 @@ execution:
 schema_version: 2
 run_id: test
 run_status: active
-execution:
-  backend: [traycer]
+data: [traycer]
 ---
 """
         code, _, stderr = run_validator(content)
@@ -169,6 +167,69 @@ next_action: test
 """
         code, _, _ = run_validator(content)
         self.assertEqual(code, 0)
+
+    def test_single_quoted_json_passes(self):
+        """Single-quoted JSON string passes."""
+        content = """---
+schema_version: 2
+run_id: test
+run_status: active
+guard_at_merge: '{"at_head":0,"head":"abc"}'
+---
+"""
+        code, _, _ = run_validator(content)
+        self.assertEqual(code, 0)
+
+    def test_double_quoted_flow_passes(self):
+        """Double-quoted string containing { or [ passes."""
+        content = """---
+schema_version: 2
+run_id: test
+run_status: active
+        data: "value with { and ["
+---
+"""
+        code, _, _ = run_validator(content)
+        self.assertEqual(code, 0)
+
+    def test_unquoted_flow_mapping_fails(self):
+        """Unquoted flow mapping fails."""
+        content = """---
+schema_version: 2
+run_id: test
+run_status: active
+data: {a: 1}
+---
+"""
+        code, _, stderr = run_validator(content)
+        self.assertNotEqual(code, 0)
+        self.assertIn("flow", stderr.lower())
+
+    def test_unquoted_flow_sequence_fails(self):
+        """Unquoted flow sequence fails."""
+        content = """---
+schema_version: 2
+run_id: test
+run_status: active
+data: [1, 2]
+---
+"""
+        code, _, stderr = run_validator(content)
+        self.assertNotEqual(code, 0)
+        self.assertIn("flow", stderr.lower())
+
+    def test_unterminated_quote_fails(self):
+        """Unterminated quote fails."""
+        content = """---
+schema_version: 2
+run_id: test
+run_status: active
+data: "unclosed
+---
+"""
+        code, _, stderr = run_validator(content)
+        self.assertNotEqual(code, 0)
+        self.assertIn("quote", stderr.lower())
 
 
 if __name__ == "__main__":
