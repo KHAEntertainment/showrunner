@@ -253,3 +253,39 @@ each answer "yes" to individually while it stays unasked.
    `review_debt` entry and the commit-range rule in
    `${CLAUDE_SKILL_DIR}/phases/external-review.md` instead of naming the
    range again here.
+5. **Lane close-out (unconditional).** Once the post-merge verification
+   record is appended, retire the lane's resources in the same turn so a
+   later lead always finds an empty shelf. The inventory recorded under
+   `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md` `inventory` (one
+   row per agent, worktree, read-only review checkout, and background shell
+   the lead created) is the scope: cleanup acts on those rows, never on
+   anything off the inventory. Concretely, in this turn and without asking:
+   - Archive the lane's worker, QA, and reviewer agents via
+     `rtk proxy traycer agent archive --id <id>`. Archiving is
+     reversible: a later message unarchives and wakes the same transcript
+     and checklist context, so a re-review needs no new agent.
+   - Stop any background shells the lane owns whose work is done (the
+     `shells` inventory rows whose `state` is `running`).
+   - Remove the lead-created detached review checkouts whose `git status`
+     shows a clean worktree (no staged or unstaged changes, no untracked
+     paths the lane touched). The path is the `worktree-path` already in
+     the inventory row; removal runs in the same turn as the archive, not
+     later.
+   - **Mark the lane's worktree landed-eligible** in its inventory row by
+     flipping `state` to `landed-eligible` (the gauge records this in
+     `counts.worktrees.landed_eligible`). Deleting the worktree is still
+     the user-approved consolidation batch's job — a single approval per
+     review-tier row, never the lead's — so the lane worktree stays on
+     disk and the lead's only write here is the inventory row's state.
+   Agents the lead did not spawn stay out of this step: they appear in
+   the cleanup line under `Not mine` and are never stopped or archived
+   by the lead. A lane that has not yet merged is not a candidate here;
+   its inventory rows keep their pre-merge state until the merge lands
+   and the post-merge check has been recorded.
+6. **Quote the gauge and write the cleanup line.** Run
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/workspace_debt.py` from the lane
+   worktree, read the `counts.worktrees.landed_eligible` and
+   `counts.agents.active_not_mine` fields, and emit the fixed-shape
+   `Cleanup:` line described in § 7 of `${CLAUDE_SKILL_DIR}/reply-contract.md`.
+   The script reports `status: unavailable` and `counts: null` when the
+   CLI is broken or scoped out; never quote a zero from a null report.
