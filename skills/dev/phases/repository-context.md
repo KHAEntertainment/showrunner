@@ -300,3 +300,89 @@ never printed, logged, or written to a temp file or the ledger.
 
 This narrows stale-state exposure within the supported workflow; it is not an
 atomic guarantee against a concurrent hostile change.
+
+## Multiple GitHub accounts on one host
+
+Two or more GitHub accounts may share a single host (a personal account plus
+a work account, an operator plus a bot). The skill is a verification layer:
+`.dev.json` records the intended account, and the pre-write checks compare it
+against the real `gh` login, HTTPS credential, or SSH identity, refusing to
+write on a mismatch. **The skill never chooses the account and never
+persists host or credential state.** That is by design — picking the account
+is host setup, and the skill has no opinion on it. Routing comes from
+user-approved host changes that are made explicitly, reported back in the
+same turn they are made, and verifiable from the ledger afterwards; no
+account is switched automatically, no token is duplicated silently, and no
+credential is persisted on the user's behalf.
+
+When the lead finds the project `.dev.json` account disagrees with the active
+`gh` user, the SOP names this section, asks the user to approve the host
+changes that follow, and never persists anything until that approval is
+recorded.
+
+### Recommended routing layer
+
+These are host changes the **user** makes; the skill only verifies them.
+
+- **Git pushes.** The account a push authenticates as is the one held by
+  the `gh` config in effect for that shell: either the active account, or
+  a project-scoped `GH_CONFIG_DIR` (set in `.claude/settings.local.json`
+  `env`) that holds only that account's login. That project-scoped
+  `GH_CONFIG_DIR` is what routes both `gh` commands and `git push`
+  through the helper — the helper answers against the `gh` config it
+  sees, with no separate per-path token lookup. Setting
+  `credential.https://github.com.useHttpPath=true` plus a per-org
+  `credential.https://github.com/<ORG>.username=<login>` does **not**
+  select the account under the `gh` helper: with active account A and
+  `<ORG>.username=B`, `gh auth git-credential` returns no token and the
+  skill's HTTPS check reports `identity_unavailable`. That pair only acts
+  as a guard — a mismatch at push time fails closed instead of silently
+  pushing as the wrong account. Helpers that *do* select a token per
+  remote path (for example `git-credential-manager`, or an OS keychain
+  with per-path entries) are a separate setup; the skill's
+  `check-https-account` accepts whatever they produce. No token
+  duplication is needed.
+- **`gh` CLI.** Set `GH_CONFIG_DIR` to a project-scoped config directory in
+  `.claude/settings.local.json` `env`, holding only that account's login.
+  This is the same `GH_CONFIG_DIR` that routes `git push` above, so both
+  paths verify against the same account in one place. The skill's
+  `check-gh-account` output records the effective `GH_CONFIG_DIR`
+  (or `"default"`) so the ledger shows which login was verified. **Seeding
+  that directory by piping a token from an existing login is credential
+  persistence and requires the user's explicit approval in the same turn**;
+  an unpiped interactive `gh auth login` per project is the lower-risk path.
+  Cross-reference #37, the SSH half of the same host situation; this section
+  is the HTTPS and `gh` CLI half, and the two land or cross-reference
+  together.
+- **Commit author identity.** `includeIf "gitdir:/path/to/work"` in
+  `~/.gitconfig` is acceptable **only** when the user confirms every repo
+  under that directory belongs to that identity; otherwise set `user.email`
+  per repo. A cross-pollinated repo under that folder pushing to a remote
+  belonging to the other account would otherwise carry the wrong author.
+
+### Evidence rule
+
+Any claim about cross-shell behaviour ("fails closed", "prompts", "uses
+account B") must be exercised with `git push --dry-run` (and, for `gh`, a
+`check-gh-account` from the other shell) **before** it is asserted. Absence
+of a test is not a pass: the failing-closed verdict is the only verdict
+that is verifiable from this machine.
+
+### Lane propagation
+
+The `GH_CONFIG_DIR` (or absence thereof) from the lead's session is carried
+into the worker, QA, and reviewer assignment envelopes
+(`backends/contract.md`, `## Provider-neutral assignment envelope`). A lane
+that runs with a different `GH_CONFIG_DIR` than the lead's pre-write check
+verified sees a different login than the one the lead authorised; the
+envelope pinning prevents that drift.
+
+### New-project order
+
+`dev_config.py create --no-exclude` writes `.dev.json` but skips
+`info/exclude`, so before a Git repository exists the file is valid and
+untracked but not yet ignored by anything. Once Phase 2's bootstrap has
+produced a repository (whether via `git init` for a local-only project or
+via `gh repo create --clone`), re-run `dev_config.py exclude` so the file
+is covered by the repository-local exclude file before any project files
+are staged; `dev_config.py status` then reports `valid`, not `not_ignored`.

@@ -622,6 +622,25 @@ def main() -> int:
         # read as "unavailable". These tokens pin the scope narrowing and the
         # commit-range requirement in the file that states the policy itself.
         "phases/external-review.md": (
+            # Issue #82: the ask-once contract. The contract is the
+            # single piece of SOP prose that keeps the unknown-bot
+            # surface from becoming a re-ask every PR, and it has
+            # three discrete outcomes whose wording names the
+            # recording site. Each token below is a single
+            # per-outcome load-bearing sentence: deleting the
+            # trust → ... line, or the ignore → ... line, or the
+            # decide later → ... line, fails the validator closed
+            # rather than degrading silently. The pair
+            # (`Pending reviewer decisions`, "not re-asked") is the
+            # no-re-ask rule the contract needs to function; the
+            # `once per repository` sentence is the rule's scope.
+            "Ask once about unknown review bots, record the answer",
+            "asks the user **once per repository**",
+            "trust → `Additional reviewer identities`",
+            "ignore → `Ignored reviewers`",
+            "decide later → a `Pending reviewer decisions` line",
+            "A login already listed under `Pending reviewer decisions` is **not re-asked**",
+            "The lead never adds an identity without the user's answer",
             "never for a review that arrived and was invalidated by the author's own response",
             "obligates a re-request at the new head, not a bypass",
             "the exact unreviewed commit range",
@@ -682,6 +701,23 @@ def main() -> int:
             # wording also appears in the Rate-limit breakpoint section, so
             # whole-file matching could not tell if the routing line were
             # deleted.
+            #
+            # Issue #82 / round-3 coverage pins (QA M6): the four new
+            # Known-identities bullets in the Default Policy. Each
+            # bullet is one load-bearing per-reviewer contract line
+            # naming the login, the check (if any), and the
+            # push-re-review behavior. Deleting any one bullet
+            # (or the `github-actions[bot]` non-addition) fails
+            # the validator closed. QA mutation M6 previously
+            # deleted all four and passed every suite.
+            "**Gemini Code Assist** — review (`gemini-code-assist[bot]`). Comment-only (no published check-run app)",
+            "**Greptile** — review (`greptile-apps[bot]`) and check (app slug `greptile-apps`)",
+            "**Sourcery** — review (`sourcery-ai[bot]`) and check (app slug `sourcery-ai`)",
+            "**Qodo** — review (`qodo-code-review[bot]`, `qodo-free-for-open-source-projects[bot]`)",
+            "`github-actions[bot]` is shared by every workflow and is not a stable identity",
+            # Issue #82: the ask-once contract is pinned above;
+            # the four Known-identities bullets above are the
+            # M6 coverage fix.
         ),
         # Issue #33: without a named retro line, repeated bypass across
         # rounds was only ever visible per-PR, never as a pattern.
@@ -727,6 +763,18 @@ def main() -> int:
             "a completed, current-head substitute review with a blocking finding → REQUEST CHANGES",
             "Any other `pending`, or `incomplete`, external review → do not merge",
             "a `pending` routed as `clear` by a completed, current-head substitution counts",
+        ),
+        "phases/phase1.md": (
+            "### B.0 Document-first mode (Situation A only)",
+            "**Extract before asking.**",
+            "Each item cites the document section it came from",
+            "Present the proposed list and the gap list together, and **state both counts**",
+            "Then ask only the gaps, one question at a time",
+            "The B.3 stress-test runs for every module",
+            'the Step C gate still requires the user to press "satisfied" before the next module',
+            "the user can reopen any of them at the Step C gate",
+            "**The document is never rewritten.**",
+            "**with their citations**",
         ),
         "phases/phase2.md": (
             "${CLAUDE_SKILL_DIR}/graft.md",
@@ -846,6 +894,56 @@ def main() -> int:
             "never `graft init` in managed projects",
             "graph_evidence: unavailable",
         ),
+        # Issue #82: the template's External Review Policy
+        # section is the recording site for a freshly created
+        # `PROJECT_CONTEXT.md`. The `Pending reviewer decisions`
+        # line and the ask-once outcomes must be present so
+        # initializing repos carry the contract forward. The QA
+        # round 1 M4 mutation showed deleting the template line
+        # (or any one outcome) passed both the validator and
+        # the unit suite, so each token is pinned here.
+        "templates/PROJECT_CONTEXT_TEMPLATE.md": (
+            "External Review Policy (optional)",
+            "**Pending reviewer decisions**: none",
+            "`Ignored reviewers` takes precedence over every other setting",
+        ),
+        # Issue #75: multi-account routing is a verification-only layer, so
+        # each token pins one way the layer could otherwise drift back into
+        # silent credential persistence or auto-routing. The skill describes
+        # the recommended routing layer; it never performs it.
+        # Issue #75 (round 2): the `gh` credential helper does NOT select a
+        # token per remote path; the account comes from the `gh` config in
+        # effect. Tokens below pin that boundary so the false claim cannot
+        # be re-introduced.
+        "phases/repository-context.md": (
+            "## Multiple GitHub accounts on one host",
+            "The skill never chooses the account and never\npersists host or credential state.",
+            "reported back in the\nsame turn they are made",
+            "no\naccount is switched automatically, no token is duplicated silently",
+            "asks the user to approve the host\nchanges that follow",
+            "credential.https://github.com.useHttpPath=true",
+            "credential.https://github.com/<ORG>.username=<login>",
+            # The account comes from the `gh` config in effect (or the
+            # project GH_CONFIG_DIR), NOT from `credential` username keys.
+            "the one held by\n  the `gh` config in effect for that shell",
+            "no separate per-path token lookup",
+            "does **not**\n  select the account under the `gh` helper",
+            "fails closed instead of silently\n  pushing as the wrong account",
+            "git-credential-manager",
+            "GH_CONFIG_DIR` to a project-scoped config directory",
+            "(or `\"default\"`)",
+            "Seeding\n  that directory by piping a token from an existing login is credential\n  persistence",
+            "includeIf \"gitdir:/path/to/work\"",
+            "Absence\nof a test is not a pass",
+            "carried\ninto the worker, QA, and reviewer assignment envelopes",
+            "`dev_config.py create --no-exclude`",
+            # Round 2: Phase 2's new-project bootstrap does `gh repo create --clone`,
+            # not `git init`; wording pinned on the `once Phase 2's bootstrap has\nproduced a repository`
+            # form rather than a literal `git init` step.
+            "Once Phase 2's bootstrap has\nproduced a repository",
+            "Cross-reference #37, the SSH half",
+            "this section\n  is the HTTPS and `gh` CLI half, and the two land or cross-reference\n  together.",
+        ),
     }
     for relative, tokens in SWAP_EVIDENCE_PINS.items():
         per_file_policy[relative] = per_file_policy.get(relative, ()) + tokens
@@ -956,6 +1054,109 @@ def main() -> int:
         fail(errors, "missing required file: PROJECT_CONTEXT.md")
     else:
         project_text = project_context.read_text(encoding="utf-8")
+        # Issue #82 / #117: the project's own
+        # `PROJECT_CONTEXT.md` External Review Policy must
+        # carry the `Pending reviewer decisions` line so the
+        # ask-once contract has a recording site. Without
+        # this pin, removing the line from the live policy
+        # would drop the decide-later outcome and the
+        # no-re-ask rule would have no place to land; the
+        # QA round 1 M5 mutation showed the absence.
+        if "**Pending reviewer decisions**" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "carry the `Pending reviewer decisions` line "
+                "(Issue #82 ask-once contract)",
+            )
+        if "**Pending reviewer decisions**: none" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "carry the `Pending reviewer decisions: none` line "
+                "(Issue #82 ask-once contract; a value other than "
+                "`none` is a runtime decision recorded per-login "
+                "below the line, never a replacement for it)",
+            )
+        # Round-3 coverage pin (QA M8): the External Review
+        # Policy values are load-bearing (Issue #117):
+        # `Required reviewers: kilo` (Kilo is the reviewer of
+        # record) and `Ignored reviewers: coderabbit` (CodeRabbit
+        # is summary/walkthrough-only, not review evidence).
+        # QA mutation M8 previously reverted the section to
+        # `Required: none` / `Ignored: none` and passed every
+        # suite. Pin each value so a silent revert fails closed.
+        if "**Required reviewers**: kilo" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "set `Required reviewers: kilo` (Issue #117: Kilo "
+                "is the reviewer of record)",
+            )
+        if "**Ignored reviewers**: coderabbit" not in project_text:
+            fail(
+                errors,
+                "PROJECT_CONTEXT.md External Review Policy must "
+                "set `Ignored reviewers: coderabbit` (Issue #117: "
+                "CodeRabbit is summary/walkthrough-only)",
+            )
+        # Round-3 coverage pin (QA M7): the CHANGELOG.custom.md
+        # `Unreleased (v2.1.2)` entry must record the Issue
+        # #82/#117 switch (added reviewers, ask-once contract,
+        # Kilo summary evidence path). QA mutation M7 previously
+        # deleted the whole v2.1.2 Kilo/CodeRabbit entry and
+        # passed every suite. The entry is one of the few
+        # user-facing places the behavior change is recorded, so
+        # losing it silently is a real regression.
+        #
+        # Tolerant of absence: the file is a release-notes
+        # document, so a fixture/archival tree that does not
+        # carry it is not a defect (same tolerance pattern as
+        # `EXTRA_MARKDOWN_DIRS` for `en/`, `zh/`). The check
+        # applies only when the file is present, which is the
+        # shape a real source tree has.
+        changelog = repo_root / "CHANGELOG.custom.md"
+        if changelog.is_file():
+            changelog_text = changelog.read_text(encoding="utf-8")
+            # D1 (release-aware): the section is the release
+            # record for v2.1.2. While unreleased it is headed
+            # `## Unreleased (v2.1.2)`; at release time the
+            # heading becomes `## v2.1.2 (YYYY-MM-DD)`. Both
+            # forms must be accepted so the pin does not break
+            # the moment the release is cut. The 8 #82/#117
+            # tokens are still required inside whichever
+            # heading is present.
+            unreleased_match = re.search(
+                r"^## (?:Unreleased \(v2\.1\.2\)|v2\.1\.2(?: \(\d{4}-\d{2}-\d{2}\))?)"
+                r"$(.*?)(?=^## |\Z)",
+                changelog_text,
+                re.M | re.S,
+            )
+            if unreleased_match is None:
+                fail(
+                    errors,
+                    "CHANGELOG.custom.md must have an "
+                    "`## Unreleased (v2.1.2)` section (or a "
+                    "released `## v2.1.2 (YYYY-MM-DD)` heading)",
+                )
+            else:
+                unreleased_body = unreleased_match.group(1)
+                for token in (
+                    "gemini-code-assist",
+                    "greptile",
+                    "sourcery",
+                    "qodo",
+                    "Ask-once contract",
+                    "Kilo summary evidence",
+                    "kilo` is required",
+                    "coderabbit` is ignored",
+                ):
+                    if token not in unreleased_body:
+                        fail(
+                            errors,
+                            f"CHANGELOG.custom.md Unreleased (v2.1.2) "
+                            f"section missing required token: {token}",
+                        )
         section = routing_section(project_text)
         if section is None:
             fail(errors, f"PROJECT_CONTEXT.md missing section: {ROUTING_HEADING}")

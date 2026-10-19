@@ -68,14 +68,15 @@ Do not configure a fictional read-only permission mode. QA/review are read-only 
 Omit this section to use the `/dev` defaults shown below.
 
 - **Mode**: auto
-- **Trusted reviewers**: coderabbit, kilo, github-copilot
+- **Trusted reviewers**: coderabbit, kilo, github-copilot, gemini-code-assist, greptile, sourcery, qodo
 - **Required reviewers**: none
 - **Ignored reviewers**: none
 - **Additional reviewer identities**: none
+- **Pending reviewer decisions**: none
 - **Default wait minutes**: 10
 - **Allow automatic review requests**: false
 
-`Ignored reviewers` takes precedence over every other setting. Additional identities use `reviewer=login` or `reviewer=login,check-app-slug`. Automatic review requests can consume reviewer credits; enable them per reviewer only when intentionally desired.
+`Ignored reviewers` takes precedence over every other setting. Additional identities use `reviewer=login` or `reviewer=login,check-app-slug`. Automatic review requests can consume reviewer credits; enable them per reviewer only when intentionally desired. The `Pending reviewer decisions` line records unknown bots the user has chosen to decide later (login + date); the lead does not re-ask a login already listed there, and the inspector continues to surface it as evidence until the user revisits the decision.
 
 ---
 

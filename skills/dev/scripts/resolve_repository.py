@@ -1254,6 +1254,17 @@ def verify_ssh_url_account(repo_dir: Path, url: str, expected_account: str) -> d
     )
 
 
+def _effective_gh_config_dir() -> str:
+    """Return the effective `GH_CONFIG_DIR`, or `"default"` when unset.
+
+    Recorded by `verify_gh_cli_login` so the ledger shows which config the
+    check actually verified; the skill never sets or unsets `GH_CONFIG_DIR`
+    itself, and the value is observed once here for evidence, not used to
+    spawn a subprocess or change the verdict path below.
+    """
+    return os.environ.get("GH_CONFIG_DIR") or "default"
+
+
 def verify_gh_cli_login(
     repo_dir: Path,
     expected_account: str,
@@ -1267,22 +1278,29 @@ def verify_gh_cli_login(
     which account `gh` will use for an API mutation. `gh auth status` alone
     is not accepted -- it names the configured account, not necessarily the
     one a given command will authenticate as -- so this calls the
-    authenticated-user endpoint through `gh api` directly.
+    authenticated-user endpoint through `gh api` directly. The return value
+    also records the effective `GH_CONFIG_DIR` (or `"default"`) so the
+    ledger shows which config the check actually verified.
     """
+    gh_config_dir = _effective_gh_config_dir()
     if os.environ.get("GH_HOST", GITHUB_HOST).lower() != GITHUB_HOST:
         return {"status": "incomplete", "reason_code": "host_mismatch",
-                "reason": "GH_HOST conflicts with the configured github.com host"}
+                "reason": "GH_HOST conflicts with the configured github.com host",
+                "gh_config_dir": gh_config_dir}
     run = runner or (lambda: read_command(
         ["gh", "api", "--hostname", GITHUB_HOST, "user", "--jq", ".login"], cwd=repo_dir,
         merge_stderr=False))
     status, output = run()
     if status == -1:
-        return {"status": "incomplete", "reason_code": "gh_cli_missing", "reason": "gh CLI is not installed or not in PATH"}
+        return {"status": "incomplete", "reason_code": "gh_cli_missing",
+                "reason": "gh CLI is not installed or not in PATH",
+                "gh_config_dir": gh_config_dir}
     if status != 0 or not output:
         return {
             "status": "incomplete",
             "reason_code": "identity_unavailable",
             "reason": "`gh api user` did not return an authenticated login",
+            "gh_config_dir": gh_config_dir,
         }
     login = output.splitlines()[0].strip()
     if login.casefold() != expected_account.casefold():
@@ -1290,8 +1308,11 @@ def verify_gh_cli_login(
             "status": "incomplete",
             "reason_code": "account_mismatch",
             "reason": f"gh CLI is authenticated as {login}, but .dev.json names {expected_account}",
+            "gh_config_dir": gh_config_dir,
         }
-    return {"status": "verified", "reason_code": "account_matches", "reason": f"gh CLI authenticated as {login}"}
+    return {"status": "verified", "reason_code": "account_matches",
+            "reason": f"gh CLI authenticated as {login}",
+            "gh_config_dir": gh_config_dir}
 
 
 # --- CLI ---------------------------------------------------------------

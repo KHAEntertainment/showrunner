@@ -10,6 +10,65 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ## Unreleased (v2.1.2)
 
+### Added
+
+- External-review inspector widens built-in reviewers (#82):
+  `gemini-code-assist`, `greptile`, `sourcery`, and `qodo` (with
+  confirmed logins from `commenter:app/<name>` / users API on
+  2026-09-28). `github-actions[bot]` stays out: shared by every
+  workflow, not a stable identity. Greptile and Sourcery ship
+  verified CheckRuns (`greptile-apps` / `sourcery-ai`); Gemini and
+  Qodo are comment-only, so no check marker is added for either
+  until a future vendor publishes a run. New push re-review
+  defaults are documented for verified reviewers only; unverified
+  ones carry an "unverified" tag. Behavior change: a repo
+  already running one of these reviewers goes from
+  `not_applicable` to waiting on it; restore via `Ignored
+  reviewers`.
+- Ask-once contract for unknown review bots (#82): lead asks
+  the user **once per repository** — trust, ignore, or decide
+  later — and records the answer on the new `Pending reviewer
+  decisions` line in `PROJECT_CONTEXT.md` and the template.
+  Logins already listed there are **not re-asked**.
+- Kilo summary evidence path (#117): a Kilo `<!-- kilo-review -->`
+  PR comment is head review evidence when the head's Kilo run
+  succeeded AND the comment's last update (`updatedAt` falling
+  back to `createdAt`) is at or after that run's `startedAt`,
+  both as parseable ISO 8601. `Status: No Issues Found` AND
+  `Recommendation: Merge` clear; anything else routes through
+  the existing `blocking` / `advisory` / `false_positive`
+  disposition path. A **FAILED** Kilo check whose `output`
+  names `rate limit` keeps the gate `pending` with a distinct
+  reason and counts toward the #48 rate-limit breakpoint.
+  Vendor retry history on a SUCCESS run is not a rate-limit
+  signal. External Review Policy is now Kilo-led: `kilo`
+  required, `coderabbit` ignored (summary only), Kilo's
+  documented triggers (PR opened, new commits pushed, PR
+  reopened, draft marked ready) replace the coderabbit-only
+  auto-request paragraph.
+
+### Changed
+
+- External Review Policy is now Kilo-led in `PROJECT_CONTEXT.md`:
+  `kilo` is required, `coderabbit` is ignored (summary /
+  walkthrough only; its walkthrough comments are not review
+  evidence), and the auto-request paragraph is rewritten to name
+  Kilo's documented triggers (PR opened, new commits pushed,
+  PR reopened, draft marked ready) instead of CodeRabbit alone
+  (#117). The lead may use PR opened, new commits pushed, and
+  draft marked ready without explicit approval (each is a
+  deliberate review moment); PR reopened is a non-code-changing
+  re-request also covered by this automatic allowance. The
+  Trusted reviewers list keeps `coderabbit` so an
+  ignored-but-trusted reviewer still surfaces walkthrough comments
+  the maintainer wants to see; the Kilo summary evidence path
+  is a separate mechanism and is the only thing that satisfies
+  the gate. The `PROJECT_CONTEXT_TEMPLATE.md` External Review
+  Policy section keeps its generic defaults; only the new
+  `Pending reviewer decisions` line is added so a repo created
+  from the template has a recording site for the ask-once
+  contract.
+
 ### Fixed
 
 - Validator home-path scan now includes `docs/` (via `EXTRA_MARKDOWN_DIRS`)
@@ -30,6 +89,10 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   to the bypass count. The validator and unit tests now pin the
   fresh-identity requirement, and the validator checks the Result Routing
   clear-condition inside its own section instead of anywhere in the file.
+- `install.ps1` requires PowerShell 7 (`#Requires -Version 7`) rather than
+  failing on Windows PowerShell 5.1 with a `.NET` property error
+  (`ProcessStartInfo.ArgumentList`), and a failing `git archive` now names
+  git's own stderr alongside the exit code (#51).
 
 ### Added
 
@@ -109,6 +172,20 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   same head anyway, so each head got two external reviews plus no-finding
   comments; the `/dev` external-review gate never counted PR-Agent as a
   trusted reviewer (#106).
+- Phase 1 gains a document-first mode for Situation A (#74, dogfooding finding
+  F-75). When the user supplies a requirements document, Step B now extracts
+  that module's own decisions from the document first — a proposed locked list,
+  each item citing the document section it came from — presents the gap list
+  beside it with both counts, and asks only the gaps, one question at a time with
+  an AI recommended answer. The B.3 stress-test and the Step C gate are
+  unchanged, a document-settled item is reopened by the user at the gate rather
+  than silently locked, and the document itself is never rewritten;
+  `PRD-draft.md` records the extracted decisions with their citations. Situation
+  B, Steps A, C and D, and `phases/phase1-prototyping.md` are unchanged, and the
+  edit is additive to upstream v1.3.0 content. `UPSTREAM.md` records the
+  divergence. `scripts/validate_skill.py` pins the mode per file, and a test
+  asserts the Situation A text carries both the extract-before-asking rule and
+  the unchanged-B.3 rule.
 
 ### Fixed
 
@@ -185,6 +262,30 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 - `REVIEW.md` is committed at the repository root, so review briefs point at a
   file that exists on `main`. It covers this repository's priorities, severity
   calibration, verification expectations, security, and comment style (#120).
+- Reply-contract prose and `PROJECT_CONTEXT.md` corrections from PR #55's internal
+  review (#56). `reply-contract.md` §5 now says what the ledger actually holds:
+  `.agent/dev-state.md` records the lane's verdict — status, cause, ids, next
+  action, as `templates/DEV_STATE_TEMPLATE.md` defines it — while the full
+  report lives in the backend transcript and, for the QA and review lanes, in
+  that lane's PR comment. `PROJECT_CONTEXT.md` no longer carries per-suite test
+  counts, which went stale inside a single release; it names the three suites by
+  file instead, so the next test-only PR cannot leave another wrong number
+  behind.
+- New `## Multiple GitHub accounts on one host` section in
+  `skills/dev/phases/repository-context.md` documents the routing layer the
+  skill verifies but never sets up: skill is verification only, no account
+  switching and no token duplication silently; user-approved host changes
+  (`credential.https://github.com.useHttpPath=true` + per-org
+  `credential.https://github.com/<ORG>.username=<login>` for pushes,
+  project-scoped `GH_CONFIG_DIR` for `gh`, scope-restricted `includeIf`
+  for commit author), evidence rule, lane propagation of `GH_CONFIG_DIR`,
+  and Phase 2's `git init` -> re-run `dev_config.py exclude` step when
+  `create` ran with `--no-exclude` (#75). Cross-references #37, the SSH
+  half. `skills/dev/backends/contract.md` `launch` row carries the lead's
+  effective `GH_CONFIG_DIR` (or `"default"`) into the lane envelope.
+  `verify_gh_cli_login` records `gh_config_dir` on every verdict path
+  (guard paths unchanged); `scripts/validate_skill.py` pins the section's
+  policy tokens.
 
 ## v2.1.1 — 2026-09-14
 

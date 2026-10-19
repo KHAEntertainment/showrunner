@@ -138,7 +138,7 @@ Classify the request, explain your reasoning to the user, get confirmation, then
 **Detailed rules for the prototyping sub-flow:**
 `${CLAUDE_SKILL_DIR}/phases/phase1-prototyping.md`
 
-Core principle: module-progressive alignment (each module goes Big Picture → Behavior → Detail), one question at a time with an AI recommended answer, word precision inline-written into `docs/glossary.md`, low-fidelity questions dispatched to a prototype agent through the selected adapter, uncapped questioning with the user controlling the module-switch gate, and a frozen PRD as Phase 2's input.
+Core principle: module-progressive alignment (each module goes Big Picture → Behavior → Detail), one question at a time with an AI recommended answer, document-first alignment when a requirements document is supplied (its own answers are extracted with citations and only its gaps are asked), word precision inline-written into `docs/glossary.md`, low-fidelity questions dispatched to a prototype agent through the selected adapter, uncapped questioning with the user controlling the module-switch gate, and a frozen PRD as Phase 2's input.
 
 ---
 

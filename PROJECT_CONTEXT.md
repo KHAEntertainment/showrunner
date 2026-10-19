@@ -47,7 +47,7 @@ See [UPSTREAM.md](UPSTREAM.md) for the fork/merge procedure and
 
 - **Payload**: Markdown (the Skill itself) + Python 3.10+ stdlib-only scripts
 - **Installer**: Bash (`install.sh`) and PowerShell (`install.ps1`)
-- **Tests**: Python `unittest` (36 tests) + Bash assertion suite (9 assertions) + PowerShell suite (5 assertions)
+- **Tests**: Python `unittest` (`tests/test_*.py`) + Bash assertion suite (`tests/test-install.sh`) + PowerShell suite (`tests/test-install.ps1`). No per-suite counts are recorded here on purpose: every test-only PR changes them, so the numbers were stale within one release and a stale count reads as a real one. The suites are the gate — the Verification Gate below names the commands, and each suite's assertions are pinned in its own file.
 - **No third-party runtime or build dependencies at install-time or in core workflow behavior.** This is a deliberate constraint — see ADR-005. Optional gate-time tooling such as Graft (`@nanonets/graft@0.18.0`) for code-graph evidence at gates per `skills/dev/graft.md` is explicitly excluded from this constraint.
 
 Runtime prerequisites for the Skill (not for installing it): `rtk`, `gh`, `git`, Python 3, optionally Traycer CLI/Host, optionally Graft (`@nanonets/graft@0.18.0`) for code-graph evidence at gates per `skills/dev/graft.md` (optional, gate-time only).
@@ -102,21 +102,19 @@ A change is not complete until every command above exits clean.
 ## External Review Policy
 
 - **Mode**: auto
-- **Trusted reviewers**: coderabbit, kilo, github-copilot
-- **Required reviewers**: none
-- **Ignored reviewers**: none
+- **Trusted reviewers**: coderabbit, kilo, github-copilot, gemini-code-assist, greptile, sourcery, qodo
+- **Required reviewers**: kilo
+- **Ignored reviewers**: coderabbit (summary only; its walkthrough comments are not review evidence)
 - **Additional reviewer identities**: none
+- **Pending reviewer decisions**: none
 - **Default wait minutes**: 10
-- **Allow automatic review requests**: `coderabbit` only
+- **Allow automatic review requests**: `kilo` only
 
-Automatic re-request is enabled for `coderabbit` alone, decided 2026-09-08. The
-lead may post a re-review request for that reviewer without pausing for approval;
-every other reviewer still requires explicit approval per
-`phases/external-review.md`. The narrow scope is deliberate — it covers the one
-reviewer this repository actually uses, and does not become a general licence to
-spend review credits.
+**Kilo is the reviewer of record.** Kilo has no comment command. Its documented triggers are PR opened, new commits pushed, PR reopened, and draft marked ready (kilo.ai/docs/automate/code-reviews/github). The lead may use **PR opened**, **new commits pushed**, and **draft marked ready** without explicit approval (each is a deliberate review moment). **PR reopened** is a non-code-changing re-request that is also covered by this automatic allowance, so a Kilo summary that lands while the PR is closed does not need an extra approval to fire when the PR is reopened.
 
-CodeRabbit reviewed PR #1 in the prior round and is the expected reviewer here.
+**CodeRabbit is summary/walkthrough-only.** Its walkthrough comments are not review evidence; the inspector ignores it (`--ignored-reviewer coderabbit`). The lead does not post `@coderabbitai review` requests here. This is a deliberate narrowing: Kilo is the reviewer that produces a verdict, and CodeRabbit's role is reduced to a summary the maintainer reads directly. Removing CodeRabbit from `Trusted reviewers` was rejected because the Kilo summary evidence path is a separate mechanism, and an ignored-but-not-trusted reviewer still surfaces walkthrough comments the maintainer wants to see.
+
+The lead reads Kilo's verdict from the `<!-- kilo-review -->` summary comment, per the **Kilo summary evidence** path in `phases/external-review.md`. Kilo's `<!-- kilo-review -->` summary comment that follows the ordering rule (chronological or check-completed) satisfies the external-review gate on its own. CodeRabbit's walkthrough comments do not satisfy the gate, and an active CodeRabbit finding is not raised as a blocking finding.
 
 ---
 

@@ -1121,6 +1121,97 @@ class GhCliAccountVerificationTests(unittest.TestCase):
         self.assertEqual("incomplete", result["status"])
         self.assertEqual("gh_cli_missing", result["reason_code"])
 
+    def test_gh_config_dir_defaults_to_default_when_env_unset(self) -> None:
+        # Issue #75: GH_CONFIG_DIR is observed from the local environment
+        # for evidence, never set by the script. Snapshot, remove, assert,
+        # restore -- so the test does not race with whatever the caller set.
+        sentinel = object()
+        saved = os.environ.pop("GH_CONFIG_DIR", sentinel)
+        if saved is sentinel:
+            had_env = False
+        else:
+            had_env = True
+            os.environ["GH_CONFIG_DIR"] = saved
+        try:
+            os.environ.pop("GH_CONFIG_DIR", None)
+            result = MODULE.verify_gh_cli_login(
+                Path("."), "KHAEntertainment", runner=lambda: (0, "KHAEntertainment"),
+            )
+            self.assertEqual("verified", result["status"])
+            self.assertEqual("default", result["gh_config_dir"])
+        finally:
+            if had_env:
+                os.environ["GH_CONFIG_DIR"] = saved  # type: ignore[assignment]
+            else:
+                os.environ.pop("GH_CONFIG_DIR", None)
+
+    def test_gh_config_dir_records_set_value_when_env_set(self) -> None:
+        # Same contract: GH_CONFIG_DIR is observed from the local environment
+        # for evidence. The script never sets or unsets it, only reads.
+        sentinel = object()
+        saved = os.environ.pop("GH_CONFIG_DIR", sentinel)
+        if saved is sentinel:
+            had_env = False
+        else:
+            had_env = True
+            os.environ["GH_CONFIG_DIR"] = saved
+        try:
+            os.environ["GH_CONFIG_DIR"] = "/tmp/gh-config-set-for-test"
+            result = MODULE.verify_gh_cli_login(
+                Path("."), "KHAEntertainment", runner=lambda: (-1, ""),
+            )
+            self.assertEqual("incomplete", result["status"])
+            self.assertEqual("gh_cli_missing", result["reason_code"])
+            self.assertEqual("/tmp/gh-config-set-for-test", result["gh_config_dir"])
+        finally:
+            if had_env:
+                os.environ["GH_CONFIG_DIR"] = saved  # type: ignore[assignment]
+            else:
+                os.environ.pop("GH_CONFIG_DIR", None)
+
+    def test_gh_config_dir_field_present_on_host_mismatch(self) -> None:
+        # The host_mismatch guard path also records the effective config so
+        # the ledger shows why a verified login never reached the gate.
+        # GH_HOST and GH_CONFIG_DIR are both observed from the local
+        # environment for evidence; this test never sets either, only
+        # reads. Save/restore both with the same sentinel pattern so the
+        # `finally` block restores whatever the caller had, exactly the
+        # way `GH_CONFIG_DIR` is handled in the other tests in this class.
+        gh_config_dir_sentinel = object()
+        gh_host_sentinel = object()
+
+        saved_gh_config_dir = os.environ.pop("GH_CONFIG_DIR", gh_config_dir_sentinel)
+        if saved_gh_config_dir is gh_config_dir_sentinel:
+            had_gh_config_dir = False
+        else:
+            had_gh_config_dir = True
+            os.environ["GH_CONFIG_DIR"] = saved_gh_config_dir  # type: ignore[assignment]
+
+        saved_gh_host = os.environ.pop("GH_HOST", gh_host_sentinel)
+        if saved_gh_host is gh_host_sentinel:
+            had_gh_host = False
+        else:
+            had_gh_host = True
+            os.environ["GH_HOST"] = saved_gh_host  # type: ignore[assignment]
+
+        try:
+            os.environ["GH_HOST"] = "ghe.example.com"
+            result = MODULE.verify_gh_cli_login(
+                Path("."), "KHAEntertainment", runner=lambda: (0, "KHAEntertainment"),
+            )
+            self.assertEqual("incomplete", result["status"])
+            self.assertEqual("host_mismatch", result["reason_code"])
+            self.assertEqual("default", result["gh_config_dir"])
+        finally:
+            if had_gh_host:
+                os.environ["GH_HOST"] = saved_gh_host  # type: ignore[assignment]
+            else:
+                os.environ.pop("GH_HOST", None)
+            if had_gh_config_dir:
+                os.environ["GH_CONFIG_DIR"] = saved_gh_config_dir  # type: ignore[assignment]
+            else:
+                os.environ.pop("GH_CONFIG_DIR", None)
+
 
 class BranchAndDryRunTests(unittest.TestCase):
     """Finding 3: unit-level coverage of the branch/refspec check and the

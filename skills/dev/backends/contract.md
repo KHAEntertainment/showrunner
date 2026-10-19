@@ -13,7 +13,7 @@ Each adapter must implement these operations and either return verified state fo
 | `preflight` | Backend identity, host/auth/capability status, and usable launch surfaces |
 | `prepare_worktree` | Absolute source and worker paths, assigned branch, base OID, and clean status |
 | `resolve_route` | Harness, model, profile behavior/source, reasoning effort, and permission mode |
-| `launch` | Distinct agent identity, role, Issue/lane, exact worktree binding, and ownership |
+| `launch` | Distinct agent identity, role, Issue/lane, exact worktree binding, ownership, and the lead's effective `GH_CONFIG_DIR` (literal `"default"` when unset) so the lane's pre-write `check-gh-account` verifies the same login |
 | `message` | Assignment payload — including the report-back contract — and backend response/correlation ID |
 | `observe` | Agent state, complete cursor-aware replies/transcript evidence, and a report-back shape verdict |
 | `shutdown` | Graceful stop result; archive result when requested |
