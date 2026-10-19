@@ -172,6 +172,9 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   already uses it. `/dev-skill:dev` is documented as the fallback on older
   versions and when a manual install also provides `/dev`. ADR-001 carries a
   dated update that supersedes its original invocation consequence.
+- `REVIEW.md` is committed at the repository root, so review briefs point at a
+  file that exists on `main`. It covers this repository's priorities, severity
+  calibration, verification expectations, security, and comment style (#120).
 
 ## v2.1.1 — 2026-09-14
 
