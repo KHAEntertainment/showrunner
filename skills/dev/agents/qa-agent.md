@@ -64,6 +64,8 @@ restating it.
 
 1. Read the content and acceptance criteria of Issue #[M]
 
+   **Challenge the specification.** Challenging the specification is in scope for this lane: where the envelope names the lead's open questions, answering or overturning them is a QA finding in its own right, and a specification defect found before the next round beats a faithful pass over a flawed spec. Report a criterion you believe is wrong as a finding against the Issue rather than grading around it — but the objection waives nothing: score the PR against the criteria as written, and record both the deviation and your disagreement with the spec.
+
 2. Verify the assigned PR branch and target commit. Stop with `stale_head` if the live `headRefOid` differs. Use the assigned read-only checkout when provided; otherwise fetch and check out `[branch-name]` without creating a new development branch.
 
 3. Run `rtk gh pr diff [N] --repo github.com/[pr-repository] --name-only` and focus on modified files plus their direct callers. Record the exact QA scope; do not claim a whole-repository review.

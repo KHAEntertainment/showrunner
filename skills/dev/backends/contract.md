@@ -35,7 +35,9 @@ Each adapter must implement these operations and either return verified state fo
 
 ## Provider-neutral assignment envelope
 
-Every backend sends the full role prompt plus: role, Issue or review lane, topology, backend, route and route source, branch, absolute worktree, base OID, target `headRefOid` when applicable, ownership, acceptance criteria, plan-approval requirement, RTK rules, reporting channel, the report-back contract from `${CLAUDE_SKILL_DIR}/agents/report-back.md`, and stop condition.
+Every backend sends the full role prompt plus: role, Issue or review lane, topology, backend, route and route source, branch, absolute worktree, base OID, target `headRefOid` when applicable, ownership, acceptance criteria, the lead's open questions, plan-approval requirement, RTK rules, reporting channel, the report-back contract from `${CLAUDE_SKILL_DIR}/agents/report-back.md`, and stop condition.
+
+**The lead's open questions are a named element, not a required field.** They are included when genuine uncertainty exists — the places where the lead may have the specification wrong — and a lead with no genuine uncertainty must not manufacture uncertainty to fill the element, because a manufactured question trains the lane to skim the section. Where they exist, the envelope carries an expectation on the receiving lane, not just information: answering or overturning them is in scope, and a specification defect found before implementation beats a faithful implementation of a flawed spec.
 
 The assignment must not depend on Claude-specific tool names. Native packaging for a non-Claude lead may reuse this contract later; it is not required for Codex, OpenCode, Cursor, or smaller harnesses to serve as Traycer-managed children.
 

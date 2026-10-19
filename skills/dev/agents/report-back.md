@@ -31,8 +31,11 @@ silence.
    finding list.
 2. **Commands + exit codes** — every verification/gate command run, with its
    exit code.
-3. **Deviations** — anything outside the assignment or assigned ownership;
-   write `none` when clean.
+3. **Deviations** — anything outside the assignment or assigned ownership,
+   including departures from the specification as written; where you believe
+   the specification itself is wrong, say so here *before* departing from it —
+   a defect flagged in advance is a finding, not an excuse. Write `none` when
+   clean.
 4. **Quality-gate self-assessment** — syntax / types / lint / tests, each
    `pass` / `fail` / `n/a`.
 5. **Acceptance criteria** — each criterion restated as

@@ -1599,6 +1599,67 @@ class BackendContractTests(unittest.TestCase):
         self.assertIn(".agent/dev-state.md", section)
         self.assertIn("never infer completion", section)
 
+    def test_envelope_names_the_leads_open_questions(self) -> None:
+        # Issue #34: the element must be named in the list itself, not only
+        # described in prose below it — a lane skimming the list has to see it
+        # — and the "not mandatory" clause is what stops a lead manufacturing
+        # an uncertainty to fill a required field.
+        contract = self.read("backends/contract.md")
+        envelope = _markdown_section(contract, "## Provider-neutral assignment envelope")
+        self.assertIsNotNone(envelope, "contract.md missing the envelope section")
+        self.assertIn(
+            "acceptance criteria, the lead's open questions, plan-approval requirement",
+            envelope,
+        )
+        self.assertIn("not a required field", envelope)
+        self.assertIn("must not manufacture uncertainty", envelope)
+        self.assertIn(
+            "specification defect found before implementation beats a "
+            "faithful implementation of a flawed spec",
+            envelope,
+        )
+        # Phase 3 restates the same list for dispatch; the two must not drift.
+        self.assertIn(
+            "the lead's open questions (when genuine uncertainty exists)",
+            self.read("phases/phase3.md"),
+        )
+
+    def test_lane_prompts_invite_challenge_of_the_specification(self) -> None:
+        # Issue #34: the posture only changes behaviour if every lane that
+        # reads the specification is told challenging it is in scope, so each
+        # prompt carries the sentence in its own right rather than inheriting
+        # it from one sibling.
+        for relative in (
+            "agents/worker-new.md",
+            "agents/worker-fix.md",
+            "agents/qa-agent.md",
+        ):
+            text = self.read(relative)
+            with self.subTest(prompt=relative):
+                self.assertIn("Challenging the specification is in scope", text)
+        for relative in ("agents/worker-new.md", "agents/worker-fix.md"):
+            with self.subTest(prompt=relative):
+                self.assertIn(
+                    "specification defect found before implementation beats a "
+                    "faithful implementation of a flawed spec",
+                    self.read(relative),
+                )
+        # QA runs after implementation, so its equivalent names the next round
+        # instead — and grades against the criteria as written regardless.
+        qa = self.read("agents/qa-agent.md")
+        self.assertIn(
+            "specification defect found before the next round beats a "
+            "faithful pass over a flawed spec",
+            qa,
+        )
+        self.assertIn("the objection waives nothing", qa)
+        # The upstream half of Deviations: flagged before the departure.
+        report_back = self.read("agents/report-back.md")
+        self.assertIn(
+            "including departures from the specification as written", report_back
+        )
+        self.assertIn("*before* departing from it", report_back)
+
     def test_silence_and_malformed_reply_share_one_verdict(self) -> None:
         # The round's central defect class in the agent transport: no reply read
         # as no problem. A lane that never replied must not be a lesser case

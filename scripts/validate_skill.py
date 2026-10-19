@@ -496,6 +496,11 @@ def main() -> int:
             "graph_evidence: unavailable",
             "trace callers manually",
             "search manually with `rg`",
+            # Issue #34: challenging the assignment extends the ladder's
+            # posture to the envelope itself. Same token in every lane prompt
+            # so one file dropping it cannot hide behind a sibling holding it.
+            "Challenging the specification is in scope",
+            "specification defect found before implementation beats a faithful implementation of a flawed spec",
         ),
         "agents/worker-fix.md": (
             "Reuse-first ladder",
@@ -504,6 +509,8 @@ def main() -> int:
             "rtk proxy graft grep",
             "graph_evidence: unavailable",
             "search manually with `rg`",
+            "Challenging the specification is in scope",
+            "specification defect found before implementation beats a faithful implementation of a flawed spec",
         ),
         "agents/worker-prototype-frontend.md": (
             "Exploration favors breadth over minimality.",
@@ -552,6 +559,16 @@ def main() -> int:
             "with neither environment identifier present",
             "A partial environment (exactly one identifier) is a host defect",
             "the file never recovers it",
+            # Issue #34: the open-questions element in the envelope list, plus
+            # the two clauses that keep it honest — never mandatory (a
+            # manufactured question trains the lane to skim), and the
+            # expectation it puts on the receiving lane. Scoped to this file so
+            # the list itself cannot lose the element while the clause below
+            # survives elsewhere.
+            "acceptance criteria, the lead's open questions, plan-approval requirement",
+            "not a required field",
+            "must not manufacture uncertainty",
+            "specification defect found before implementation beats a faithful implementation of a flawed spec",
         ),
         # The ledger is the other half of Issue #3's "recorded in
         # .agent/dev-state.md": a contract pointing at a field that does not
@@ -845,7 +862,18 @@ def main() -> int:
             "Bound the read",
             "Classify `absent` before anything else",
         ),
-        "agents/report-back.md": ("never substitute for the seven required sections",),
+        # Issue #34: these two keys are declared a second time above the
+        # report-back enforcement block; a dict literal keeps the last
+        # declaration, so this entry is the one that runs. The open-questions
+        # tokens live here for that reason — a pin in the shadowed entry would
+        # pass a validator that never reads it.
+        "agents/report-back.md": (
+            "never substitute for the seven required sections",
+            # The upstream half of Deviations: flagged before the departure,
+            # not only after it.
+            "including departures from the specification as written",
+            "*before* departing from it",
+        ),
         "agents/qa-agent.md": (
             "seven required sections",
             "${CLAUDE_SKILL_DIR}/graft.md",
@@ -853,6 +881,13 @@ def main() -> int:
             "graph_evidence: unavailable",
             "trace manually with `rg`",
             "Graph output = static evidence, never execution confirmation",
+            # Issue #34: the QA lane reads the specification first, so it is
+            # the lane most likely to find it wrong. Its sentence grades
+            # against the criteria as written and still reports the
+            # disagreement — the objection waives nothing.
+            "Challenging the specification is in scope",
+            "specification defect found before the next round beats a faithful pass over a flawed spec",
+            "the objection waives nothing",
         ),
         "graft.md": (
             "Never an execution backend.",
