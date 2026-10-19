@@ -261,6 +261,21 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   counts, which went stale inside a single release; it names the three suites by
   file instead, so the next test-only PR cannot leave another wrong number
   behind.
+- New `## Multiple GitHub accounts on one host` section in
+  `skills/dev/phases/repository-context.md` documents the routing layer the
+  skill verifies but never sets up: skill is verification only, no account
+  switching and no token duplication silently; user-approved host changes
+  (`credential.https://github.com.useHttpPath=true` + per-org
+  `credential.https://github.com/<ORG>.username=<login>` for pushes,
+  project-scoped `GH_CONFIG_DIR` for `gh`, scope-restricted `includeIf`
+  for commit author), evidence rule, lane propagation of `GH_CONFIG_DIR`,
+  and Phase 2's `git init` -> re-run `dev_config.py exclude` step when
+  `create` ran with `--no-exclude` (#75). Cross-references #37, the SSH
+  half. `skills/dev/backends/contract.md` `launch` row carries the lead's
+  effective `GH_CONFIG_DIR` (or `"default"`) into the lane envelope.
+  `verify_gh_cli_login` records `gh_config_dir` on every verdict path
+  (guard paths unchanged); `scripts/validate_skill.py` pins the section's
+  policy tokens.
 
 ## v2.1.1 — 2026-09-14
 

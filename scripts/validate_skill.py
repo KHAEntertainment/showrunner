@@ -872,6 +872,29 @@ def main() -> int:
             "**Pending reviewer decisions**: none",
             "`Ignored reviewers` takes precedence over every other setting",
         ),
+        # Issue #75: multi-account routing is a verification-only layer, so
+        # each token pins one way the layer could otherwise drift back into
+        # silent credential persistence or auto-routing. The skill describes
+        # the recommended routing layer; it never performs it.
+        "phases/repository-context.md": (
+            "## Multiple GitHub accounts on one host",
+            "The skill never chooses the account and never\npersists host or credential state.",
+            "reported back in the\nsame turn they are made",
+            "no\naccount is switched automatically, no token is duplicated silently",
+            "asks the user to approve the host\nchanges that follow",
+            "credential.https://github.com.useHttpPath=true",
+            "credential.https://github.com/<ORG>.username=<login>",
+            "GH_CONFIG_DIR` to a project-scoped config directory",
+            "(or `\"default\"`)",
+            "Seeding\n  that directory by piping a token from an existing login is credential\n  persistence",
+            "includeIf \"gitdir:/path/to/work\"",
+            "Absence\nof a test is not a pass",
+            "carried\ninto the worker, QA, and reviewer assignment envelopes",
+            "`dev_config.py create --no-exclude`",
+            "After Phase 2's bootstrap `git init`, re-run\n`dev_config.py exclude`",
+            "Cross-reference #37, the SSH half",
+            "this section\n  is the HTTPS and `gh` CLI half, and the two land or cross-reference\n  together.",
+        ),
     }
     for relative, tokens in SWAP_EVIDENCE_PINS.items():
         per_file_policy[relative] = per_file_policy.get(relative, ()) + tokens
