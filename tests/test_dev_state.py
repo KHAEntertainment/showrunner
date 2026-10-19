@@ -111,12 +111,12 @@ run_status:
         code, _, stderr = run_validator(content)
         self.assertNotEqual(code, 0)
 
-    def test_truncated_fails(self):
-        """Truncated file should fail."""
+    def test_missing_closing_delimiter_fails(self):
+        """Frontmatter without closing delimiter should fail."""
         content = """---
 schema_version: 2
 run_id: test
-run_status:
+run_status: active
 """
         code, _, stderr = run_validator(content)
         self.assertNotEqual(code, 0)
