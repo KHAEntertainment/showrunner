@@ -324,16 +324,29 @@ recorded.
 
 These are host changes the **user** makes; the skill only verifies them.
 
-- **Git pushes.** Configure `credential.https://github.com.useHttpPath=true`
-  in `~/.gitconfig`, plus one
-  `credential.https://github.com/<ORG>.username=<login>` entry per org that
-  this host writes to. The `gh` (or git-credential-manager) credential
-  helper then selects the right token by remote path from the multi-user
-  hosts file, so the skill's HTTPS check passes for the right reason without
-  re-prompting. No token duplication is needed.
+- **Git pushes.** The account a push authenticates as is the one held by
+  the `gh` config in effect for that shell: either the active account, or
+  a project-scoped `GH_CONFIG_DIR` (set in `.claude/settings.local.json`
+  `env`) that holds only that account's login. That project-scoped
+  `GH_CONFIG_DIR` is what routes both `gh` commands and `git push`
+  through the helper — the helper answers against the `gh` config it
+  sees, with no separate per-path token lookup. Setting
+  `credential.https://github.com.useHttpPath=true` plus a per-org
+  `credential.https://github.com/<ORG>.username=<login>` does **not**
+  select the account under the `gh` helper: with active account A and
+  `<ORG>.username=B`, `gh auth git-credential` returns no token and the
+  skill's HTTPS check reports `identity_unavailable`. That pair only acts
+  as a guard — a mismatch at push time fails closed instead of silently
+  pushing as the wrong account. Helpers that *do* select a token per
+  remote path (for example `git-credential-manager`, or an OS keychain
+  with per-path entries) are a separate setup; the skill's
+  `check-https-account` accepts whatever they produce. No token
+  duplication is needed.
 - **`gh` CLI.** Set `GH_CONFIG_DIR` to a project-scoped config directory in
-  `.claude/settings.local.json` `env`, holding only that account's login. The
-  skill's `check-gh-account` output records the effective `GH_CONFIG_DIR`
+  `.claude/settings.local.json` `env`, holding only that account's login.
+  This is the same `GH_CONFIG_DIR` that routes `git push` above, so both
+  paths verify against the same account in one place. The skill's
+  `check-gh-account` output records the effective `GH_CONFIG_DIR`
   (or `"default"`) so the ledger shows which login was verified. **Seeding
   that directory by piping a token from an existing login is credential
   persistence and requires the user's explicit approval in the same turn**;
@@ -367,8 +380,9 @@ envelope pinning prevents that drift.
 ### New-project order
 
 `dev_config.py create --no-exclude` writes `.dev.json` but skips
-`info/exclude`, so before `git init` the file is valid and untracked but not
-yet ignored by anything. After Phase 2's bootstrap `git init`, re-run
-`dev_config.py exclude` so the file is covered by the repository-local
-exclude file before any project files are staged; `dev_config.py status`
-then reports `valid`, not `not_ignored`.
+`info/exclude`, so before a Git repository exists the file is valid and
+untracked but not yet ignored by anything. Once Phase 2's bootstrap has
+produced a repository (whether via `git init` for a local-only project or
+via `gh repo create --clone`), re-run `dev_config.py exclude` so the file
+is covered by the repository-local exclude file before any project files
+are staged; `dev_config.py status` then reports `valid`, not `not_ignored`.

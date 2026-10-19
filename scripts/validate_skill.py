@@ -876,6 +876,10 @@ def main() -> int:
         # each token pins one way the layer could otherwise drift back into
         # silent credential persistence or auto-routing. The skill describes
         # the recommended routing layer; it never performs it.
+        # Issue #75 (round 2): the `gh` credential helper does NOT select a
+        # token per remote path; the account comes from the `gh` config in
+        # effect. Tokens below pin that boundary so the false claim cannot
+        # be re-introduced.
         "phases/repository-context.md": (
             "## Multiple GitHub accounts on one host",
             "The skill never chooses the account and never\npersists host or credential state.",
@@ -884,6 +888,13 @@ def main() -> int:
             "asks the user to approve the host\nchanges that follow",
             "credential.https://github.com.useHttpPath=true",
             "credential.https://github.com/<ORG>.username=<login>",
+            # The account comes from the `gh` config in effect (or the
+            # project GH_CONFIG_DIR), NOT from `credential` username keys.
+            "the one held by\n  the `gh` config in effect for that shell",
+            "no separate per-path token lookup",
+            "does **not**\n  select the account under the `gh` helper",
+            "fails closed instead of silently\n  pushing as the wrong account",
+            "git-credential-manager",
             "GH_CONFIG_DIR` to a project-scoped config directory",
             "(or `\"default\"`)",
             "Seeding\n  that directory by piping a token from an existing login is credential\n  persistence",
@@ -891,7 +902,10 @@ def main() -> int:
             "Absence\nof a test is not a pass",
             "carried\ninto the worker, QA, and reviewer assignment envelopes",
             "`dev_config.py create --no-exclude`",
-            "After Phase 2's bootstrap `git init`, re-run\n`dev_config.py exclude`",
+            # Round 2: Phase 2's new-project bootstrap does `gh repo create --clone`,
+            # not `git init`; wording pinned on the `once Phase 2's bootstrap has\nproduced a repository`
+            # form rather than a literal `git init` step.
+            "Once Phase 2's bootstrap has\nproduced a repository",
             "Cross-reference #37, the SSH half",
             "this section\n  is the HTTPS and `gh` CLI half, and the two land or cross-reference\n  together.",
         ),

@@ -1172,13 +1172,28 @@ class GhCliAccountVerificationTests(unittest.TestCase):
     def test_gh_config_dir_field_present_on_host_mismatch(self) -> None:
         # The host_mismatch guard path also records the effective config so
         # the ledger shows why a verified login never reached the gate.
-        sentinel = object()
-        saved = os.environ.pop("GH_CONFIG_DIR", sentinel)
-        if saved is sentinel:
-            had_env = False
+        # GH_HOST and GH_CONFIG_DIR are both observed from the local
+        # environment for evidence; this test never sets either, only
+        # reads. Save/restore both with the same sentinel pattern so the
+        # `finally` block restores whatever the caller had, exactly the
+        # way `GH_CONFIG_DIR` is handled in the other tests in this class.
+        gh_config_dir_sentinel = object()
+        gh_host_sentinel = object()
+
+        saved_gh_config_dir = os.environ.pop("GH_CONFIG_DIR", gh_config_dir_sentinel)
+        if saved_gh_config_dir is gh_config_dir_sentinel:
+            had_gh_config_dir = False
         else:
-            had_env = True
-            os.environ["GH_CONFIG_DIR"] = saved
+            had_gh_config_dir = True
+            os.environ["GH_CONFIG_DIR"] = saved_gh_config_dir  # type: ignore[assignment]
+
+        saved_gh_host = os.environ.pop("GH_HOST", gh_host_sentinel)
+        if saved_gh_host is gh_host_sentinel:
+            had_gh_host = False
+        else:
+            had_gh_host = True
+            os.environ["GH_HOST"] = saved_gh_host  # type: ignore[assignment]
+
         try:
             os.environ["GH_HOST"] = "ghe.example.com"
             result = MODULE.verify_gh_cli_login(
@@ -1188,9 +1203,12 @@ class GhCliAccountVerificationTests(unittest.TestCase):
             self.assertEqual("host_mismatch", result["reason_code"])
             self.assertEqual("default", result["gh_config_dir"])
         finally:
-            os.environ.pop("GH_HOST", None)
-            if had_env:
-                os.environ["GH_CONFIG_DIR"] = saved  # type: ignore[assignment]
+            if had_gh_host:
+                os.environ["GH_HOST"] = saved_gh_host  # type: ignore[assignment]
+            else:
+                os.environ.pop("GH_HOST", None)
+            if had_gh_config_dir:
+                os.environ["GH_CONFIG_DIR"] = saved_gh_config_dir  # type: ignore[assignment]
             else:
                 os.environ.pop("GH_CONFIG_DIR", None)
 
