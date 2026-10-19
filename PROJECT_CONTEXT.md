@@ -47,7 +47,7 @@ See [UPSTREAM.md](UPSTREAM.md) for the fork/merge procedure and
 
 - **Payload**: Markdown (the Skill itself) + Python 3.10+ stdlib-only scripts
 - **Installer**: Bash (`install.sh`) and PowerShell (`install.ps1`)
-- **Tests**: Python `unittest` (36 tests) + Bash assertion suite (9 assertions) + PowerShell suite (5 assertions)
+- **Tests**: Python `unittest` (`tests/test_*.py`) + Bash assertion suite (`tests/test-install.sh`) + PowerShell suite (`tests/test-install.ps1`). No per-suite counts are recorded here on purpose: every test-only PR changes them, so the numbers were stale within one release and a stale count reads as a real one. The suites are the gate — the Verification Gate below names the commands, and each suite's assertions are pinned in its own file.
 - **No third-party runtime or build dependencies at install-time or in core workflow behavior.** This is a deliberate constraint — see ADR-005. Optional gate-time tooling such as Graft (`@nanonets/graft@0.18.0`) for code-graph evidence at gates per `skills/dev/graft.md` is explicitly excluded from this constraint.
 
 Runtime prerequisites for the Skill (not for installing it): `rtk`, `gh`, `git`, Python 3, optionally Traycer CLI/Host, optionally Graft (`@nanonets/graft@0.18.0`) for code-graph evidence at gates per `skills/dev/graft.md` (optional, gate-time only).

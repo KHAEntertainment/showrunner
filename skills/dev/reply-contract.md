@@ -47,7 +47,7 @@ Emitting one of these in full is compliant even when doing so exceeds 100 words;
 
 ## 5. Pull principle
 
-Internal lane output is pulled, not pushed: the lead reads a worker/QA/reviewer report or a prototype readout, extracts the delta the user needs, and reports that delta — the full report stays in `.agent/dev-state.md` and the PR record, where it remains available if the user or a later lane needs to pull it. This generalizes the don't-relay rule `${CLAUDE_SKILL_DIR}/phases/phase1-prototyping.md` already states for prototype readouts to every delegated lane's output.
+Internal lane output is pulled, not pushed: the lead reads a worker/QA/reviewer report or a prototype readout, extracts the delta the user needs, and reports that delta. The full report stays in the backend transcript — the conversation in which the lane was dispatched and replied — and, for the QA and review lanes, in that lane's PR comment. `.agent/dev-state.md` records the **verdict** of that lane, not the report's text: the status, the cause, the ids, the next action, and nothing more, which is what `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md` defines the ledger to hold. A later lane or a recovering lead therefore pulls the full report from the transcript or the PR record, never from the ledger, and a reply that reported the delta has discarded nothing. This generalizes the don't-relay rule `${CLAUDE_SKILL_DIR}/phases/phase1-prototyping.md` already states for prototype readouts to every delegated lane's output.
 
 ## 6. Composition note
 

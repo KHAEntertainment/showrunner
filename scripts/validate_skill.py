@@ -711,6 +711,18 @@ def main() -> int:
             "Any other `pending`, or `incomplete`, external review → do not merge",
             "a `pending` routed as `clear` by a completed, current-head substitution counts",
         ),
+        "phases/phase1.md": (
+            "### B.0 Document-first mode (Situation A only)",
+            "**Extract before asking.**",
+            "Each item cites the document section it came from",
+            "Present the proposed list and the gap list together, and **state both counts**",
+            "Then ask only the gaps, one question at a time",
+            "The B.3 stress-test runs for every module",
+            'the Step C gate still requires the user to press "satisfied" before the next module',
+            "the user can reopen any of them at the Step C gate",
+            "**The document is never rewritten.**",
+            "**with their citations**",
+        ),
         "phases/phase2.md": (
             "${CLAUDE_SKILL_DIR}/graft.md",
             "rtk proxy graft callers",

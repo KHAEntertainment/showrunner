@@ -16,6 +16,26 @@ This fork maintains a customized English personal Skill while retaining upstream
 - Canonical maintained artifact: `skills/dev/`
 - Historical upstream references: `en/` and `zh/`
 
+## Divergences from upstream
+
+Additive edits to upstream-owned files under `skills/dev/`, recorded so a later
+upstream merge re-applies or drops each one deliberately instead of leaving it
+to conflict resolution. A merge must leave every upstream file exactly as
+upstream ships it wherever this list says nothing about it.
+
+- `skills/dev/phases/phase1.md` — new `### B.0 Document-first mode (Situation A
+  only)` subsection at the head of Step B. When the Entry Routing test for
+  Situation A held, the lead reads the supplied document first and drafts that
+  module's decisions as a proposed locked list, each item citing the document
+  section it came from, presents the gap list beside it with both counts, and
+  asks only the gaps, one question at a time with a recommended answer. B.1–B.4,
+  Steps A, C and D, Situation B, the Top-level Anchoring Principles and the B.3
+  stress-test are unchanged; a document-settled item is reopened by the user at
+  the Step C gate rather than silently locked, and the document itself is never
+  rewritten. One sentence on Situation A's routing entry and one Prohibited
+  Behaviors bullet accompany it. Upstream content is otherwise untouched
+  (v2.1.2, #74).
+
 ## Sync Procedure
 
 1. Check out `main`, fetch `upstream`, and inspect new tags/commits.

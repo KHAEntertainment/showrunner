@@ -176,6 +176,20 @@ def _markdown_section(text: str, heading: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _markdown_subsection(text: str, heading: str) -> str | None:
+    """Return the body under `heading` up to the next heading of any level.
+
+    `_markdown_section` stops only at a `##` boundary, so a `###` body runs
+    into everything below it and an assertion scoped to the subsection is
+    scoped to half the file. Same reason as `_bullet`: the assertion has to be
+    about the region that states the rule.
+    """
+    match = re.search(
+        rf"^{re.escape(heading)}$(.*?)(?=^#+ |\Z)", text, re.M | re.S
+    )
+    return match.group(1) if match else None
+
+
 def _bullet(text: str, starts_with: str) -> str | None:
     """Return the single list bullet beginning with `starts_with`.
 
@@ -1612,6 +1626,42 @@ class BackendContractTests(unittest.TestCase):
         self.assertIsNotNone(bullet, "phase1-prototyping.md has no don't-relay bullet")
         self.assertIn("pull principle", bullet)
         self.assertIn("${CLAUDE_SKILL_DIR}/reply-contract.md", bullet)
+
+    def test_phase1_situation_a_extracts_the_document_before_asking(self) -> None:
+        """Issue #74: Situation A reads the document first and asks only its gaps.
+
+        The failure this guards is the one dogfooding run F-75 recorded: a
+        supplied requirements document fed the questions instead of answering
+        them. Both directions are asserted because either alone is
+        insufficient - extracting and then asking everything anyway is the
+        same defect, and dropping B.3 because nothing was asked trades one
+        defect for another. Scoped to the subsection so no rule can be "found"
+        elsewhere in the file.
+        """
+        section = _markdown_subsection(
+            self.read("phases/phase1.md"),
+            "### B.0 Document-first mode (Situation A only)",
+        )
+        self.assertIsNotNone(section, "phase1.md has no B.0 document-first mode")
+        for token in (
+            "Situation B runs B.1 unchanged",
+            "**Extract before asking.**",
+            "Each item cites the document section it came from",
+            "Present the proposed list and the gap list together, and **state both counts**",
+            "Then ask only the gaps, one question at a time",
+            "each with an AI recommended answer and a one-line rationale",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, section)
+        for token in (
+            "The B.3 stress-test runs for every module",
+            'the Step C gate still requires the user to press "satisfied" before the next module',
+            "the user can reopen any of them at the Step C gate",
+            "**The document is never rewritten.**",
+            "**with their citations**",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, section)
 
     def test_agents_directory_never_references_the_reply_contract(self) -> None:
         """Issue #54: worker/QA/reviewer surfaces are untouched — pinned invariant.

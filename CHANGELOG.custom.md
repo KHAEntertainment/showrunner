@@ -99,6 +99,20 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   same head anyway, so each head got two external reviews plus no-finding
   comments; the `/dev` external-review gate never counted PR-Agent as a
   trusted reviewer (#106).
+- Phase 1 gains a document-first mode for Situation A (#74, dogfooding finding
+  F-75). When the user supplies a requirements document, Step B now extracts
+  that module's own decisions from the document first — a proposed locked list,
+  each item citing the document section it came from — presents the gap list
+  beside it with both counts, and asks only the gaps, one question at a time with
+  an AI recommended answer. The B.3 stress-test and the Step C gate are
+  unchanged, a document-settled item is reopened by the user at the gate rather
+  than silently locked, and the document itself is never rewritten;
+  `PRD-draft.md` records the extracted decisions with their citations. Situation
+  B, Steps A, C and D, and `phases/phase1-prototyping.md` are unchanged, and the
+  edit is additive to upstream v1.3.0 content. `UPSTREAM.md` records the
+  divergence. `scripts/validate_skill.py` pins the mode per file, and a test
+  asserts the Situation A text carries both the extract-before-asking rule and
+  the unchanged-B.3 rule.
 
 ### Fixed
 
@@ -175,6 +189,15 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 - `REVIEW.md` is committed at the repository root, so review briefs point at a
   file that exists on `main`. It covers this repository's priorities, severity
   calibration, verification expectations, security, and comment style (#120).
+- Reply-contract prose and `PROJECT_CONTEXT.md` corrections from PR #55's internal
+  review (#56). `reply-contract.md` §5 now says what the ledger actually holds:
+  `.agent/dev-state.md` records the lane's verdict — status, cause, ids, next
+  action, as `templates/DEV_STATE_TEMPLATE.md` defines it — while the full
+  report lives in the backend transcript and, for the QA and review lanes, in
+  that lane's PR comment. `PROJECT_CONTEXT.md` no longer carries per-suite test
+  counts, which went stale inside a single release; it names the three suites by
+  file instead, so the next test-only PR cannot leave another wrong number
+  behind.
 
 ## v2.1.1 — 2026-09-14
 
