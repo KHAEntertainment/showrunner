@@ -129,3 +129,26 @@ here are packaging and release decisions, recorded below.
 - **Consequence**: ADR-001's marketplace manifest, ADR-002's root `marketplace.json`, and ADR-003's tag pin now describe the central catalog's entry, not a file here. The pin still names an immutable `vX.Y.Z` tag over an HTTPS URL, so the plugin resolves only after the tag is pushed and the central `ref` is bumped. Anyone on `dev-skill@khaentertainment-dev-skill` stops receiving releases once the old catalog is gone and must migrate (`docs/install.md`; GitHub's repository redirect does not carry a plugin identity across).
 - **Verification split**: local checks must run offline, so `scripts/check_version_sync.py` compares only the Skill frontmatter, `plugin.json`, and an optional `--tag`. Whether the central entry matches the tagged plugin is a release-time check against another repository: `scripts/check_central_catalog.py`. It needs the network and a published tag, so it stays out of `scripts/verify.sh`, and it fails closed (exit 2 is "could not verify", never a pass). The central CI already proves the ref clones anonymously and that a declared `version` matches the plugin; it does not compare the plugin version with the tag.
 - **Publication order**: tag, then central pin bump, then verification. A release is incomplete in between (`docs/RELEASING.md`), which is safe because the central entry keeps serving the previous immutable tag until the pin moves.
+
+## ADR-015 — Ledger profile and validator
+
+- **Decision time**: 2026-10-19
+- **Context**: No component parses `.agent/dev-state.md`. `validate_skill.py` and `test_backend_contract.py` only check that docs name the path and fields. A ledger typo is invisible until a recovery reads it wrong.
+- **Decision**: Add a validator (`dev_state.py --validate`) that parses a strict YAML subset: maps, lists, and scalars only, with no anchors, tags, or flow syntax. The validator fails closed: any parse or profile error gives a non-zero exit naming the line and problem. Fields under `schema_version: 2` are additive; the validator accepts new keys without special-casing.
+- **Why not JSON**: Hand-edited JSON across a long run is the format most likely to break (trailing commas, quoting issues, trailing commas in arrays). A fail-closed reader would blank on one typo.
+- **Ledger profile statement**: Written in the ledger template frontmatter; pinned by `validate_skill.py`.
+- **Consequence**: The SOP names `dev_state.py --validate` at recovery entry and before end-of-turn reply. The validator runs with stdlib only; no third-party YAML libraries.
+
+## ADR-016 — Gated hooks policy
+
+- **Decision time**: 2026-10-19
+- **Context**: The workspace panel (v2.2.0) needs hooks that only run for registered projects. We want the first hook the plugin would ship, but not the full panel code.
+- **Decision**: Hooks are registered in the plugin manifest, but each hook command is a shell one-liner that checks project registration before starting Node. An unregistered project pays one file stat per prompt. Marketplace channel only.
+- **Consequence**: The ADR records the policy; the hooks themselves ship in v2.2.0 with the panel.
+
+## ADR-017 — Node as a panel-time prerequisite
+
+- **Decision time**: 2026-10-19
+- **Context**: Node is required when the panel starts, not at install. This ADR-005 scope note follows the form of ADR-011.
+- **Decision**: Node ≥18 is preflighted when the panel starts, never at install. No `depends_on "node"` in the Homebrew formula.
+- **Consequence**: No install-time Node dependency in any installer or package manifest. Homebrew material is on hold (see ADR-007).

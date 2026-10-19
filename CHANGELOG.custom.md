@@ -12,6 +12,13 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ### Added
 
+- Ledger profile and validator (#85):
+  `dev_state.py --validate` checks YAML subset (maps, lists, scalars;
+  no anchors, tags, or flow syntax) and fails closed on any error.
+  Profile statement pinned in ledger template; referenced in SOP
+  (recovery entry, end-of-turn reply). Three ADRs: ledger, gated hooks,
+  panel-time Node.
+
 - External-review inspector widens built-in reviewers (#82):
   `gemini-code-assist`, `greptile`, `sourcery`, and `qodo` (with
   confirmed logins from `commenter:app/<name>` / users API on

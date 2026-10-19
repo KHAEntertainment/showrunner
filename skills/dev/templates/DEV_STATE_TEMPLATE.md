@@ -1,5 +1,15 @@
 ---
 schema_version: 2
+ledger_profile: |
+  The ledger is a YAML subset: maps, lists, and scalars only.
+  No anchors
+  No tags
+  no flow syntax.
+  Hand-editable without a parser. Strict enough for a fail-closed reader.
+  Additive fields under schema_version: 2 are allowed; validators accept new keys.
+
+# On recovery: run dev_state.py --validate
+# End-of-turn replies: run dev_state.py --validate
 execution:
   execution_backend: incomplete
   detection_status: incomplete
@@ -29,6 +39,10 @@ reviewer:
 workers: []
 pull_requests: []
 blockers: []
+run_id: null
+run_status: null
+  one of: active, blocked, recovering, complete, standby
+lead_checkpoint: null
 next_action: run_backend_detection
 updated_at: null
 ---
@@ -146,3 +160,6 @@ rule.
 - Evidence:
 - Transition:
 - Next action:
+
+# On recovery: run dev_state.py --validate
+# End-of-turn replies: run dev_state.py --validate
