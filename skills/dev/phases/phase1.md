@@ -33,7 +33,7 @@ Module-progressive alignment + word-precision capture + prototype-driven when ne
   - Has target users or usage scenarios
   - Has technical constraints or explicit non-functional requirements
 
-  → Use the user's document as the PRD basis; **do not rewrite**. Go directly to Step A for module split; later Step B still drives module-progressive questioning to nail down everything the document didn't make clear.
+  → Use the user's document as the PRD basis; **do not rewrite**. Go directly to Step A for module split; later Step B still drives module-progressive questioning to nail down everything the document didn't make clear. When Situation A holds, Step B reads the document first (B.0) and asks only what the document did not settle.
 
 - **Situation B — User did not provide a requirements document**:
   → Run the full Step A → B → C → D, ultimately producing the PRD.
@@ -83,6 +83,27 @@ If it needs adjustment, tell me; if it's OK, reply "lock".
 ## Step B — Per-module loop
 
 For each locked module, run B.1 → B.4 in order, looping until the user presses "satisfied" at the gate.
+
+### B.0 Document-first mode (Situation A only)
+
+Applies only when the Entry Routing test for Situation A held; Situation B runs B.1 unchanged. Read this before B.1, then run B.1 → B.4 as usual. The layers and the Top-level Anchoring Principles are the same loop — what changes is which items get asked.
+
+**Extract before asking.** For each locked module, read the supplied document first and draft that module's decisions across the Big Picture, Behavior, and Detail layers as a *proposed* locked list, not as answers the user already gave. Each item cites the document section it came from:
+
+```
+Module <N> — <module name>
+From the document — <N> proposed decisions:
+- <decision> — source: <document heading or section>
+- ...
+Not settled by the document — <M> gaps:
+- <the missing item, at decision granularity>
+```
+
+Present the proposed list and the gap list together, and **state both counts**. Then ask only the gaps, one question at a time, each with an AI recommended answer and a one-line rationale, per the Top-level Anchoring Principles. An item the document settles is not asked again; the user can reopen any of them at the Step C gate, where the full proposed list is shown for confirmation.
+
+**The rest of Step B is unchanged.** The B.3 stress-test runs for every module, including one whose decisions were all extracted from the document, and the Step C gate still requires the user to press "satisfied" before the next module. A list the user never watched being built is still a list the user confirms.
+
+**The document is never rewritten.** Principle 5 holds exactly as it does in Situation B: the extracted decisions are written into `PRD-draft.md` **with their citations**, and the user's document is left exactly as supplied. Extraction reads the document; it does not edit it.
 
 ### B.1 Three-layer progressive questioning
 
@@ -288,6 +309,7 @@ If something like an architecture-level change routes the flow back to Phase 1:
 - Do not omit the AI recommended answer for any question
 - Do not assume requirements the user did not explicitly state
 - Do not rewrite the user's existing document (unless explicitly requested)
+- Do not, in Situation A, ask a module-level question the supplied document already settles (B.0 extracts it and cites the section; the user reopens it at the gate instead)
 - Do not skip the scenario stress-test (B.3) in pursuit of "finishing quickly"
 - Do not let a prototype agent lock decisions on behalf of the main conversation (prototype agents only produce artifacts + readouts)
 - Do not silently modify locked terms or decisions (re-reviews must be surfaced)
