@@ -2064,14 +2064,24 @@ class ExternalReviewCoveragePinsTests(unittest.TestCase):
         entry must record the Issue #82/#117 switch: the four
         new reviewers, the ask-once contract, the Kilo summary
         evidence path, and the Kilo-led policy.
+
+        D1 (release-aware): the heading is `## Unreleased
+        (v2.1.2)` while unreleased, and `## v2.1.2 (YYYY-MM-DD)`
+        once cut. Both forms are accepted so the pin does not
+        break the moment the release is made.
         """
         changelog = (ROOT / "CHANGELOG.custom.md").read_text(encoding="utf-8")
         match = re.search(
-            r"^## Unreleased \(v2\.1\.2\)$(.*?)(?=^## |\Z)",
+            r"^## (?:Unreleased \(v2\.1\.2\)|v2\.1\.2(?: \(\d{4}-\d{2}-\d{2}\))?)"
+            r"$(.*?)(?=^## |\Z)",
             changelog,
             re.M | re.S,
         )
-        self.assertIsNotNone(match, "CHANGELOG has no Unreleased (v2.1.2) section")
+        self.assertIsNotNone(
+            match,
+            "CHANGELOG has no `## Unreleased (v2.1.2)` section "
+            "(or released `## v2.1.2 (YYYY-MM-DD)` heading)",
+        )
         body = match.group(1)
         for token in (
             "gemini-code-assist",

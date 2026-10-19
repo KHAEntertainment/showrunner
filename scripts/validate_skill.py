@@ -1034,10 +1034,17 @@ def main() -> int:
         changelog = repo_root / "CHANGELOG.custom.md"
         if changelog.is_file():
             changelog_text = changelog.read_text(encoding="utf-8")
-            # Locate the Unreleased (v2.1.2) section and assert
-            # it mentions the Issue #82 / #117 switch.
+            # D1 (release-aware): the section is the release
+            # record for v2.1.2. While unreleased it is headed
+            # `## Unreleased (v2.1.2)`; at release time the
+            # heading becomes `## v2.1.2 (YYYY-MM-DD)`. Both
+            # forms must be accepted so the pin does not break
+            # the moment the release is cut. The 8 #82/#117
+            # tokens are still required inside whichever
+            # heading is present.
             unreleased_match = re.search(
-                r"^## Unreleased \(v2\.1\.2\)$(.*?)(?=^## |\Z)",
+                r"^## (?:Unreleased \(v2\.1\.2\)|v2\.1\.2(?: \(\d{4}-\d{2}-\d{2}\))?)"
+                r"$(.*?)(?=^## |\Z)",
                 changelog_text,
                 re.M | re.S,
             )
@@ -1045,7 +1052,8 @@ def main() -> int:
                 fail(
                     errors,
                     "CHANGELOG.custom.md must have an "
-                    "`## Unreleased (v2.1.2)` section",
+                    "`## Unreleased (v2.1.2)` section (or a "
+                    "released `## v2.1.2 (YYYY-MM-DD)` heading)",
                 )
             else:
                 unreleased_body = unreleased_match.group(1)

@@ -573,6 +573,14 @@ def kilo_summary_evidence_for_head(
     for comment in list_value(current.get("comments")):
         if not isinstance(comment, dict):
             continue
+        # F1: a comment marked `_incoherent` had its body and
+        # timestamps pulled from different REST records (or the
+        # REST record was incomplete), so we cannot tell which
+        # body version the timestamps describe. Treat it as not
+        # evidence: the gate stays pending, never clear.
+        if comment.get("_incoherent"):
+            pending.add("kilo")
+            continue
         if reviewer_for_login(login_from(comment), policy) != "kilo":
             continue
         body = str(comment.get("body") or "")
@@ -835,11 +843,17 @@ def fetch_pr_comments_with_metadata(repo: str, pr_number: int) -> dict[str, dict
             continue
         created = comment.get("created_at")
         updated = comment.get("updated_at")
+        body = comment.get("body")
         if not created and not updated:
             continue
+        # F1: the record carries body AND timestamps as one
+        # consistent comment version. A partial record (body
+        # without timestamps, or timestamps without body) cannot
+        # be paired, so it is not evidence.
         payload = {
             "createdAt": created,
             "updatedAt": updated,
+            "body": body,
         }
         comment_id = comment.get("id")
         node_id = comment.get("node_id")
@@ -862,15 +876,25 @@ def augment_comments_with_metadata(
     so this function fetches it from the REST endpoint and merges
     it into the payload in-place.
 
+    F1 (Codex round-3): the body AND the edit timestamps must come
+    from the SAME REST record, so the inspector never binds an old
+    summary body to a new edit time. If Kilo edits the comment in
+    place between the `gh pr view` read and the REST read, the
+    production path must use the REST record's body AND timestamps
+    together — never mix the gh body with the REST timestamps.
+
+    If the REST record is incomplete (missing `body`, `created_at`,
+    or `updated_at`), the two halves cannot be paired. The comment
+    is then marked `_incoherent: True` and the inspector treats it
+    as not evidence (pending), never clear.
+
     Provenance: the merged values are recorded under a `_restMeta`
     key on each comment so a test or a follow-up reader can see
     which values came from REST and which from the gh shape. The
-    REST values take precedence (they are the canonical edit
-    timestamps); a missing REST value falls back to the gh
-    `createdAt`. The `_restMeta` shape is:
+    `_restMeta` shape is:
 
         {"source": "repos/{owner}/{repo}/issues/{n}/comments",
-         "created_at": ..., "updated_at": ...}
+         "created_at": ..., "updated_at": ..., "body_sha256": ...}
 
     Failures are silent: an empty mapping means no REST metadata,
     and the gh values remain (which fail closed for the edited
@@ -894,15 +918,33 @@ def augment_comments_with_metadata(
         record = metadata.get(comment_id) or metadata.get(node_id)
         if not record:
             continue
-        # REST values are authoritative; keep gh's as a fallback.
-        if record.get("createdAt"):
-            comment["createdAt"] = record["createdAt"]
-        if record.get("updatedAt") is not None:
-            comment["updatedAt"] = record["updatedAt"]
+        # F1: body AND timestamps must come from the same REST
+        # record. A partial record cannot be paired, so the
+        # comment is marked incoherent and the inspector treats
+        # it as not evidence (pending, never clear).
+        body = record.get("body")
+        created = record.get("createdAt")
+        updated = record.get("updatedAt")
+        if not body or not created or updated is None:
+            comment["_incoherent"] = True
+            comment["_restMeta"] = {
+                "source": f"repos/.../issues/{pr_number}/comments",
+                "reason": "REST record missing body or timestamps; cannot pair",
+                "created_at": created,
+                "updated_at": updated,
+                "body_present": bool(body),
+            }
+            continue
+        # One coherent comment version: body + createdAt +
+        # updatedAt all from the same REST record.
+        comment["body"] = body
+        comment["createdAt"] = created
+        comment["updatedAt"] = updated
+        comment.pop("_incoherent", None)
         comment["_restMeta"] = {
             "source": f"repos/.../issues/{pr_number}/comments",
-            "created_at": record.get("createdAt"),
-            "updated_at": record.get("updatedAt"),
+            "created_at": created,
+            "updated_at": updated,
         }
     return current
 
@@ -1114,13 +1156,22 @@ def augment_checks_with_output(
         augmented = fetched.get(normalize(name))
         if not augmented:
             continue
-        merged = dict(check)
-        # Fill only the timing fields when the rollup did not
-        # carry them; the REST values are the canonical ones for
-        # the head SHA and so outrank the rollup's.
-        for field in ("id", "startedAt", "completedAt", "detailsUrl", "app", "output"):
-            if augmented.get(field) and not merged.get(field):
-                merged[field] = augmented[field]
+        # F2 (Codex round-3): the selected latest REST run is one
+        # WHOLE record — id, status, conclusion, started/completed
+        # and output all come from that run. Never field-by-field
+        # merge with gh rollup data for the same check: doing so
+        # synthesizes a record that claims the newer run's ID and
+        # output but the older run's SUCCESS conclusion and times.
+        # If the gh rollup and REST disagree (a new run was created
+        # between the two reads), the REST record is the one that
+        # describes the head SHA's latest run and wins outright.
+        # Keep the gh `name` (the REST record has it too, but the
+        # gh form is the one the rollup used) and any field the
+        # REST record genuinely lacks (rare; the REST shape carries
+        # all of these).
+        merged = dict(augmented)
+        if not merged.get("name"):
+            merged["name"] = check.get("name")
         rollup[index] = merged
     return current
 

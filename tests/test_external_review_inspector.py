@@ -735,6 +735,10 @@ class ExternalReviewInspectorTests(unittest.TestCase):
                     "node_id": "IC_kwDOUEhYLs8AAAABbwivVg",
                     "created_at": "2026-10-14T00:03:43Z",
                     "updated_at": "2026-10-14T00:26:26Z",
+                    # F1: body must be present so the record can
+                    # be paired. A record without body is marked
+                    # incoherent and not used as evidence.
+                    "body": "<!-- kilo-review -->\n**Status:** No Issues Found | **Recommendation:** Merge\n",
                 }
             ]
 
@@ -780,6 +784,213 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         # remains and `updatedAt` is absent.
         self.assertNotIn("updatedAt", result["comments"][0])
         self.assertNotIn("_restMeta", result["comments"][0])
+
+    def test_f1_rest_edit_metadata_promotes_coherent_body_only(self):
+        # F1 (Codex round-3): if Kilo edits the comment in place
+        # between the `gh pr view` read and the REST read, the
+        # inspector must bind the NEW body to the NEW edit time —
+        # never the OLD body to the NEW time. The gh comment has
+        # an old "No Issues Found | Merge" body; the REST record
+        # for the same id carries a new "Issues Found | Request
+        # Changes" body and a fresh `updated_at`. Production
+        # enrichment must use the REST body + REST timestamps
+        # together, so the verdict is `pending` (untriaged),
+        # not `clear`.
+        current = {
+            "number": 114,
+            "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+            "reviewRequests": [],
+            "reviews": [],
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {
+                    "id": 200,
+                    "name": "Kilo Code Review",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-10-13T23:20:05Z",
+                    "completedAt": "2026-10-13T23:25:48Z",
+                    "app": None,
+                }
+            ],
+            "comments": [
+                {
+                    "id": "IC_same-comment",
+                    "author": {"login": "kilo-code-bot"},
+                    "createdAt": "2025-01-01T00:00:00Z",
+                    "body": (
+                        "<!-- kilo-review -->\n"
+                        "<!-- previous head summary -->\n"
+                        "**Status:** No Issues Found | **Recommendation:** Merge\n"
+                    ),
+                }
+            ],
+        }
+        rest_record = {
+            "id": 42,
+            "node_id": "IC_same-comment",
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2026-10-13T23:25:50Z",
+            "body": (
+                "<!-- kilo-review -->\n"
+                "**Status:** Issues Found | **Recommendation:** Request Changes\n"
+            ),
+            "user": {"login": "kilo-code-bot[bot]"},
+        }
+
+        def fake_run_json(command, **kwargs):
+            return [rest_record]
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            MODULE.augment_comments_with_metadata(
+                current, "KHAEntertainment/showrunner", 114
+            )
+        # F1: the comment body must be the REST body (Issues
+        # Found), not the gh body (No Issues Found).
+        self.assertIn("Issues Found", current["comments"][0]["body"])
+        self.assertNotIn("No Issues Found", current["comments"][0]["body"])
+        # F1: the timestamps come from the same REST record.
+        self.assertEqual(current["comments"][0]["updatedAt"], "2026-10-13T23:25:50Z")
+        # F1: the verdict is pending (untriaged), not clear.
+        result = MODULE.inspect(current, [], [], policy(), {})
+        self.assertEqual(result["state"], "pending", result)
+        self.assertIn("kilo", result["completed_on_head"])
+        self.assertEqual(len(result["untriaged_findings"]), 1)
+
+    def test_f1_incomplete_rest_record_marks_comment_not_evidence(self):
+        # F1 fail-closed: when the REST record cannot be paired
+        # (missing body or missing timestamps), the comment is
+        # marked `_incoherent` and the inspector treats it as
+        # not evidence — the gate stays pending, never clear.
+        current = {
+            "number": 114,
+            "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+            "reviewRequests": [],
+            "reviews": [],
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {
+                    "id": 200,
+                    "name": "Kilo Code Review",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-10-13T23:20:05Z",
+                    "completedAt": "2026-10-13T23:25:48Z",
+                    "app": None,
+                }
+            ],
+            "comments": [
+                {
+                    "id": "IC_partial",
+                    "author": {"login": "kilo-code-bot"},
+                    "createdAt": "2026-10-13T23:25:34Z",
+                    "body": (
+                        "<!-- kilo-review -->\n"
+                        "**Status:** No Issues Found | **Recommendation:** Merge\n"
+                    ),
+                }
+            ],
+        }
+        # REST record has updated_at but NO body — cannot pair.
+        rest_record = {
+            "id": 43,
+            "node_id": "IC_partial",
+            "created_at": "2026-10-13T23:25:34Z",
+            "updated_at": "2026-10-13T23:26:00Z",
+            "body": None,
+        }
+
+        def fake_run_json(command, **kwargs):
+            return [rest_record]
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            MODULE.augment_comments_with_metadata(
+                current, "KHAEntertainment/showrunner", 114
+            )
+        # F1: the comment is marked incoherent.
+        self.assertTrue(current["comments"][0].get("_incoherent"))
+        # F1: the inspector treats it as not evidence.
+        result = MODULE.inspect(current, [], [], policy(), {})
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        self.assertIn("kilo", result["pending_reviewers"])
+
+    def test_f2_rest_run_used_as_one_whole_record(self):
+        # F2 (Codex round-3): when the gh rollup and REST
+        # disagree (a new run was created between the two
+        # reads), the selected latest REST run is used as one
+        # WHOLE record — id, status, conclusion, started/
+        # completed, output all from that run. Never
+        # field-by-field merge. The reproduction: gh rollup has
+        # an older SUCCESS; REST has a newer FAILURE with a
+        # rate-limit output. The merged record must be the
+        # FAILURE record entirely, so the inspector reports
+        # `pending` with the rate-limit reason, not `clear`.
+        current = {
+            "number": 114,
+            "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+            "reviewRequests": [],
+            "reviews": [],
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {
+                    # gh rollup: older SUCCESS, no id, no output.
+                    "name": "Kilo Code Review",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-10-13T23:20:05Z",
+                    "completedAt": "2026-10-13T23:25:48Z",
+                    "app": None,
+                }
+            ],
+            "comments": [
+                {
+                    "id": "IC_kilo",
+                    "author": {"login": "kilo-code-bot"},
+                    "createdAt": "2026-10-13T23:25:34Z",
+                    "body": (
+                        "<!-- kilo-review -->\n"
+                        "**Status:** No Issues Found | **Recommendation:** Merge\n"
+                    ),
+                }
+            ],
+        }
+        # REST: newer FAILURE run with rate-limit output.
+        latest_rest = {
+            "id": 300,
+            "name": "Kilo Code Review",
+            "status": "completed",
+            "conclusion": "failure",
+            "started_at": "2026-10-13T23:30:00Z",
+            "completed_at": "2026-10-13T23:35:00Z",
+            "output": {"summary": "Assistant request was rate limited"},
+        }
+
+        def fake_run_json(command, **kwargs):
+            return {"check_runs": [latest_rest]}
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            MODULE.augment_checks_with_output(current, "KHAEntertainment/showrunner")
+        merged = current["statusCheckRollup"][0]
+        # F2: the merged record is the REST record entirely —
+        # not a hybrid of REST id/output with gh SUCCESS/times.
+        self.assertEqual(merged["id"], 300)
+        self.assertEqual(merged["conclusion"], "failure")
+        self.assertEqual(merged["startedAt"], "2026-10-13T23:30:00Z")
+        self.assertEqual(merged["completedAt"], "2026-10-13T23:35:00Z")
+        self.assertEqual(
+            merged["output"]["summary"], "Assistant request was rate limited"
+        )
+        # F2: the verdict is pending with the rate-limit reason,
+        # not clear (which the buggy field-by-field merge gave).
+        result = MODULE.inspect(current, [], [], policy(), {})
+        self.assertEqual(result["state"], "pending", result)
+        self.assertNotIn("kilo", result["completed_on_head"])
+        reasons = result["pending_reasons"].get("kilo", [])
+        self.assertTrue(
+            any("rate-limit" in r for r in reasons),
+            f"expected rate-limit reason, got: {reasons}",
+        )
 
     def test_issue_82_qa_n1_latest_kilo_run_decides_success_then_failed(self):
         # QA-N1: when TWO Kilo check runs exist on the head SHA, the
