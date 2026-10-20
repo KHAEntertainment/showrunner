@@ -37,6 +37,22 @@ jobs:
           bash -n scripts/verify.sh
       - name: Lint shell scripts
         run: shellcheck install.sh tests/test-install.sh tests/migration-scratch.sh scripts/check_plugin_root.sh scripts/verify.sh
+      # The PowerShell installer tests run only in release-gate.yml, so this
+      # parse check is the only per-PR guard on install.ps1.
+      - name: Check PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in 'install.ps1', 'tests/test-install.ps1') {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($parseError in $errors) {
+              Write-Output "::error file=$path,line=$($parseError.Extent.StartLineNumber)::$($parseError.Message)"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+          Write-Output 'OK: PowerShell scripts parse cleanly'
 
   packaging:
     name: Packaging validation
