@@ -17,7 +17,9 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   ([#133](https://github.com/KHAEntertainment/showrunner/issues/133)). They
   now run on a `vX.Y.Z` tag push, from the Actions tab, or on a PR labeled
   `run-installer-tests`, instead of on every PR. Skill, shell and packaging
-  checks still run on every PR.
+  checks still run on every PR. The shell job gains a PowerShell parse check
+  of `install.ps1` and `tests/test-install.ps1`, so a syntax error there still
+  fails the PR.
 
 ### Fixed
 
