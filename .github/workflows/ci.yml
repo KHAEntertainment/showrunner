@@ -38,48 +38,6 @@ jobs:
       - name: Lint shell scripts
         run: shellcheck install.sh tests/test-install.sh tests/migration-scratch.sh scripts/check_plugin_root.sh scripts/verify.sh
 
-  installer:
-    name: Bash installer (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Stub RTK required by the installer
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/bin"
-          printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$RUNNER_TEMP/bin/rtk"
-          chmod +x "$RUNNER_TEMP/bin/rtk"
-          printf '%s\n' "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Run Bash installer tests
-        run: bash tests/test-install.sh
-
-  installer-pwsh:
-    name: PowerShell installer
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Stub RTK required by the installer
-        shell: pwsh
-        run: |
-          $stubDirectory = Join-Path $env:RUNNER_TEMP 'bin'
-          $stubPath = Join-Path $stubDirectory 'rtk.cmd'
-          New-Item -ItemType Directory -Force -Path $stubDirectory | Out-Null
-          "@echo off`r`nexit /b 0" | Set-Content -Path $stubPath -Encoding ascii
-          $env:PATH = "$stubDirectory;$env:PATH"
-          Add-Content -Path $env:GITHUB_PATH -Value $stubDirectory
-          $resolvedStubPath = (Resolve-Path $stubPath).Path
-          $resolvedCommandPath = (Get-Command rtk -ErrorAction Stop).Path
-          if ($resolvedCommandPath -ne $resolvedStubPath) {
-            throw "Expected Get-Command rtk to resolve $resolvedStubPath, got $resolvedCommandPath"
-          }
-      - name: Run PowerShell installer tests
-        shell: pwsh
-        run: pwsh tests/test-install.ps1
-
   packaging:
     name: Packaging validation
     runs-on: ubuntu-latest

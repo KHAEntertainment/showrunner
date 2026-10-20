@@ -10,6 +10,15 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ## Unreleased (v2.2.0)
 
+### Changed
+
+- CI: the installer tests (Bash on ubuntu and macOS, PowerShell on Windows)
+  moved from `ci.yml` to a new `release-gate.yml`
+  ([#133](https://github.com/KHAEntertainment/showrunner/issues/133)). They
+  now run on a `vX.Y.Z` tag push, from the Actions tab, or on a PR labeled
+  `run-installer-tests`, instead of on every PR. Skill, shell and packaging
+  checks still run on every PR.
+
 ### Fixed
 
 - README: three forward-looking claims about issues
