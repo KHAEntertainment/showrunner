@@ -8,6 +8,16 @@ build metadata in `skills/dev/SKILL.md` (`2.0.0+upstream.3e87db0`). Entries belo
 `v2.0.0` predate that scheme: they use `custom-vX.Y.Z-upstream.SHA` headings and
 record upstream SHAs as plain text in their `### Upstream` blocks.
 
+## Unreleased (v2.2.0)
+
+### Fixed
+
+- README: three forward-looking claims about issues
+  [#73](https://github.com/KHAEntertainment/showrunner/issues/73) and
+  [#74](https://github.com/KHAEntertainment/showrunner/issues/74) pointed at
+  upcoming work; both shipped in v2.1.2. Claims now reference the released
+  version.
+
 ## v2.1.2 — 2026-10-19
 
 ### Added
