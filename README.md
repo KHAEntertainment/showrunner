@@ -16,7 +16,7 @@ Already know what you want? In an existing repo, Showrunner skips the product in
 
 Starting from scratch? Then Showrunner interviews you one module at a time. Every question comes with a recommended answer and a one-line reason, so most of your replies are "yes" or a small tweak. When a decision is easier to see than to describe, it sends a prototype agent to build a clickable HTML mock or a small backend spike, then asks again with the result in front of you. You say when each module is settled.
 
-> **Coming next:** hand Showrunner a design document for a new project and it pulls the answers out of the document, then asks only about what the document leaves open ([#74](https://github.com/KHAEntertainment/showrunner/issues/74)).
+> **New in v2.1.2:** drop in a design document and Showrunner extracts every module decision from it before asking anything; only the gaps come back as questions. See the [changelog entry](CHANGELOG.custom.md#v212-2026-10-19) ([#74](https://github.com/KHAEntertainment/showrunner/issues/74)).
 
 ### Works with the tools you already use
 
@@ -59,8 +59,8 @@ Showrunner already works with the goal modes you have, such as Claude Code's `/g
 We build Showrunner with Showrunner. New versions are planned, built, reviewed, and merged by running it on this repository. When the workflow stumbles, the failure becomes an Issue. A few rules that came out of that:
 
 - CodeRabbit hit its rate limit four times on one pull request ([#46](https://github.com/KHAEntertainment/showrunner/pull/46)). That became the rate-limit breakpoint: after three in a row, a reviewer from another model family takes the seat ([#48](https://github.com/KHAEntertainment/showrunner/issues/48)).
-- The first greenfield run of v2.1.1 asked nine questions about one module, and the supplied design document already answered six. That became document-first planning ([#74](https://github.com/KHAEntertainment/showrunner/issues/74), in progress).
-- Agents and worktrees piled up, 42 worktrees and 20 GB on one machine, because cleanup only ran at the very end of a run. Per-lane cleanup is tracked in [#73](https://github.com/KHAEntertainment/showrunner/issues/73).
+- The first greenfield run of v2.1.1 asked nine questions about one module, and the supplied design document already answered six. That became document-first planning ([#74](https://github.com/KHAEntertainment/showrunner/issues/74)).
+- Agents and worktrees piled up, 42 worktrees and 20 GB on one machine, because cleanup only ran at the very end of a run. Per-lane cleanup shipped in v2.1.2 ([#73](https://github.com/KHAEntertainment/showrunner/issues/73)).
 
 Every lesson, with the session that produced it, is in [`docs/dogfooding.md`](docs/dogfooding.md).
 
@@ -133,7 +133,6 @@ Details on each are in [Execution backends](docs/backends.md).
 
 ## Roadmap
 
-- **Document-first planning** for new projects that start from a design doc ([#74](https://github.com/KHAEntertainment/showrunner/issues/74)).
 - **A Showrunner planning mode** with a gap pass before breakdown, so a plan from Claude Code's plan mode or Traycer feeds straight into Issues (v2.2.0).
 - **Built-in goal and loop modes** for unattended runs, with no separate goal plugin needed: a closed list of hard stops, with everything else decided and recorded ([plan](docs/plans/2026-09-28-goal-mode-and-stop-guard.md)).
 - **Linear intake and status sync** as an optional adapter: start a run from a Linear issue and update it once the merge is verified, with GitHub still the working record ([#104](https://github.com/KHAEntertainment/showrunner/issues/104)).
