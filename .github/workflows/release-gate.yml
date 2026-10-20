@@ -7,8 +7,11 @@ name: Release Gate
 # ci.yml and still run on every PR.
 on:
   push:
+    # In filter globs `*` also matches `-`, so v*.*.* alone would match
+    # pre-release tags such as v2.2.0-rc.1. The negated pattern drops them.
     tags:
       - 'v*.*.*'
+      - '!v*-*'
   workflow_dispatch:
   pull_request:
     types: [labeled, synchronize]
