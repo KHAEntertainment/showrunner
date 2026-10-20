@@ -16,7 +16,7 @@ Already know what you want? In an existing repo, Showrunner skips the product in
 
 Starting from scratch? Then Showrunner interviews you one module at a time. Every question comes with a recommended answer and a one-line reason, so most of your replies are "yes" or a small tweak. When a decision is easier to see than to describe, it sends a prototype agent to build a clickable HTML mock or a small backend spike, then asks again with the result in front of you. You say when each module is settled.
 
-> **New in v2.1.2:** drop in a design document and Showrunner extracts every module decision from it before asking anything; only the gaps come back as questions. See the [changelog entry](CHANGELOG.custom.md#v212--2026-10-19) ([#74](https://github.com/KHAEntertainment/showrunner/issues/74)).
+> **New in v2.1.2:** drop in a design document and Showrunner extracts every module decision from it before asking anything; only the gaps come back as questions. See the [changelog entry](CHANGELOG.custom.md#v212-2026-10-19) ([#74](https://github.com/KHAEntertainment/showrunner/issues/74)).
 
 ### Works with the tools you already use
 
