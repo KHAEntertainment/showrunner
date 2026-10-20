@@ -23,7 +23,9 @@
 - Warning: two `skills/dev/` documents that now contradict each other, for example a push command in `agents/worker-fix.md` that differs from `phases/repository-context.md`.
 - Warning: a behavior change in one installer with no matching change, or no test, for the other.
 - Warning: a new script branch or refusal path with no unittest that exercises it.
-- Do not flag shell lint. `shellcheck` and `bash -n` run in CI and fail first.
+- Warning: a PR that changes `install.sh`, `install.ps1` or `tests/test-install.*` whose installer checks are skipped. The suites never ran on it.
+- Do not flag shell lint or PowerShell syntax errors. `shellcheck`, `bash -n` and a PowerShell parse check run in CI and fail first.
+- Do not flag skipped `Bash installer` or `PowerShell installer` checks on other PRs. The installer suites run only on release tags or with the `run-installer-tests` label (`PROJECT_CONTEXT.md`, CI Workflows).
 - Do not flag CJK characters, absolute home-directory paths, required-file manifest gaps, frontmatter keys, version mismatches, or a `bin/` directory at the root. `scripts/validate_skill.py`, `scripts/check_version_sync.py`, and `scripts/check_plugin_root.sh` enforce these in CI.
 - Do not flag Python formatting or naming. No formatter is configured, and style is not gated.
 - Do not flag `en/`, `zh/`, `CHANGELOG.md`, or released entries in `CHANGELOG.custom.md`. They are historical records.

@@ -91,6 +91,17 @@ A change is not complete until every command above exits clean.
 
 ---
 
+## CI Workflows
+
+Where GitHub Actions runs the gate above (Issue #133). Local runs of `scripts/verify.sh` are unchanged.
+
+- **Verification Gate** (`.github/workflows/ci.yml`): every PR and every push to `main`. Skill validation and Python tests; Bash syntax, ShellCheck and a PowerShell parse check of `install.ps1` and `tests/test-install.ps1`; packaging.
+- **Release Gate** (`.github/workflows/release-gate.yml`): the installer suites, Bash on ubuntu and macOS and PowerShell on Windows. It runs only on a plain `vX.Y.Z` tag push (not `-rc` tags), from the Actions tab (`workflow_dispatch`), or on a PR labeled `run-installer-tests`. On any other PR the `Bash installer` and `PowerShell installer` checks show as skipped. That is expected and is not a failure, but it is also not passing evidence.
+- **Lead duty**: when a PR changes `install.sh`, `install.ps1`, `tests/test-install.sh` or `tests/test-install.ps1`, add the `run-installer-tests` label before the merge gate (`gh pr edit N --add-label run-installer-tests`) and wait for both installer jobs to pass. The Release Gate is the only place `tests/test-install.ps1` runs on Windows. Remove the label after they pass so later pushes do not re-run them.
+- **Release duty**: after pushing the release tag, wait for the Release Gate run on that tag to pass before bumping the central catalog (`docs/RELEASING.md` step 4).
+
+---
+
 ## External Review Policy
 
 - **Mode**: auto
