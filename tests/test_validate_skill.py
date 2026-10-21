@@ -415,6 +415,23 @@ when_to_use: "Invoke when the user explicitly asks to use the dev skill after pl
         self.assertEqual(1, completed.returncode)
         self.assertIn("contains ': '", completed.stderr)
 
+    def test_trailing_colon_in_plain_value_fails(self) -> None:
+        for line in ("description: invalid:\n", "description: invalid: # note\n"):
+            with self.subTest(line=line):
+                text = self.entry.read_text(encoding="utf-8")
+                self.replace_line_starting_with("description:", line)
+                completed = self.run_validator()
+                self.entry.write_text(text, encoding="utf-8")
+                self.assertEqual(1, completed.returncode)
+                self.assertIn("ends with ':'", completed.stderr)
+
+    def test_key_without_space_before_value_fails(self) -> None:
+        """`name:dev` is a YAML plain scalar, not a `name` field."""
+        self.replace_line_starting_with("name:", "name:dev\n")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("not a key: value pair", completed.stderr)
+
     def test_block_sequence_entry_as_plain_value_fails(self) -> None:
         """`key: - item` is a YAML error, not a scalar starting with a dash."""
         self.replace_line_starting_with("description:", "description: - a list item\n")

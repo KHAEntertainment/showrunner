@@ -208,7 +208,9 @@ def markdown_section(text: str, heading: str) -> str | None:
 # hand-rolled YAML rule grows its own bypasses). Values are lexed by
 # `_lex_frontmatter_value`, which stores the unquoted, comment-stripped
 # scalar; policy checks read that cleaned value, never the raw line.
-_FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9_-]+):[ \t]*(.*)$")
+# A value must be separated from its key by a space (`name:dev` is a plain
+# scalar in YAML, not a mapping entry); a key may also end the line.
+_FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9_-]+):(?:[ ]+(.*))?$")
 # YAML indicators that may not START a plain (unquoted) scalar. A value like
 # `invalid_yaml: [` is flow syntax this parser deliberately does not support;
 # mid-value brackets in prose stay fine because only the first character is
@@ -307,8 +309,8 @@ def _lex_frontmatter_value(raw: str) -> tuple[str, str | None]:
     if raw in ("-", "?") or raw[:2] in ("- ", "? "):
         return "", "has an unsupported block indicator value"
     cleaned = _strip_inline_comment(raw)
-    if ": " in cleaned:
-        return "", "has an unsupported plain value (contains ': ')"
+    if ": " in cleaned or cleaned.endswith(":"):
+        return "", "has an unsupported plain value (contains ': ' or ends with ':')"
     return cleaned, None
 
 
@@ -345,7 +347,7 @@ def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
                 f"SKILL.md frontmatter line is not a key: value pair: {raw.strip()!r}",
             )
             continue
-        key, value = match.group(1), match.group(2).strip()
+        key, value = match.group(1), (match.group(2) or "").strip()
         if key in raw_values:
             fail(errors, f"SKILL.md frontmatter duplicate key: {key}")
             continue
