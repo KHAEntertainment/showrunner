@@ -266,8 +266,12 @@ try {
     # Every case must throw the installer's own documented message, and must
     # not create or delete anything. USERPROFILE always points at a scratch
     # home, never the real one.
+    # The snapshot spans every directory a refusal row runs with (config tree
+    # and each row's USERPROFILE), so a leak into the home is seen too.
     function Get-RefusalSnapshot {
-        (Get-ChildItem -LiteralPath $refusalRoot -Recurse -Force | ForEach-Object { $_.FullName } | Sort-Object) -join "`n"
+        (@($refusalRoot, $refusalHome, $unsafeConfigParent, $unsafeHomeParent) |
+            ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -Force } |
+            ForEach-Object { $_.FullName } | Sort-Object) -join "`n"
     }
     function Assert-RefusedWith([string]$Label, [hashtable]$InstallerArguments, [string]$ExpectedMessage, [string[]]$MustStayAbsent) {
         $refusal = $null
@@ -281,19 +285,23 @@ try {
         if ((Get-RefusalSnapshot) -ne $snapshotBefore) { throw "$Label changed the filesystem" }
         foreach ($absentPath in $MustStayAbsent) { Assert-Absent $absentPath }
     }
-    $null = Use-CaseHome "refusal home"
+    $refusalHome = Use-CaseHome "refusal home"
     $refusalRoot = Join-Path $testRoot "refusal root"
     New-Item -ItemType Directory -Force -Path $refusalRoot | Out-Null
     Set-Content -Path (Join-Path $refusalRoot "sentinel.txt") -Value "sentinel"
     # The unsafe check runs after the -Target leaf guard in install.ps1, so
     # each unsafe fixture ends in "dev" to reach the unsafe target guard.
-    $unsafeConfig = Join-Path (Join-Path $testRoot "unsafe config") "dev"
+    $unsafeConfigParent = Join-Path $testRoot "unsafe config"
+    $unsafeHomeParent = Join-Path $testRoot "unsafe home"
+    New-Item -ItemType Directory -Force -Path $unsafeConfigParent, $unsafeHomeParent | Out-Null
+    $unsafeConfig = Join-Path $unsafeConfigParent "dev"
     Assert-RefusedWith "target equal to the config dir" @{ ConfigDir = $unsafeConfig; Target = $unsafeConfig } "Unsafe install target: $unsafeConfig" @($unsafeConfig)
-    $unsafeHome = Join-Path (Join-Path $testRoot "unsafe home") "dev"
+    $unsafeHome = Join-Path $unsafeHomeParent "dev"
     New-Item -ItemType Directory -Force -Path $unsafeHome | Out-Null
     $env:USERPROFILE = $unsafeHome
     Assert-RefusedWith "target equal to the home directory" @{ Target = $unsafeHome } "Unsafe install target: $unsafeHome" @()
     $null = Use-CaseHome "refusal home"
+    Assert-Absent (Join-Path $refusalHome ".agents")
     $notDevTarget = Join-Path $refusalRoot "not-a-dev"
     Assert-RefusedWith "-Target not ending in dev" @{ ConfigDir = $refusalRoot; Target = $notDevTarget } "-Target must be the exact dev Skill directory and end in \dev: " @($notDevTarget)
     Assert-RefusedWith "-Target at the filesystem root" @{ ConfigDir = $refusalRoot; Target = [IO.Path]::GetPathRoot($refusalRoot) } "-Target must be the exact dev Skill directory and end in \dev: " @()
@@ -445,8 +453,13 @@ try {
     # The rtk presence gate is a PATH check only: the installer never runs
     # rtk. With rtk absent it must abort with its documented message and
     # install nothing (Issue #138, F4).
+    # git is deliberately left off this PATH: on Windows the shim would be
+    # git.cmd, which Invoke-GitClean cannot launch (ProcessStartInfo with
+    # UseShellExecute=false), and that start error would mask the RTK refusal.
+    # Without git the installer only records $gitValidationError, which it
+    # throws after the rtk check, so the RTK message is still the one reported.
     $noRtkBin = Join-Path $testRoot "fakebin-no-rtk"
-    New-ScratchPathWithout -Destination $noRtkBin -ToolNames @("git", "python3", "python", "tar")
+    New-ScratchPathWithout -Destination $noRtkBin -ToolNames @("python3", "python", "tar")
     $noRtkTarget = Join-Path $testRoot "no-rtk target"
     $originalPath = $env:PATH
     $noRtkError = $null

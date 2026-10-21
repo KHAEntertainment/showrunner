@@ -219,7 +219,9 @@ refusal_root="$TEST_ROOT/refusal root"
 refusal_home="$TEST_ROOT/refusal home"
 mkdir -p "$refusal_root/commands/dev" "$refusal_home"
 printf 'sentinel\n' >"$refusal_root/commands/dev/sentinel.txt"
-refusal_snapshot() { (cd -- "$refusal_root" && find . -print | LC_ALL=C sort); }
+# Snapshot the config tree and the HOME the installer runs with: a refusal that
+# leaked a file into either would otherwise go unseen.
+refusal_snapshot() { find "$refusal_root" "$refusal_home" -print | LC_ALL=C sort; }
 expect_refusal() {
   local label="$1" expected="$2" rc=0 out before after
   shift 2
@@ -254,6 +256,7 @@ expect_refusal "missing --lang value" "ERROR: --lang requires a value" \
   --config-dir "$refusal_root" --lang
 expect_refusal "unknown argument" "ERROR: unknown argument: --bogus-argument" \
   --config-dir "$refusal_root" --bogus-argument
+expect_absent "$refusal_home/.agents"
 expect_absent "$HOME/.agents"
 pass "installer refusals exit 2 with their documented message and change nothing"
 
