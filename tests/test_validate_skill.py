@@ -352,42 +352,85 @@ when_to_use: "Invoke when the user explicitly asks to use the dev skill after pl
         completed = self.run_validator()
         self.assertEqual(0, completed.returncode, completed.stderr)
 
+    def insert_after_name(self, line: str) -> None:
+        text = self.entry.read_text(encoding="utf-8")
+        self.entry.write_text(
+            text.replace("name: dev\n", f"name: dev\n{line}\n", 1),
+            encoding="utf-8",
+        )
+
+    def replace_line_starting_with(self, prefix: str, new: str) -> None:
+        lines = self.entry.read_text(encoding="utf-8").splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.startswith(prefix):
+                lines[index] = new
+                break
+        else:
+            raise AssertionError(f"no frontmatter line starts with {prefix!r}")
+        self.entry.write_text("".join(lines), encoding="utf-8")
+
     def test_missing_closing_delimiter_fails(self) -> None:
         self.entry.write_text("---\nname: dev\nversion: 0.0.0\n", encoding="utf-8")
         completed = self.run_validator()
         self.assertEqual(1, completed.returncode)
         self.assertIn("closing `---`", completed.stderr)
 
-    def test_unbalanced_flow_bracket_fails(self) -> None:
+    def test_flow_indicator_value_fails(self) -> None:
         """The F2 mutation that previously escaped every suite."""
-        text = self.entry.read_text(encoding="utf-8")
-        self.entry.write_text(
-            text.replace("name: dev\n", "name: dev\ninvalid_yaml: [\n", 1),
-            encoding="utf-8",
-        )
+        self.insert_after_name("invalid_yaml: [")
         completed = self.run_validator()
         self.assertEqual(1, completed.returncode)
-        self.assertIn("unbalanced brackets", completed.stderr)
+        self.assertIn("unsupported flow/indicator value", completed.stderr)
+
+    def test_flow_indicator_value_with_trailing_comment_fails(self) -> None:
+        """`# …` after an indicator start must not launder the flow syntax."""
+        self.insert_after_name("invalid_yaml: [ # ]")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unsupported flow/indicator value", completed.stderr)
 
     def test_duplicate_top_level_key_fails(self) -> None:
-        text = self.entry.read_text(encoding="utf-8")
-        self.entry.write_text(
-            text.replace("name: dev\n", "name: dev\nname: other\n", 1),
-            encoding="utf-8",
-        )
+        self.insert_after_name("name: other")
         completed = self.run_validator()
         self.assertEqual(1, completed.returncode)
         self.assertIn("duplicate key", completed.stderr)
 
     def test_stray_non_key_value_line_fails(self) -> None:
-        text = self.entry.read_text(encoding="utf-8")
-        self.entry.write_text(
-            text.replace("name: dev\n", "name: dev\nthis is not kv\n", 1),
-            encoding="utf-8",
-        )
+        self.insert_after_name("this is not kv")
         completed = self.run_validator()
         self.assertEqual(1, completed.returncode)
         self.assertIn("not a key: value pair", completed.stderr)
+
+    def test_two_quoted_scalars_on_one_line_fail(self) -> None:
+        self.replace_line_starting_with(
+            "argument-hint:", 'argument-hint: "one" "two"\n'
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("after the closing quote", completed.stderr)
+
+    def test_colon_space_in_plain_value_fails(self) -> None:
+        self.replace_line_starting_with("description:", "description: invalid: yaml\n")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("contains ': '", completed.stderr)
+
+    def test_block_sequence_entry_as_plain_value_fails(self) -> None:
+        """`key: - item` is a YAML error, not a scalar starting with a dash."""
+        self.replace_line_starting_with("description:", "description: - a list item\n")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unsupported block indicator value", completed.stderr)
+
+    def test_comment_only_when_to_use_fails(self) -> None:
+        """Policy reads the value AFTER comment stripping: `# …` → empty."""
+        self.replace_line_starting_with(
+            "when_to_use:",
+            "when_to_use: # explicitly after plan approval Do not invoke\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("explicit-intent trigger", completed.stderr)
 
     def test_required_field_only_in_body_fails(self) -> None:
         """`version:` in the body must not satisfy the frontmatter check."""
@@ -403,18 +446,47 @@ when_to_use: "Invoke when the user explicitly asks to use the dev skill after pl
         self.assertIn("SKILL.md frontmatter missing: version:", completed.stderr)
 
     def test_unterminated_quote_fails(self) -> None:
-        text = self.entry.read_text(encoding="utf-8")
-        self.entry.write_text(
-            text.replace(
-                'argument-hint: "[optional project or feature description]"',
-                'argument-hint: "[optional project or feature description]',
-                1,
-            ),
-            encoding="utf-8",
+        self.replace_line_starting_with(
+            "argument-hint:",
+            'argument-hint: "[optional project or feature description]\n',
         )
         completed = self.run_validator()
         self.assertEqual(1, completed.returncode)
         self.assertIn("unterminated quote", completed.stderr)
+
+    def test_full_line_comment_passes(self) -> None:
+        self.insert_after_name("# a full-line comment")
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_trailing_comment_on_plain_value_is_stripped(self) -> None:
+        self.replace_line_starting_with("name:", "name: dev # trailing comment\n")
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_quoted_value_containing_closing_bracket_passes(self) -> None:
+        """Brackets inside quotes are content, never balance-checked."""
+        self.replace_line_starting_with(
+            "argument-hint:", 'argument-hint: "Enter ] to finish"\n'
+        )
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_single_quoted_value_with_escaped_quote_and_brace_passes(self) -> None:
+        self.replace_line_starting_with(
+            "argument-hint:", "argument-hint: 'it''s { fine'\n"
+        )
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_indented_continuation_of_quoted_value_passes(self) -> None:
+        """Continuation lines join onto the previous key before lexing."""
+        self.replace_line_starting_with(
+            "argument-hint:",
+            'argument-hint: "[optional project\n  or feature description]"\n',
+        )
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
 
 
 class SuppliedIdentityPinTests(unittest.TestCase):

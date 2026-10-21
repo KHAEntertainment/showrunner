@@ -202,8 +202,16 @@ def markdown_section(text: str, heading: str) -> str | None:
 # frontmatter is flat `key: value` lines — unquoted scalars, double-quoted
 # scalars (one of which contains a balanced `[...]`), and no multi-line
 # continuations — so the parser supports exactly that shape plus indented
-# continuation lines of the previous key, and fails closed on anything else.
+# continuation lines of the previous key, full-line and inline comments, and
+# fails closed on anything else. Values are lexed by `_lex_frontmatter_value`,
+# which stores the unquoted, comment-stripped scalar; policy checks read that
+# cleaned value, never the raw line.
 _FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9_-]+):[ \t]*(.*)$")
+# YAML indicators that may not START a plain (unquoted) scalar. A value like
+# `invalid_yaml: [` is flow syntax this parser deliberately does not support;
+# mid-value brackets in prose stay fine because only the first character is
+# checked here.
+_PLAIN_INDICATORS = "[]{}&*!|>%@`"
 
 
 def extract_frontmatter(text: str) -> tuple[str | None, list[str]]:
@@ -231,31 +239,94 @@ def extract_frontmatter(text: str) -> tuple[str | None, list[str]]:
     return "\n".join(lines[1:closing]), errors
 
 
-def _brackets_balanced(value: str) -> bool:
-    """True when `[`/`]` and `{`/`}` are balanced in the raw value."""
-    closers = {"[": "]", "{": "}"}
-    stack: list[str] = []
-    for char in value:
-        if char in closers:
-            stack.append(closers[char])
-        elif char in ("]", "}"):
-            if not stack or stack.pop() != char:
-                return False
-    return not stack
+def _strip_inline_comment(value: str) -> str:
+    """Cut a ` #` inline comment (space before `#`).
+
+    Only used for plain scalars and for the tail after a closing quote —
+    quoted content never reaches this, so a `#` inside quotes survives.
+    """
+    cut = value.find(" #")
+    return value[:cut] if cut != -1 else value
+
+
+def _lex_frontmatter_value(raw: str) -> tuple[str, str | None]:
+    """Lex one flat frontmatter value; returns `(cleaned, error)`.
+
+    Exactly three shapes, matching the real SKILL.md frontmatter:
+    - `# …` or empty → comment → empty value.
+    - `"…"` (backslash escapes) or `'…'` (`''` escapes): the unquoted content
+      is the value; only whitespace or an inline comment may follow the
+      closing quote; brackets inside are never balance-checked. Unterminated
+      → error.
+    - plain scalar: may not start with a YAML indicator (`[`, `{`, `]`, `}`,
+      `&`, `*`, `!`, `|`, `>`, `%`, `@`, backtick) or with `- ` / `? ` (a
+      block sequence entry or complex key), and may not contain `: ` (that
+      would be a nested mapping); a ` #` comment is stripped.
+    """
+    if not raw:
+        return "", None
+    if raw[0] == "#":
+        return "", None
+    if raw[0] in ('"', "'"):
+        quote = raw[0]
+        out: list[str] = []
+        index = 1
+        closed = False
+        while index < len(raw):
+            char = raw[index]
+            if quote == '"':
+                if char == "\\" and index + 1 < len(raw):
+                    out.append(raw[index + 1])
+                    index += 2
+                    continue
+                if char == '"':
+                    index += 1
+                    closed = True
+                    break
+            elif char == "'":
+                if index + 1 < len(raw) and raw[index + 1] == "'":
+                    out.append("'")
+                    index += 2
+                    continue
+                index += 1
+                closed = True
+                break
+            out.append(char)
+            index += 1
+        if not closed:
+            return "", "has an unterminated quote"
+        rest = raw[index:]
+        if rest.strip() and not (
+            rest[0] in " \t" and rest.lstrip().startswith("#")
+        ):
+            return "", "has unexpected content after the closing quote"
+        return "".join(out), None
+    if raw[0] in _PLAIN_INDICATORS:
+        return "", "has an unsupported flow/indicator value"
+    if raw in ("-", "?") or raw[:2] in ("- ", "? "):
+        return "", "has an unsupported block indicator value"
+    cleaned = _strip_inline_comment(raw)
+    if ": " in cleaned:
+        return "", "has an unsupported plain value (contains ': ')"
+    return cleaned, None
 
 
 def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
     """Parse a flat `key: value` frontmatter block into a dict.
 
-    Fails closed (appending to `errors`, never raising) on: a non-blank line
-    that is neither `key: value` nor an indented continuation of the previous
-    key, a duplicate top-level key, an unterminated leading quote, and
-    unbalanced `[`/`]` or `{`/`}` in a value.
+    Fails closed (appending to `errors`, never raising) on: a non-blank,
+    non-comment line that is neither `key: value` nor an indented
+    continuation of the previous key, a duplicate top-level key, and any
+    value the lexer rejects (unterminated quote, junk after a closing quote,
+    flow/indicator start, `: ` in a plain scalar). Stored values are the
+    unquoted, comment-stripped scalars.
     """
-    parsed: dict[str, str] = {}
+    raw_values: dict[str, str] = {}
     current: str | None = None
     for raw in block.split("\n"):
         if not raw.strip():
+            continue
+        if raw.lstrip()[0] == "#":
             continue
         if raw[0] in " \t":
             if current is None:
@@ -264,7 +335,7 @@ def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
                     f"SKILL.md frontmatter line is not a key: value pair: {raw.strip()!r}",
                 )
                 continue
-            parsed[current] = f"{parsed[current]} {raw.strip()}"
+            raw_values[current] = f"{raw_values[current]} {raw.strip()}"
             continue
         match = _FRONTMATTER_KEY.match(raw)
         if not match:
@@ -275,27 +346,19 @@ def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
             current = None
             continue
         key, value = match.group(1), match.group(2).strip()
-        if key in parsed:
+        if key in raw_values:
             fail(errors, f"SKILL.md frontmatter duplicate key: {key}")
             current = None
             continue
-        parsed[key] = value
+        raw_values[key] = value
         current = key
-    for key, value in parsed.items():
-        for quote in ('"', "'"):
-            if value.startswith(quote) and (
-                len(value) < 2 or not value.endswith(quote)
-            ):
-                fail(
-                    errors,
-                    f"SKILL.md frontmatter key `{key}` has an unterminated quote",
-                )
-                break
-        if not _brackets_balanced(value):
-            fail(
-                errors,
-                f"SKILL.md frontmatter key `{key}` has unbalanced brackets",
-            )
+    parsed: dict[str, str] = {}
+    for key, raw_value in raw_values.items():
+        cleaned, error = _lex_frontmatter_value(raw_value)
+        if error is not None:
+            fail(errors, f"SKILL.md frontmatter key `{key}` {error}")
+            continue
+        parsed[key] = cleaned
     return parsed
 
 
