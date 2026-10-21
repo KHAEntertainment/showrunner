@@ -195,6 +195,110 @@ def markdown_section(text: str, heading: str) -> str | None:
     return match.group(1) if match else None
 
 
+# Issue #138 (F2): the frontmatter used to be validated by substring search
+# over the WHOLE SKILL.md document, so inserting `invalid_yaml: [` inside the
+# frontmatter passed. These helpers extract the delimited block and parse it
+# with stdlib only (ADR-005: no PyYAML). The real skills/dev/SKILL.md
+# frontmatter is flat `key: value` lines — unquoted scalars, double-quoted
+# scalars (one of which contains a balanced `[...]`), and no multi-line
+# continuations — so the parser supports exactly that shape plus indented
+# continuation lines of the previous key, and fails closed on anything else.
+_FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9_-]+):[ \t]*(.*)$")
+
+
+def extract_frontmatter(text: str) -> tuple[str | None, list[str]]:
+    """Split SKILL.md into its frontmatter block.
+
+    Returns `(block, errors)`. `block` is the text between the opening `---`
+    line and the next line that is exactly `---`, or None when the delimiters
+    are missing. The closing-delimiter rule matches `check_version_sync.py`'s
+    FRONTMATTER regex (`\\A---\\n…\\n---`), so the two scripts agree on what
+    counts as frontmatter.
+    """
+    errors: list[str] = []
+    if not text.startswith("---\n"):
+        fail(errors, "SKILL.md must begin with YAML frontmatter")
+        return None, errors
+    lines = text.split("\n")
+    closing = None
+    for index in range(1, len(lines)):
+        if lines[index] == "---":
+            closing = index
+            break
+    if closing is None:
+        fail(errors, "SKILL.md frontmatter missing closing `---` delimiter")
+        return None, errors
+    return "\n".join(lines[1:closing]), errors
+
+
+def _brackets_balanced(value: str) -> bool:
+    """True when `[`/`]` and `{`/`}` are balanced in the raw value."""
+    closers = {"[": "]", "{": "}"}
+    stack: list[str] = []
+    for char in value:
+        if char in closers:
+            stack.append(closers[char])
+        elif char in ("]", "}"):
+            if not stack or stack.pop() != char:
+                return False
+    return not stack
+
+
+def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
+    """Parse a flat `key: value` frontmatter block into a dict.
+
+    Fails closed (appending to `errors`, never raising) on: a non-blank line
+    that is neither `key: value` nor an indented continuation of the previous
+    key, a duplicate top-level key, an unterminated leading quote, and
+    unbalanced `[`/`]` or `{`/`}` in a value.
+    """
+    parsed: dict[str, str] = {}
+    current: str | None = None
+    for raw in block.split("\n"):
+        if not raw.strip():
+            continue
+        if raw[0] in " \t":
+            if current is None:
+                fail(
+                    errors,
+                    f"SKILL.md frontmatter line is not a key: value pair: {raw.strip()!r}",
+                )
+                continue
+            parsed[current] = f"{parsed[current]} {raw.strip()}"
+            continue
+        match = _FRONTMATTER_KEY.match(raw)
+        if not match:
+            fail(
+                errors,
+                f"SKILL.md frontmatter line is not a key: value pair: {raw.strip()!r}",
+            )
+            current = None
+            continue
+        key, value = match.group(1), match.group(2).strip()
+        if key in parsed:
+            fail(errors, f"SKILL.md frontmatter duplicate key: {key}")
+            current = None
+            continue
+        parsed[key] = value
+        current = key
+    for key, value in parsed.items():
+        for quote in ('"', "'"):
+            if value.startswith(quote) and (
+                len(value) < 2 or not value.endswith(quote)
+            ):
+                fail(
+                    errors,
+                    f"SKILL.md frontmatter key `{key}` has an unterminated quote",
+                )
+                break
+        if not _brackets_balanced(value):
+            fail(
+                errors,
+                f"SKILL.md frontmatter key `{key}` has unbalanced brackets",
+            )
+    return parsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -219,34 +323,38 @@ def main() -> int:
     entry = skill_dir / "SKILL.md"
     if entry.is_file():
         text = entry.read_text(encoding="utf-8")
-        if not text.startswith("---\n"):
-            fail(errors, "SKILL.md must begin with YAML frontmatter")
+        # Issue #138 (F2): required fields are checked against the PARSED
+        # frontmatter keys, not by substring search over the whole document —
+        # a `version:` line in the body used to satisfy the old check.
+        frontmatter_text, frontmatter_errors = extract_frontmatter(text)
+        errors.extend(frontmatter_errors)
+        parsed: dict[str, str] = (
+            parse_frontmatter_block(frontmatter_text, errors)
+            if frontmatter_text is not None
+            else {}
+        )
+        if parsed.get("name") != "dev":
+            fail(errors, "SKILL.md frontmatter missing: name: dev")
         for field in (
-            "name: dev",
             "version:",
             "description:",
             "argument-hint:",
             "when_to_use:",
         ):
-            if field not in text:
+            if field.rstrip(":") not in parsed:
                 fail(errors, f"SKILL.md frontmatter missing: {field}")
 
         # The Skill must stay model-invocable so an explicit user request made
         # during planning survives into implementation. Require the explicit
         # `false` rather than an omitted field, so a regression is visible in
         # the diff instead of hiding in a default.
-        frontmatter = text.split("\n---\n", 1)[0] if text.startswith("---\n") else ""
-        if "disable-model-invocation: false" not in frontmatter:
+        if parsed.get("disable-model-invocation") != "false":
             fail(
                 errors,
                 "SKILL.md must set `disable-model-invocation: false` explicitly; "
                 "model invocation is required for the plan-to-implementation handoff",
             )
-        when_to_use = ""
-        for line in frontmatter.splitlines():
-            if line.startswith("when_to_use:"):
-                when_to_use = line.partition(":")[2].strip().strip('"').strip("'")
-                break
+        when_to_use = parsed.get("when_to_use", "").strip().strip('"').strip("'")
         for phrase in ("explicitly", "after plan approval", "Do not invoke"):
             if phrase not in when_to_use:
                 fail(

@@ -293,6 +293,130 @@ class HomePathScopeTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
 
 
+class FrontmatterParseTests(unittest.TestCase):
+    """Issue #138 (F2): the validator must PARSE frontmatter, not scan the body.
+
+    Inserting `invalid_yaml: [` inside the real frontmatter used to pass every
+    suite because the old check was a substring search over the whole document.
+    These cases pin the parse itself: delimited extraction, flat key/value
+    acceptance of the real SKILL.md shapes, and fail-closed rejection of the
+    mutations that escaped.
+    """
+
+    # Every scalar shape the real skills/dev/SKILL.md frontmatter uses:
+    # unquoted scalars, a long unquoted description, and double-quoted values
+    # (one containing a balanced `[...]`).
+    SHAPE_FRONTMATTER = """---
+name: dev
+version: 0.0.0+shape-test
+description: Unquoted long description with commas, semicolons; and punctuation.
+argument-hint: "[optional project or feature description]"
+disable-model-invocation: false
+when_to_use: "Invoke when the user explicitly asks to use the dev skill after plan approval and before implementation begins. Do not invoke for ordinary requests."
+"""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        shutil.copytree(SKILL, self.root / "skills" / "dev")
+        (self.root / "scripts").mkdir(parents=True)
+        shutil.copy(VALIDATOR, self.root / "scripts" / "validate_skill.py")
+        shutil.copy(PROJECT_CONTEXT, self.root / "PROJECT_CONTEXT.md")
+        self.skill_dir = self.root / "skills" / "dev"
+        self.entry = self.skill_dir / "SKILL.md"
+
+    def run_validator(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(self.root / "scripts" / "validate_skill.py"),
+                "--skill-dir",
+                str(self.skill_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_real_skill_md_passes(self) -> None:
+        """The untouched payload establishes the baseline."""
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_every_real_frontmatter_shape_passes(self) -> None:
+        """Keep the real body (policy pins live there); swap only the block."""
+        text = self.entry.read_text(encoding="utf-8")
+        body = text.split("\n---\n", 1)[1]
+        self.entry.write_text(self.SHAPE_FRONTMATTER + "---\n" + body, encoding="utf-8")
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_missing_closing_delimiter_fails(self) -> None:
+        self.entry.write_text("---\nname: dev\nversion: 0.0.0\n", encoding="utf-8")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("closing `---`", completed.stderr)
+
+    def test_unbalanced_flow_bracket_fails(self) -> None:
+        """The F2 mutation that previously escaped every suite."""
+        text = self.entry.read_text(encoding="utf-8")
+        self.entry.write_text(
+            text.replace("name: dev\n", "name: dev\ninvalid_yaml: [\n", 1),
+            encoding="utf-8",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unbalanced brackets", completed.stderr)
+
+    def test_duplicate_top_level_key_fails(self) -> None:
+        text = self.entry.read_text(encoding="utf-8")
+        self.entry.write_text(
+            text.replace("name: dev\n", "name: dev\nname: other\n", 1),
+            encoding="utf-8",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("duplicate key", completed.stderr)
+
+    def test_stray_non_key_value_line_fails(self) -> None:
+        text = self.entry.read_text(encoding="utf-8")
+        self.entry.write_text(
+            text.replace("name: dev\n", "name: dev\nthis is not kv\n", 1),
+            encoding="utf-8",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("not a key: value pair", completed.stderr)
+
+    def test_required_field_only_in_body_fails(self) -> None:
+        """`version:` in the body must not satisfy the frontmatter check."""
+        text = self.entry.read_text(encoding="utf-8")
+        stripped = "\n".join(
+            line for line in text.splitlines() if not line.startswith("version:")
+        )
+        self.entry.write_text(
+            stripped + "\n\nversion: 9.9.9 only-in-body\n", encoding="utf-8"
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("SKILL.md frontmatter missing: version:", completed.stderr)
+
+    def test_unterminated_quote_fails(self) -> None:
+        text = self.entry.read_text(encoding="utf-8")
+        self.entry.write_text(
+            text.replace(
+                'argument-hint: "[optional project or feature description]"',
+                'argument-hint: "[optional project or feature description]',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unterminated quote", completed.stderr)
+
+
 class SuppliedIdentityPinTests(unittest.TestCase):
     """Issue #89: the manifest entry and policy pins fail the validator when removed."""
 
