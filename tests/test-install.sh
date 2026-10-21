@@ -21,6 +21,16 @@ mkdir -p "$HOME"
 # scrubs or sets the Traycer session identifiers itself.
 unset CLAUDE_CONFIG_DIR DEV_INSTALL_FAIL_AT
 
+# The installer requires rtk on PATH but never calls it. Give the suite its own
+# stub so it needs no host rtk (and so the release-gate workflow no longer has
+# to provide one), and so any real invocation fails loudly instead of passing
+# silently (Issue #138, F4).
+stub_bin="$TEST_ROOT/stubbin"
+mkdir -p "$stub_bin"
+printf '%s\n' '#!/bin/sh' 'printf "unexpected rtk invocation: %s\n" "$*" >&2' 'exit 99' >"$stub_bin/rtk"
+chmod +x "$stub_bin/rtk"
+export PATH="$stub_bin:$PATH"
+
 pass_count=0
 # Each case starts with no discovery link under the suite HOME, so cases that
 # do not assert on the link never see (or print) a leftover from the previous one.
@@ -155,6 +165,22 @@ legacy_backup="$(find "$legacy/backups/dev" -type f -name dev.md -print -quit)"
 [[ -n "$legacy_backup" ]] || fail "legacy command backup missing"
 pass "legacy command migration and backup"
 
+# --keep-legacy must leave legacy command files alone on a default install
+# (which otherwise migrates them) and must not create a backup directory
+# (Issue #138, F1: inverting --keep-legacy to MIGRATE_LEGACY=1 escaped the
+# suite before this case existed).
+keep_legacy="$TEST_ROOT/keep legacy config"
+mkdir -p "$keep_legacy/commands/dev"
+printf 'legacy entry\n' >"$keep_legacy/commands/dev.md"
+printf 'legacy phase\n' >"$keep_legacy/commands/dev/phase.md"
+keep_legacy_output="$(bash "$INSTALLER" --config-dir "$keep_legacy" --keep-legacy)"
+expect_file "$keep_legacy/skills/dev/SKILL.md"
+expect_file "$keep_legacy/commands/dev.md"
+expect_file "$keep_legacy/commands/dev/phase.md"
+expect_absent "$keep_legacy/backups"
+grep -qF 'Legacy migration: disabled' <<<"$keep_legacy_output" || fail "--keep-legacy install did not report migration as disabled"
+pass "--keep-legacy leaves legacy commands and creates no backup"
+
 # A rerun replaces the Skill and backs up the previous version.
 printf 'old marker\n' >"$legacy/skills/dev/old-marker.txt"
 bash "$INSTALLER" --config-dir "$legacy" >/dev/null
@@ -183,6 +209,53 @@ ln -s "$symlink_case/real-dev" "$symlink_case/config/skills/dev"
 if bash "$INSTALLER" --config-dir "$symlink_case/config" >/dev/null 2>&1; then fail "symlink target unexpectedly accepted"; fi
 expect_file "$symlink_case/real-dev/sentinel.txt"
 pass "symlink target refusal"
+
+# --- Issue #138, F3: the installer's refusal paths -------------------------
+# Every row below must exit non-zero with the installer's own documented
+# message and must not create or delete anything. HOME always points at the
+# suite's scratch home (never the real one), and a sentinel tree snapshotted
+# before and after each run proves nothing was written or removed.
+refusal_root="$TEST_ROOT/refusal root"
+refusal_home="$TEST_ROOT/refusal home"
+mkdir -p "$refusal_root/commands/dev" "$refusal_home"
+printf 'sentinel\n' >"$refusal_root/commands/dev/sentinel.txt"
+refusal_snapshot() { (cd -- "$refusal_root" && find . -print | LC_ALL=C sort); }
+expect_refusal() {
+  local label="$1" expected="$2" rc=0 out before after
+  shift 2
+  before="$(refusal_snapshot)"
+  out="$(HOME="$refusal_home" bash "$INSTALLER" "$@" 2>&1)" || rc=$?
+  after="$(refusal_snapshot)"
+  ((rc != 0)) || fail "$label unexpectedly succeeded"
+  [[ "$rc" == 2 ]] || fail "$label exited $rc (expected 2)"
+  grep -qF -- "$expected" <<<"$out" || fail "$label did not report '$expected': $out"
+  [[ "$before" == "$after" ]] || fail "$label changed the filesystem"
+}
+
+expect_refusal "unsafe target /" "ERROR: unsafe install target: /" \
+  --config-dir "$refusal_root" --target /
+expect_refusal "unsafe target \$HOME" "ERROR: unsafe install target: $refusal_home" \
+  --config-dir "$refusal_root" --target "$refusal_home"
+expect_refusal "unsafe target equal to the config dir" "ERROR: unsafe install target: $refusal_root" \
+  --config-dir "$refusal_root" --target "$refusal_root"
+expect_refusal "target not ending in /dev" \
+  "ERROR: --target must be the exact dev Skill directory and end in /dev: $refusal_root/not-a-dev" \
+  --config-dir "$refusal_root" --target "$refusal_root/not-a-dev"
+mkdir -p "$refusal_root/file-target"
+printf 'not a directory\n' >"$refusal_root/file-target/dev"
+expect_refusal "target exists as a file" \
+  "ERROR: target exists and is not a directory: $refusal_root/file-target/dev" \
+  --config-dir "$refusal_root" --target "$refusal_root/file-target/dev"
+expect_refusal "missing --target value" "ERROR: --target requires a value" \
+  --config-dir "$refusal_root" --target
+expect_refusal "missing --config-dir value" "ERROR: --config-dir requires a value" \
+  --config-dir
+expect_refusal "missing --lang value" "ERROR: --lang requires a value" \
+  --config-dir "$refusal_root" --lang
+expect_refusal "unknown argument" "ERROR: unknown argument: --bogus-argument" \
+  --config-dir "$refusal_root" --bogus-argument
+expect_absent "$HOME/.agents"
+pass "installer refusals exit 2 with their documented message and change nothing"
 
 # Missing distribution files fail preflight without creating a target.
 # No .git here: this simulates a broken release-tarball-style copy, where
@@ -324,6 +397,19 @@ if PATH="$no_tar_bin_path" bash "$INSTALLER" --config-dir "$no_tar_bin_target" -
 fi
 expect_absent "$no_tar_bin_target"
 pass "git checkout with tar unavailable aborts and installs nothing"
+
+# The rtk presence gate is a PATH check only: the installer never runs rtk.
+# With rtk absent it must abort with its documented message and install
+# nothing (Issue #138, F4).
+no_rtk_bin_path="$(build_path_without rtk)"
+no_rtk_target="$TEST_ROOT/no-rtk target"
+no_rtk_rc=0
+no_rtk_output="$(PATH="$no_rtk_bin_path" bash "$INSTALLER" --config-dir "$no_rtk_target" --lang en 2>&1)" || no_rtk_rc=$?
+[[ "$no_rtk_rc" == 1 ]] || fail "install without rtk exited $no_rtk_rc (expected 1)"
+grep -qF 'ERROR: RTK is required by this customized /dev workflow.' <<<"$no_rtk_output" \
+  || fail "install without rtk did not report the documented message: $no_rtk_output"
+expect_absent "$no_rtk_target"
+pass "rtk absent from PATH aborts with the documented message and installs nothing"
 
 # Clean checkout: the installed tree matches a plain git archive of HEAD,
 # and the install reports the staged commit (Issue #44).

@@ -143,7 +143,31 @@ try {
     # default and failure-injection hook are cleared for this suite's process,
     # and the detector case below scrubs or sets the Traycer identifiers itself.
     Remove-Item Env:CLAUDE_CONFIG_DIR, Env:DEV_INSTALL_FAIL_AT -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Path $testRoot | Out-Null
+    # The installer requires rtk on PATH but never calls it. Give the suite its
+    # own stub so it needs no host rtk (and so the release-gate workflow no
+    # longer has to provide one), and so any real invocation fails loudly
+    # instead of passing silently (Issue #138, F4).
+    $stubBin = Join-Path $testRoot "stub bin"
+    New-Item -ItemType Directory -Force -Path $stubBin | Out-Null
+    if ($onWindowsHost) {
+        Set-Content -LiteralPath (Join-Path $stubBin "rtk.cmd") -Encoding ASCII -Value @(
+            "@echo off"
+            "echo unexpected rtk invocation: %* 1>&2"
+            "exit /b 99"
+        )
+    }
+    else {
+        $stubScript = Join-Path $stubBin "rtk"
+        Set-Content -LiteralPath $stubScript -Encoding ASCII -Value @(
+            "#!/bin/sh"
+            "printf 'unexpected rtk invocation: %s\n' `"`$*`" >&2"
+            "exit 99"
+        )
+        & chmod +x $stubScript
+    }
+    $suitePathWithoutStub = $env:PATH
+    $env:PATH = $stubBin + [IO.Path]::PathSeparator + $env:PATH
+    New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
     New-Item -ItemType Directory -Path $suiteHome | Out-Null
     $env:USERPROFILE = $suiteHome
 
@@ -186,6 +210,98 @@ try {
     $legacyBackup = Get-ChildItem (Join-Path $legacy "backups\dev") -Filter dev.md -File -Recurse | Select-Object -First 1
     if (-not $legacyBackup) { throw "Legacy backup missing" }
     Pass "legacy migration and backup"
+
+    # -KeepLegacy leaves legacy commands in place on a default install (which
+    # would otherwise migrate them) and creates no backup (Issue #138, F1).
+    $null = Use-CaseHome "keep legacy home"
+    $keepLegacy = Join-Path $testRoot "keep legacy config"
+    New-Item -ItemType Directory -Force -Path (Join-Path $keepLegacy "commands\dev") | Out-Null
+    Set-Content -Path (Join-Path $keepLegacy "commands\dev.md") -Value "legacy entry"
+    Set-Content -Path (Join-Path $keepLegacy "commands\dev\phase.md") -Value "legacy phase"
+    $keepLegacyOutput = Invoke-InstallerText @{ ConfigDir = $keepLegacy; KeepLegacy = $true }
+    Assert-Path (Join-Path $keepLegacy "skills\dev\SKILL.md")
+    Assert-Path (Join-Path $keepLegacy "commands\dev.md")
+    Assert-Path (Join-Path $keepLegacy "commands\dev\phase.md")
+    Assert-Absent (Join-Path $keepLegacy "backups")
+    if ($keepLegacyOutput -notmatch "Legacy migration: False") { throw "-KeepLegacy install did not report migration as disabled" }
+    Pass "-KeepLegacy leaves legacy commands and creates no backup"
+
+    # An explicit -Target is an isolated install: it must not migrate legacy
+    # commands even when they exist (mirrors the Bash suite; Issue #138, F5).
+    $null = Use-CaseHome "isolated legacy home"
+    $isoLegacyConfig = Join-Path $testRoot "isolated legacy config"
+    New-Item -ItemType Directory -Force -Path (Join-Path $isoLegacyConfig "commands\dev") | Out-Null
+    Set-Content -Path (Join-Path $isoLegacyConfig "commands\dev.md") -Value "legacy entry"
+    Set-Content -Path (Join-Path $isoLegacyConfig "commands\dev\phase.md") -Value "legacy phase"
+    $isoLegacyTarget = Join-Path $testRoot "isolated legacy target\dev"
+    Invoke-InstallerText @{ ConfigDir = $isoLegacyConfig; Target = $isoLegacyTarget } | Out-Null
+    Assert-Path (Join-Path $isoLegacyTarget "SKILL.md")
+    Assert-Path (Join-Path $isoLegacyConfig "commands\dev.md")
+    Assert-Path (Join-Path $isoLegacyConfig "commands\dev\phase.md")
+    Assert-Absent (Join-Path $isoLegacyConfig "backups")
+    Pass "explicit -Target does not migrate legacy commands"
+
+    # Symlink targets are refused without changing the link destination
+    # (mirrors the Bash suite; Issue #138, F5).
+    $null = Use-CaseHome "symlink home"
+    $symlinkRoot = Join-Path $testRoot "symlink case"
+    $symlinkReal = Join-Path $symlinkRoot "real-dev"
+    New-Item -ItemType Directory -Force -Path (Join-Path $symlinkRoot "config\skills") | Out-Null
+    New-Item -ItemType Directory -Force -Path $symlinkReal | Out-Null
+    Set-Content -Path (Join-Path $symlinkReal "sentinel.txt") -Value "sentinel"
+    $symlinkTarget = Join-Path $symlinkRoot "config\skills\dev"
+    New-TestLink $symlinkTarget $symlinkReal
+    $symlinkError = $null
+    try { & $installer -ConfigDir (Join-Path $symlinkRoot "config") 2>$null | Out-Null }
+    catch { $symlinkError = $_.Exception.Message }
+    if (-not $symlinkError) { throw "Symlink target unexpectedly accepted" }
+    if (-not $symlinkError.Contains("Refusing to replace symlink target: ")) {
+        throw "Symlink target was refused for the wrong reason: $symlinkError"
+    }
+    Assert-Path (Join-Path $symlinkReal "sentinel.txt")
+    if (-not (Get-LinkTarget $symlinkTarget)) { throw "Symlink target was replaced" }
+    Pass "symlink target refusal"
+
+    # --- Issue #138, F3: the installer's refusal paths ---------------------
+    # Every case must throw the installer's own documented message, and must
+    # not create or delete anything. USERPROFILE always points at a scratch
+    # home, never the real one.
+    function Get-RefusalSnapshot {
+        (Get-ChildItem -LiteralPath $refusalRoot -Recurse -Force | ForEach-Object { $_.FullName } | Sort-Object) -join "`n"
+    }
+    function Assert-RefusedWith([string]$Label, [hashtable]$InstallerArguments, [string]$ExpectedMessage, [string[]]$MustStayAbsent) {
+        $refusal = $null
+        $snapshotBefore = Get-RefusalSnapshot
+        try { & $installer @InstallerArguments 2>$null | Out-Null }
+        catch { $refusal = $_.Exception.Message }
+        if (-not $refusal) { throw "$Label unexpectedly succeeded" }
+        if (-not $refusal.Contains($ExpectedMessage)) {
+            throw "$Label was refused with an unexpected message: $refusal"
+        }
+        if ((Get-RefusalSnapshot) -ne $snapshotBefore) { throw "$Label changed the filesystem" }
+        foreach ($absentPath in $MustStayAbsent) { Assert-Absent $absentPath }
+    }
+    $null = Use-CaseHome "refusal home"
+    $refusalRoot = Join-Path $testRoot "refusal root"
+    New-Item -ItemType Directory -Force -Path $refusalRoot | Out-Null
+    Set-Content -Path (Join-Path $refusalRoot "sentinel.txt") -Value "sentinel"
+    # The unsafe check runs after the -Target leaf guard in install.ps1, so
+    # each unsafe fixture ends in "dev" to reach the unsafe target guard.
+    $unsafeConfig = Join-Path (Join-Path $testRoot "unsafe config") "dev"
+    Assert-RefusedWith "target equal to the config dir" @{ ConfigDir = $unsafeConfig; Target = $unsafeConfig } "Unsafe install target: $unsafeConfig" @($unsafeConfig)
+    $unsafeHome = Join-Path (Join-Path $testRoot "unsafe home") "dev"
+    New-Item -ItemType Directory -Force -Path $unsafeHome | Out-Null
+    $env:USERPROFILE = $unsafeHome
+    Assert-RefusedWith "target equal to the home directory" @{ Target = $unsafeHome } "Unsafe install target: $unsafeHome" @()
+    $null = Use-CaseHome "refusal home"
+    $notDevTarget = Join-Path $refusalRoot "not-a-dev"
+    Assert-RefusedWith "-Target not ending in dev" @{ ConfigDir = $refusalRoot; Target = $notDevTarget } "-Target must be the exact dev Skill directory and end in \dev: " @($notDevTarget)
+    Assert-RefusedWith "-Target at the filesystem root" @{ ConfigDir = $refusalRoot; Target = [IO.Path]::GetPathRoot($refusalRoot) } "-Target must be the exact dev Skill directory and end in \dev: " @()
+    Assert-Path (Join-Path $refusalRoot "sentinel.txt")
+    Assert-Absent (Join-Path $refusalRoot "skills")
+    Assert-Absent (Join-Path $refusalRoot "backups")
+    $env:USERPROFILE = $suiteHome
+    Pass "installer refusals report their documented message and change nothing"
 
     $rollback = Join-Path $testRoot "rollback config"
     New-Item -ItemType Directory -Force -Path (Join-Path $rollback "skills\dev") | Out-Null
@@ -325,6 +441,31 @@ try {
         Assert-Absent $noTarTarget
         Pass "git checkout with tar unavailable aborts and installs nothing"
     }
+
+    # The rtk presence gate is a PATH check only: the installer never runs
+    # rtk. With rtk absent it must abort with its documented message and
+    # install nothing (Issue #138, F4).
+    $noRtkBin = Join-Path $testRoot "fakebin-no-rtk"
+    New-ScratchPathWithout -Destination $noRtkBin -ToolNames @("git", "python3", "python", "tar")
+    $noRtkTarget = Join-Path $testRoot "no-rtk target"
+    $originalPath = $env:PATH
+    $noRtkError = $null
+    try {
+        $env:PATH = $noRtkBin
+        & $installer -ConfigDir $noRtkTarget -Lang en 2>$null | Out-Null
+    }
+    catch {
+        $noRtkError = $_.Exception.Message
+    }
+    finally {
+        $env:PATH = $originalPath
+    }
+    if (-not $noRtkError) { throw "Install unexpectedly succeeded with rtk unavailable" }
+    if ($noRtkError -ne "RTK is required by this customized /dev workflow.") {
+        throw "Unexpected error text for rtk-unavailable abort: $noRtkError"
+    }
+    Assert-Absent $noRtkTarget
+    Pass "rtk absent from PATH aborts with the documented message and installs nothing"
 
     # The converse of the exclusion case above: an uncommitted *deletion* of
     # a required tracked file must not block installing the perfectly valid
@@ -783,6 +924,7 @@ try {
 }
 finally {
     Remove-Item Env:DEV_INSTALL_FAIL_AT -ErrorAction SilentlyContinue
+    if ($null -ne $suitePathWithoutStub) { $env:PATH = $suitePathWithoutStub }
     if ($null -ne $originalUserProfile) { $env:USERPROFILE = $originalUserProfile } else { Remove-Item Env:USERPROFILE -ErrorAction SilentlyContinue }
     if (Test-Path $testRoot) { Remove-Item $testRoot -Recurse -Force }
 }
