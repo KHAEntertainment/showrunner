@@ -479,12 +479,35 @@ when_to_use: "Invoke when the user explicitly asks to use the dev skill after pl
         completed = self.run_validator()
         self.assertEqual(0, completed.returncode, completed.stderr)
 
-    def test_indented_continuation_of_quoted_value_passes(self) -> None:
-        """Continuation lines join onto the previous key before lexing."""
+    def test_indented_continuation_line_fails(self) -> None:
+        """Continuation lines are outside the supported subset (review round 2):
+        joining them let a comment swallow the next physical line."""
         self.replace_line_starting_with(
             "argument-hint:",
-            'argument-hint: "[optional project\n  or feature description]"\n',
+            'argument-hint: "ok" # comment\n  invalid_yaml: [\n',
         )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("continuation lines are not supported", completed.stderr)
+
+    def test_tab_in_frontmatter_fails(self) -> None:
+        """A tab before `#` must not hide policy phrases inside a comment."""
+        self.replace_line_starting_with(
+            "when_to_use:",
+            "when_to_use: anything\t# explicitly after plan approval Do not invoke\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("contains a tab", completed.stderr)
+
+    def test_backslash_escape_in_double_quoted_value_fails(self) -> None:
+        self.replace_line_starting_with("name:", 'name: "\\dev"\n')
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("backslash escape", completed.stderr)
+
+    def test_plain_value_with_spaces_before_comment_passes(self) -> None:
+        self.replace_line_starting_with("name:", "name: dev   # skill identifier\n")
         completed = self.run_validator()
         self.assertEqual(0, completed.returncode, completed.stderr)
 

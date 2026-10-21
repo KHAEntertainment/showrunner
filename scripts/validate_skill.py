@@ -201,11 +201,13 @@ def markdown_section(text: str, heading: str) -> str | None:
 # with stdlib only (ADR-005: no PyYAML). The real skills/dev/SKILL.md
 # frontmatter is flat `key: value` lines — unquoted scalars, double-quoted
 # scalars (one of which contains a balanced `[...]`), and no multi-line
-# continuations — so the parser supports exactly that shape plus indented
-# continuation lines of the previous key, full-line and inline comments, and
-# fails closed on anything else. Values are lexed by `_lex_frontmatter_value`,
-# which stores the unquoted, comment-stripped scalar; policy checks read that
-# cleaned value, never the raw line.
+# continuations. Rather than emulate YAML, the parser accepts exactly that
+# subset plus full-line and inline comments, and fails closed on anything
+# else: tabs, indented continuation lines, and backslash escapes are refused
+# even where YAML would allow them (review round 2 on Issue #138 showed each
+# hand-rolled YAML rule grows its own bypasses). Values are lexed by
+# `_lex_frontmatter_value`, which stores the unquoted, comment-stripped
+# scalar; policy checks read that cleaned value, never the raw line.
 _FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9_-]+):[ \t]*(.*)$")
 # YAML indicators that may not START a plain (unquoted) scalar. A value like
 # `invalid_yaml: [` is flow syntax this parser deliberately does not support;
@@ -240,13 +242,14 @@ def extract_frontmatter(text: str) -> tuple[str | None, list[str]]:
 
 
 def _strip_inline_comment(value: str) -> str:
-    """Cut a ` #` inline comment (space before `#`).
+    """Cut a ` #` inline comment (space before `#`) and trailing spaces.
 
     Only used for plain scalars and for the tail after a closing quote —
-    quoted content never reaches this, so a `#` inside quotes survives.
+    quoted content never reaches this, so a `#` inside quotes survives. Tabs
+    never reach it either: `parse_frontmatter_block` refuses them first.
     """
     cut = value.find(" #")
-    return value[:cut] if cut != -1 else value
+    return (value[:cut] if cut != -1 else value).rstrip(" ")
 
 
 def _lex_frontmatter_value(raw: str) -> tuple[str, str | None]:
@@ -275,10 +278,8 @@ def _lex_frontmatter_value(raw: str) -> tuple[str, str | None]:
         while index < len(raw):
             char = raw[index]
             if quote == '"':
-                if char == "\\" and index + 1 < len(raw):
-                    out.append(raw[index + 1])
-                    index += 2
-                    continue
+                if char == "\\":
+                    return "", "uses a backslash escape, which is not supported"
                 if char == '"':
                     index += 1
                     closed = True
@@ -314,28 +315,28 @@ def _lex_frontmatter_value(raw: str) -> tuple[str, str | None]:
 def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
     """Parse a flat `key: value` frontmatter block into a dict.
 
-    Fails closed (appending to `errors`, never raising) on: a non-blank,
-    non-comment line that is neither `key: value` nor an indented
-    continuation of the previous key, a duplicate top-level key, and any
-    value the lexer rejects (unterminated quote, junk after a closing quote,
-    flow/indicator start, `: ` in a plain scalar). Stored values are the
-    unquoted, comment-stripped scalars.
+    Fails closed (appending to `errors`, never raising) on: a tab anywhere in
+    the block, an indented (continuation) line, a non-blank, non-comment line
+    that is not `key: value`, a duplicate top-level key, and any value the
+    lexer rejects (unterminated quote, backslash escape, junk after a closing
+    quote, flow/indicator start, `: ` in a plain scalar). Stored values are
+    the unquoted, comment-stripped scalars.
     """
+    if "\t" in block:
+        fail(errors, "SKILL.md frontmatter contains a tab, which is not supported")
+        return {}
     raw_values: dict[str, str] = {}
-    current: str | None = None
     for raw in block.split("\n"):
         if not raw.strip():
             continue
         if raw.lstrip()[0] == "#":
             continue
-        if raw[0] in " \t":
-            if current is None:
-                fail(
-                    errors,
-                    f"SKILL.md frontmatter line is not a key: value pair: {raw.strip()!r}",
-                )
-                continue
-            raw_values[current] = f"{raw_values[current]} {raw.strip()}"
+        if raw[0] == " ":
+            fail(
+                errors,
+                "SKILL.md frontmatter continuation lines are not supported: "
+                f"{raw.strip()!r}",
+            )
             continue
         match = _FRONTMATTER_KEY.match(raw)
         if not match:
@@ -343,15 +344,12 @@ def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
                 errors,
                 f"SKILL.md frontmatter line is not a key: value pair: {raw.strip()!r}",
             )
-            current = None
             continue
         key, value = match.group(1), match.group(2).strip()
         if key in raw_values:
             fail(errors, f"SKILL.md frontmatter duplicate key: {key}")
-            current = None
             continue
         raw_values[key] = value
-        current = key
     parsed: dict[str, str] = {}
     for key, raw_value in raw_values.items():
         cleaned, error = _lex_frontmatter_value(raw_value)
