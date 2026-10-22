@@ -1,5 +1,7 @@
 # Assessment and plan: Span-01, /dev goal mode, and a stop guard
 
+> **Status: planned for v2.2.0, not started.** Nothing in this plan is implemented. It is feature and scope-increasing work, so it targets v2.2.0 rather than a v2.1.x patch release (decided 2026-09-29).
+>
 > Research and planning only; nothing was implemented in this session.
 > Observed 2026-09-28. Execute after v2.1.2 lands. The earlier plan in this PR (`docs/plans/2026-09-26-technical-planning-and-research-providers.md`) is unchanged; this plan builds on its WP-A2 where noted.
 > **Step 0 (done):** this plan was saved here on branch `claude/optimistic-fermi-nrtegl` (PR #81) when the planning session closed.
