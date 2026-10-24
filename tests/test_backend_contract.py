@@ -2574,14 +2574,23 @@ class MultiHarnessContractTests(unittest.TestCase):
         self.assertNotIn("scoped credential", contract)
 
 
-class SwapTimeEvidenceTests(unittest.TestCase):
-    """Issue #97: which evidence satisfies report-back correlation after a swap.
+class RecoverySpecificationExamples(unittest.TestCase):
+    """Specification examples of the documented swap-time recovery procedure.
 
-    The adapter is prose that a lead executes, so two things are pinned: the
-    prose, and an executable reference model of the rule as the prose states
-    it. The model is built on the same derivation table the ledger carries,
-    so the table cannot change under the rule without a failure here as well
-    as in `test_the_mapping_table_states_the_exact_pairings`.
+    NOT runtime coverage. The backend is prose that a lead executes; nothing
+    here runs it. `recover()` below is a reference model written in this test
+    file as a worked example of the rule in `skills/dev/backends/traycer.md`
+    (the "Swap-time evidence" bullet, conditions 1-3, around lines 105-110)
+    and `skills/dev/backends/contract.md` ("Swap-time evidence is
+    adapter-defined, narrow, and fails closed."). The tests check that the
+    examples agree with the derivation table the ledger carries; they cannot
+    catch a lead that executes the prose wrongly. The prose itself is pinned by
+    `SwapTimeEvidenceTests`, so the model and the prose cannot drift apart
+    silently. If a shipped reducer is ever added, point these at it.
+
+    The model follows the prose strictly: exactly two bounded inbox reads
+    (the new lead's own and the one for `dispatched_by`) and a response ID that
+    matches in full, never as a substring or prefix.
     """
 
     LANE = "lane-agent-1"
@@ -2589,15 +2598,10 @@ class SwapTimeEvidenceTests(unittest.TestCase):
     NEW_LEAD = "new-lead-2"
     RESPONSE_ID = "637a6bab-ca78-4b93-85cd-cac46f64a67d"
     DISPATCHED_AT = 100
+    INBOX_READS = 2  # traycer.md condition 2: "Both inbox reads"
 
     def read(self, relative: str) -> str:
         return (SKILL / relative).read_text(encoding="utf-8")
-
-    def traycer_bullet(self, lead_in: str) -> str:
-        for line in self.read("backends/traycer.md").splitlines():
-            if line.startswith(lead_in):
-                return line
-        self.fail(f"traycer.md has no bullet starting {lead_in!r}")
 
     def ledger_rows(self) -> list[tuple[str, tuple[str, ...], str, str, str]]:
         section = _markdown_section(
@@ -2646,16 +2650,28 @@ class SwapTimeEvidenceTests(unittest.TestCase):
         absent = self.derive(False, "completed", all_sections, rows)
         if not dispatched_by or dispatched_by == current_lead:
             return absent
+        if len(inbox) != self.INBOX_READS:
+            # condition 2 needs BOTH bounded inbox reads to have ended
+            # `completed`; with fewer the swap rule is never consulted.
+            return absent
         qualifying = [
             m
             for m in transcript
-            if m[0] == self.LANE and m[1] > self.DISPATCHED_AT and self.RESPONSE_ID in m[2]
+            if m[0] == self.LANE and m[1] > self.DISPATCHED_AT and self.names_response_id(m[2])
         ]
         if transcript_termination != "completed":
             return self.derive(bool(qualifying), transcript_termination, all_sections, rows)
         if not qualifying:
             return absent
         return self.derive(True, "completed", all_sections, rows)
+
+    def names_response_id(self, body: str) -> bool:
+        """traycer.md condition 3: the id appears "verbatim and in full".
+
+        A prefix, a different id, or the id inside a longer token does not
+        match.
+        """
+        return self.RESPONSE_ID in re.split(r"[^0-9A-Za-z-]+", body)
 
     def report(self, body_extra: str = "") -> tuple[str, int, str]:
         return (self.LANE, self.DISPATCHED_AT + 5, f"Response ID: {self.RESPONSE_ID}\n{body_extra}")
@@ -2702,6 +2718,41 @@ class SwapTimeEvidenceTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(self.ABSENT, self.recover(inbox=both_empty, **kwargs))
 
+    def test_one_inbox_read_does_not_satisfy_the_swap_rule(self) -> None:
+        # traycer.md condition 2 names two reads: the new lead's own and the
+        # one for `dispatched_by`. A single read cannot show that both ended
+        # `completed` with no correlated reply, so a qualifying transcript
+        # message must not be accepted.
+        good = self.report()
+        one_read = [("completed", False)]
+        self.assertEqual(self.ABSENT, self.recover(inbox=one_read, transcript=[good]))
+        both_reads = one_read * self.INBOX_READS
+        self.assertEqual(self.COMPLETE, self.recover(inbox=both_reads, transcript=[good]))
+
+    def test_the_response_id_must_match_in_full_not_as_a_substring(self) -> None:
+        both_empty = [("completed", False), ("completed", False)]
+        near_misses = {
+            "id with a suffix": f"Response ID: {self.RESPONSE_ID}0",
+            "id with a prefix": f"Response ID: 0{self.RESPONSE_ID}",
+            "id embedded in a longer token": f"Response ID: x{self.RESPONSE_ID}x",
+            "leading eight characters only": f"Response ID: {self.RESPONSE_ID[:8]}",
+            "trailing characters cut off": f"Response ID: {self.RESPONSE_ID[:-1]}",
+        }
+        for name, body in near_misses.items():
+            with self.subTest(name):
+                self.assertEqual(
+                    self.ABSENT,
+                    self.recover(inbox=both_empty, transcript=[(self.LANE, 105, body)]),
+                )
+        # the exact id, anywhere in the message, still counts
+        self.assertEqual(
+            self.COMPLETE,
+            self.recover(
+                inbox=both_empty,
+                transcript=[(self.LANE, 105, f"thread {self.RESPONSE_ID}, done")],
+            ),
+        )
+
     def test_a_cut_read_stays_truncated_and_is_never_upgraded(self) -> None:
         good = self.report()
         for termination in ("stalled", "page_cap", "time_bound"):
@@ -2747,7 +2798,25 @@ class SwapTimeEvidenceTests(unittest.TestCase):
                         self.assertEqual(self.derive(correlated, termination, all_sections, rows), got)
         self.assertEqual(self.ABSENT, self.recover(inbox=[("completed", False)], transcript=planted, current_lead=self.OLD_LEAD))
 
-    # -- the prose says what the model says ----------------------------------
+class SwapTimeEvidenceTests(unittest.TestCase):
+    """Issue #97: the prose that states which evidence satisfies report-back
+    correlation after a lead swap.
+
+    These tests read the shipped prose (`backends/traycer.md`,
+    `backends/contract.md`, the ledger template) and pin the sentences the
+    worked examples in `RecoverySpecificationExamples` are written against.
+    """
+
+    def read(self, relative: str) -> str:
+        return (SKILL / relative).read_text(encoding="utf-8")
+
+    def traycer_bullet(self, lead_in: str) -> str:
+        for line in self.read("backends/traycer.md").splitlines():
+            if line.startswith(lead_in):
+                return line
+        self.fail(f"traycer.md has no bullet starting {lead_in!r}")
+
+    # -- the prose the examples are written against -------------------------
 
     def test_the_swap_bullet_states_every_condition_and_changes_no_vocabulary(self) -> None:
         swap = " ".join(self.read("backends/traycer.md").split())
@@ -2759,7 +2828,9 @@ class SwapTimeEvidenceTests(unittest.TestCase):
             "the swap rule never upgrades a truncated read",
             "comes from the lane's recorded `agent_id`",
             "was sent after the recorded `dispatched_at`",
+            "That is the new lead's own bounded inbox read and the bounded `agent inbox --agent-id <dispatched_by> --json` read.",
             "contains the recorded `communication_response_id` verbatim and in full",
+            "a prefix, a different id, or a paraphrase does not match",
             "A message from any other agent that quotes the id",
             "never qualifies",
             "No qualifying message with a `completed` stream stays `absent`",
