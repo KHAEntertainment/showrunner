@@ -20,6 +20,14 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   checks still run on every PR. The shell job gains a PowerShell parse check
   of `install.ps1` and `tests/test-install.ps1`, so a syntax error there still
   fails the PR.
+- Installer tests cover paths that were untested
+  ([#138](https://github.com/KHAEntertainment/showrunner/issues/138)):
+  `--keep-legacy` / `-KeepLegacy`, every install-target refusal (each must
+  exit with its message and change nothing on disk), and the "RTK is
+  required" abort. Each suite now supplies its own `rtk` stub, which fails
+  if called, so the Release Gate no longer stubs `rtk` and the suites run
+  on machines without it. The PowerShell suite gains the symlink-target and
+  explicit-target legacy cases the Bash suite already had.
 
 ### Fixed
 
