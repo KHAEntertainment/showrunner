@@ -293,6 +293,242 @@ class HomePathScopeTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
 
 
+class FrontmatterParseTests(unittest.TestCase):
+    """Issue #138 (F2): the validator must PARSE frontmatter, not scan the body.
+
+    Inserting `invalid_yaml: [` inside the real frontmatter used to pass every
+    suite because the old check was a substring search over the whole document.
+    These cases pin the parse itself: delimited extraction, flat key/value
+    acceptance of the real SKILL.md shapes, and fail-closed rejection of the
+    mutations that escaped.
+    """
+
+    # Every scalar shape the real skills/dev/SKILL.md frontmatter uses:
+    # unquoted scalars, a long unquoted description, and double-quoted values
+    # (one containing a balanced `[...]`).
+    SHAPE_FRONTMATTER = """---
+name: dev
+version: 0.0.0+shape-test
+description: Unquoted long description with commas, semicolons; and punctuation.
+argument-hint: "[optional project or feature description]"
+disable-model-invocation: false
+when_to_use: "Invoke when the user explicitly asks to use the dev skill after plan approval and before implementation begins. Do not invoke for ordinary requests."
+"""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        shutil.copytree(SKILL, self.root / "skills" / "dev")
+        (self.root / "scripts").mkdir(parents=True)
+        shutil.copy(VALIDATOR, self.root / "scripts" / "validate_skill.py")
+        shutil.copy(PROJECT_CONTEXT, self.root / "PROJECT_CONTEXT.md")
+        self.skill_dir = self.root / "skills" / "dev"
+        self.entry = self.skill_dir / "SKILL.md"
+
+    def run_validator(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(self.root / "scripts" / "validate_skill.py"),
+                "--skill-dir",
+                str(self.skill_dir),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_real_skill_md_passes(self) -> None:
+        """The untouched payload establishes the baseline."""
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_every_real_frontmatter_shape_passes(self) -> None:
+        """Keep the real body (policy pins live there); swap only the block."""
+        text = self.entry.read_text(encoding="utf-8")
+        body = text.split("\n---\n", 1)[1]
+        self.entry.write_text(self.SHAPE_FRONTMATTER + "---\n" + body, encoding="utf-8")
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def insert_after_name(self, line: str) -> None:
+        text = self.entry.read_text(encoding="utf-8")
+        self.entry.write_text(
+            text.replace("name: dev\n", f"name: dev\n{line}\n", 1),
+            encoding="utf-8",
+        )
+
+    def replace_line_starting_with(self, prefix: str, new: str) -> None:
+        lines = self.entry.read_text(encoding="utf-8").splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.startswith(prefix):
+                lines[index] = new
+                break
+        else:
+            raise AssertionError(f"no frontmatter line starts with {prefix!r}")
+        self.entry.write_text("".join(lines), encoding="utf-8")
+
+    def test_missing_closing_delimiter_fails(self) -> None:
+        self.entry.write_text("---\nname: dev\nversion: 0.0.0\n", encoding="utf-8")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("closing `---`", completed.stderr)
+
+    def test_flow_indicator_value_fails(self) -> None:
+        """The F2 mutation that previously escaped every suite."""
+        self.insert_after_name("invalid_yaml: [")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unsupported flow/indicator value", completed.stderr)
+
+    def test_flow_indicator_value_with_trailing_comment_fails(self) -> None:
+        """`# …` after an indicator start must not launder the flow syntax."""
+        self.insert_after_name("invalid_yaml: [ # ]")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unsupported flow/indicator value", completed.stderr)
+
+    def test_duplicate_top_level_key_fails(self) -> None:
+        self.insert_after_name("name: other")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("duplicate key", completed.stderr)
+
+    def test_stray_non_key_value_line_fails(self) -> None:
+        self.insert_after_name("this is not kv")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("not a key: value pair", completed.stderr)
+
+    def test_two_quoted_scalars_on_one_line_fail(self) -> None:
+        self.replace_line_starting_with(
+            "argument-hint:", 'argument-hint: "one" "two"\n'
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("after the closing quote", completed.stderr)
+
+    def test_colon_space_in_plain_value_fails(self) -> None:
+        self.replace_line_starting_with("description:", "description: invalid: yaml\n")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("contains ': '", completed.stderr)
+
+    def test_trailing_colon_in_plain_value_fails(self) -> None:
+        for line in ("description: invalid:\n", "description: invalid: # note\n"):
+            with self.subTest(line=line):
+                text = self.entry.read_text(encoding="utf-8")
+                self.replace_line_starting_with("description:", line)
+                completed = self.run_validator()
+                self.entry.write_text(text, encoding="utf-8")
+                self.assertEqual(1, completed.returncode)
+                self.assertIn("ends with ':'", completed.stderr)
+
+    def test_key_without_space_before_value_fails(self) -> None:
+        """`name:dev` is a YAML plain scalar, not a `name` field."""
+        self.replace_line_starting_with("name:", "name:dev\n")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("not a key: value pair", completed.stderr)
+
+    def test_block_sequence_entry_as_plain_value_fails(self) -> None:
+        """`key: - item` is a YAML error, not a scalar starting with a dash."""
+        self.replace_line_starting_with("description:", "description: - a list item\n")
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unsupported block indicator value", completed.stderr)
+
+    def test_comment_only_when_to_use_fails(self) -> None:
+        """Policy reads the value AFTER comment stripping: `# …` → empty."""
+        self.replace_line_starting_with(
+            "when_to_use:",
+            "when_to_use: # explicitly after plan approval Do not invoke\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("explicit-intent trigger", completed.stderr)
+
+    def test_required_field_only_in_body_fails(self) -> None:
+        """`version:` in the body must not satisfy the frontmatter check."""
+        text = self.entry.read_text(encoding="utf-8")
+        stripped = "\n".join(
+            line for line in text.splitlines() if not line.startswith("version:")
+        )
+        self.entry.write_text(
+            stripped + "\n\nversion: 9.9.9 only-in-body\n", encoding="utf-8"
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("SKILL.md frontmatter missing: version:", completed.stderr)
+
+    def test_unterminated_quote_fails(self) -> None:
+        self.replace_line_starting_with(
+            "argument-hint:",
+            'argument-hint: "[optional project or feature description]\n',
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("unterminated quote", completed.stderr)
+
+    def test_full_line_comment_passes(self) -> None:
+        self.insert_after_name("# a full-line comment")
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_trailing_comment_on_plain_value_is_stripped(self) -> None:
+        self.replace_line_starting_with("name:", "name: dev # trailing comment\n")
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_quoted_value_containing_closing_bracket_passes(self) -> None:
+        """Brackets inside quotes are content, never balance-checked."""
+        self.replace_line_starting_with(
+            "argument-hint:", 'argument-hint: "Enter ] to finish"\n'
+        )
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_single_quoted_value_with_escaped_quote_and_brace_passes(self) -> None:
+        self.replace_line_starting_with(
+            "argument-hint:", "argument-hint: 'it''s { fine'\n"
+        )
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_indented_continuation_line_fails(self) -> None:
+        """Continuation lines are outside the supported subset (review round 2):
+        joining them let a comment swallow the next physical line."""
+        self.replace_line_starting_with(
+            "argument-hint:",
+            'argument-hint: "ok" # comment\n  invalid_yaml: [\n',
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("continuation lines are not supported", completed.stderr)
+
+    def test_tab_in_frontmatter_fails(self) -> None:
+        """A tab before `#` must not hide policy phrases inside a comment."""
+        self.replace_line_starting_with(
+            "when_to_use:",
+            "when_to_use: anything\t# explicitly after plan approval Do not invoke\n",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("contains a tab", completed.stderr)
+
+    def test_backslash_escape_in_double_quoted_value_fails(self) -> None:
+        self.replace_line_starting_with("name:", 'name: "\\dev"\n')
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("backslash escape", completed.stderr)
+
+    def test_plain_value_with_spaces_before_comment_passes(self) -> None:
+        self.replace_line_starting_with("name:", "name: dev   # skill identifier\n")
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+
 class SuppliedIdentityPinTests(unittest.TestCase):
     """Issue #89: the manifest entry and policy pins fail the validator when removed."""
 

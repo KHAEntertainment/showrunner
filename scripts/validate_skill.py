@@ -195,6 +195,173 @@ def markdown_section(text: str, heading: str) -> str | None:
     return match.group(1) if match else None
 
 
+# Issue #138 (F2): the frontmatter used to be validated by substring search
+# over the WHOLE SKILL.md document, so inserting `invalid_yaml: [` inside the
+# frontmatter passed. These helpers extract the delimited block and parse it
+# with stdlib only (ADR-005: no PyYAML). The real skills/dev/SKILL.md
+# frontmatter is flat `key: value` lines — unquoted scalars, double-quoted
+# scalars (one of which contains a balanced `[...]`), and no multi-line
+# continuations. Rather than emulate YAML, the parser accepts exactly that
+# subset plus full-line and inline comments, and fails closed on anything
+# else: tabs, indented continuation lines, and backslash escapes are refused
+# even where YAML would allow them (review round 2 on Issue #138 showed each
+# hand-rolled YAML rule grows its own bypasses). Values are lexed by
+# `_lex_frontmatter_value`, which stores the unquoted, comment-stripped
+# scalar; policy checks read that cleaned value, never the raw line.
+# A value must be separated from its key by a space (`name:dev` is a plain
+# scalar in YAML, not a mapping entry); a key may also end the line.
+_FRONTMATTER_KEY = re.compile(r"^([A-Za-z0-9_-]+):(?:[ ]+(.*))?$")
+# YAML indicators that may not START a plain (unquoted) scalar. A value like
+# `invalid_yaml: [` is flow syntax this parser deliberately does not support;
+# mid-value brackets in prose stay fine because only the first character is
+# checked here.
+_PLAIN_INDICATORS = "[]{}&*!|>%@`"
+
+
+def extract_frontmatter(text: str) -> tuple[str | None, list[str]]:
+    """Split SKILL.md into its frontmatter block.
+
+    Returns `(block, errors)`. `block` is the text between the opening `---`
+    line and the next line that is exactly `---`, or None when the delimiters
+    are missing. The closing-delimiter rule matches `check_version_sync.py`'s
+    FRONTMATTER regex (`\\A---\\n…\\n---`), so the two scripts agree on what
+    counts as frontmatter.
+    """
+    errors: list[str] = []
+    if not text.startswith("---\n"):
+        fail(errors, "SKILL.md must begin with YAML frontmatter")
+        return None, errors
+    lines = text.split("\n")
+    closing = None
+    for index in range(1, len(lines)):
+        if lines[index] == "---":
+            closing = index
+            break
+    if closing is None:
+        fail(errors, "SKILL.md frontmatter missing closing `---` delimiter")
+        return None, errors
+    return "\n".join(lines[1:closing]), errors
+
+
+def _strip_inline_comment(value: str) -> str:
+    """Cut a ` #` inline comment (space before `#`) and trailing spaces.
+
+    Only used for plain scalars and for the tail after a closing quote —
+    quoted content never reaches this, so a `#` inside quotes survives. Tabs
+    never reach it either: `parse_frontmatter_block` refuses them first.
+    """
+    cut = value.find(" #")
+    return (value[:cut] if cut != -1 else value).rstrip(" ")
+
+
+def _lex_frontmatter_value(raw: str) -> tuple[str, str | None]:
+    """Lex one flat frontmatter value; returns `(cleaned, error)`.
+
+    Exactly three shapes, matching the real SKILL.md frontmatter:
+    - `# …` or empty → comment → empty value.
+    - `"…"` (backslash escapes) or `'…'` (`''` escapes): the unquoted content
+      is the value; only whitespace or an inline comment may follow the
+      closing quote; brackets inside are never balance-checked. Unterminated
+      → error.
+    - plain scalar: may not start with a YAML indicator (`[`, `{`, `]`, `}`,
+      `&`, `*`, `!`, `|`, `>`, `%`, `@`, backtick) or with `- ` / `? ` (a
+      block sequence entry or complex key), and may not contain `: ` (that
+      would be a nested mapping); a ` #` comment is stripped.
+    """
+    if not raw:
+        return "", None
+    if raw[0] == "#":
+        return "", None
+    if raw[0] in ('"', "'"):
+        quote = raw[0]
+        out: list[str] = []
+        index = 1
+        closed = False
+        while index < len(raw):
+            char = raw[index]
+            if quote == '"':
+                if char == "\\":
+                    return "", "uses a backslash escape, which is not supported"
+                if char == '"':
+                    index += 1
+                    closed = True
+                    break
+            elif char == "'":
+                if index + 1 < len(raw) and raw[index + 1] == "'":
+                    out.append("'")
+                    index += 2
+                    continue
+                index += 1
+                closed = True
+                break
+            out.append(char)
+            index += 1
+        if not closed:
+            return "", "has an unterminated quote"
+        rest = raw[index:]
+        if rest.strip() and not (
+            rest[0] in " \t" and rest.lstrip().startswith("#")
+        ):
+            return "", "has unexpected content after the closing quote"
+        return "".join(out), None
+    if raw[0] in _PLAIN_INDICATORS:
+        return "", "has an unsupported flow/indicator value"
+    if raw in ("-", "?") or raw[:2] in ("- ", "? "):
+        return "", "has an unsupported block indicator value"
+    cleaned = _strip_inline_comment(raw)
+    if ": " in cleaned or cleaned.endswith(":"):
+        return "", "has an unsupported plain value (contains ': ' or ends with ':')"
+    return cleaned, None
+
+
+def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
+    """Parse a flat `key: value` frontmatter block into a dict.
+
+    Fails closed (appending to `errors`, never raising) on: a tab anywhere in
+    the block, an indented (continuation) line, a non-blank, non-comment line
+    that is not `key: value`, a duplicate top-level key, and any value the
+    lexer rejects (unterminated quote, backslash escape, junk after a closing
+    quote, flow/indicator start, `: ` in a plain scalar). Stored values are
+    the unquoted, comment-stripped scalars.
+    """
+    if "\t" in block:
+        fail(errors, "SKILL.md frontmatter contains a tab, which is not supported")
+        return {}
+    raw_values: dict[str, str] = {}
+    for raw in block.split("\n"):
+        if not raw.strip():
+            continue
+        if raw.lstrip()[0] == "#":
+            continue
+        if raw[0] == " ":
+            fail(
+                errors,
+                "SKILL.md frontmatter continuation lines are not supported: "
+                f"{raw.strip()!r}",
+            )
+            continue
+        match = _FRONTMATTER_KEY.match(raw)
+        if not match:
+            fail(
+                errors,
+                f"SKILL.md frontmatter line is not a key: value pair: {raw.strip()!r}",
+            )
+            continue
+        key, value = match.group(1), (match.group(2) or "").strip()
+        if key in raw_values:
+            fail(errors, f"SKILL.md frontmatter duplicate key: {key}")
+            continue
+        raw_values[key] = value
+    parsed: dict[str, str] = {}
+    for key, raw_value in raw_values.items():
+        cleaned, error = _lex_frontmatter_value(raw_value)
+        if error is not None:
+            fail(errors, f"SKILL.md frontmatter key `{key}` {error}")
+            continue
+        parsed[key] = cleaned
+    return parsed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -219,34 +386,38 @@ def main() -> int:
     entry = skill_dir / "SKILL.md"
     if entry.is_file():
         text = entry.read_text(encoding="utf-8")
-        if not text.startswith("---\n"):
-            fail(errors, "SKILL.md must begin with YAML frontmatter")
+        # Issue #138 (F2): required fields are checked against the PARSED
+        # frontmatter keys, not by substring search over the whole document —
+        # a `version:` line in the body used to satisfy the old check.
+        frontmatter_text, frontmatter_errors = extract_frontmatter(text)
+        errors.extend(frontmatter_errors)
+        parsed: dict[str, str] = (
+            parse_frontmatter_block(frontmatter_text, errors)
+            if frontmatter_text is not None
+            else {}
+        )
+        if parsed.get("name") != "dev":
+            fail(errors, "SKILL.md frontmatter missing: name: dev")
         for field in (
-            "name: dev",
             "version:",
             "description:",
             "argument-hint:",
             "when_to_use:",
         ):
-            if field not in text:
+            if field.rstrip(":") not in parsed:
                 fail(errors, f"SKILL.md frontmatter missing: {field}")
 
         # The Skill must stay model-invocable so an explicit user request made
         # during planning survives into implementation. Require the explicit
         # `false` rather than an omitted field, so a regression is visible in
         # the diff instead of hiding in a default.
-        frontmatter = text.split("\n---\n", 1)[0] if text.startswith("---\n") else ""
-        if "disable-model-invocation: false" not in frontmatter:
+        if parsed.get("disable-model-invocation") != "false":
             fail(
                 errors,
                 "SKILL.md must set `disable-model-invocation: false` explicitly; "
                 "model invocation is required for the plan-to-implementation handoff",
             )
-        when_to_use = ""
-        for line in frontmatter.splitlines():
-            if line.startswith("when_to_use:"):
-                when_to_use = line.partition(":")[2].strip().strip('"').strip("'")
-                break
+        when_to_use = parsed.get("when_to_use", "").strip().strip('"').strip("'")
         for phrase in ("explicitly", "after plan approval", "Do not invoke"):
             if phrase not in when_to_use:
                 fail(
