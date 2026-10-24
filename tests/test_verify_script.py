@@ -421,6 +421,31 @@ class VerifyScriptCommandOrderTests(GateHarness, unittest.TestCase):
     that way.
     """
 
+    def test_shellcheck_command_argv(self):
+        result = self.run_gate(shellcheck=0, pwsh=True)
+        self.assertIn(
+            [
+                "shellcheck",
+                "install.sh",
+                "tests/test-install.sh",
+                "tests/migration-scratch.sh",
+                "scripts/check_plugin_root.sh",
+                "scripts/verify.sh",
+            ],
+            result.invocations,
+        )
+
+    def test_installer_syntax_command_argv(self):
+        # `bash install.sh -n` would run the installer instead of checking
+        # its syntax. The stub exits 0 either way, so only the argv tells
+        # the two apart.
+        result = self.run_gate(shellcheck=0, pwsh=True)
+        self.assertIn(["bash", "-n", "install.sh"], result.invocations)
+
+    def test_verification_script_syntax_command_argv(self):
+        result = self.run_gate(shellcheck=0, pwsh=True)
+        self.assertIn(["bash", "-n", "scripts/verify.sh"], result.invocations)
+
     def test_skill_validation_command_argv(self):
         result = self.run_gate(shellcheck=0, pwsh=True)
         self.assertIn(["python3", "scripts/validate_skill.py"], result.invocations)
@@ -460,6 +485,16 @@ class VerifyScriptCommandOrderTests(GateHarness, unittest.TestCase):
     def test_gate_steps_run_in_the_recorded_order(self):
         result = self.run_gate(shellcheck=0, pwsh=True)
         expected = [
+            [
+                "shellcheck",
+                "install.sh",
+                "tests/test-install.sh",
+                "tests/migration-scratch.sh",
+                "scripts/check_plugin_root.sh",
+                "scripts/verify.sh",
+            ],
+            ["bash", "-n", "install.sh"],
+            ["bash", "-n", "scripts/verify.sh"],
             ["python3", "scripts/validate_skill.py"],
             ["python3", "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"],
             ["bash", "tests/test-install.sh"],
