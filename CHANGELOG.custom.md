@@ -23,6 +23,14 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 
 ### Fixed
 
+- `scripts/validate_skill.py` now parses the `SKILL.md` frontmatter instead
+  of searching the whole file for field names
+  ([#138](https://github.com/KHAEntertainment/showrunner/issues/138)). A
+  malformed header such as `invalid_yaml: [` used to pass. The validator
+  accepts only the flat `key: value` subset the shipped `SKILL.md` uses
+  (plain or quoted values, comments) and rejects tabs, continuation lines,
+  escapes, flow values, duplicate keys and a missing closing `---`.
+  Required fields are read from the parsed header only.
 - README: three forward-looking claims about issues
   [#73](https://github.com/KHAEntertainment/showrunner/issues/73) and
   [#74](https://github.com/KHAEntertainment/showrunner/issues/74) pointed at
