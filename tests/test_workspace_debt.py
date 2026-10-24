@@ -111,6 +111,33 @@ def _fake_detector_incomplete() -> str:
     )
 
 
+def _zero_total_paths(node: object, path: str = "$") -> list[str]:
+    """Every JSON path in `node` whose `total` key holds 0.
+
+    A zero reads as "clean" - the one thing an unmeasured gauge must never
+    claim - so no `total` anywhere in an unavailable report may be 0. The
+    walk goes over the parsed report rather than its text: `json.dumps`
+    writes `"total": 0` with a space, so a search for `"total":0` in the
+    dumped JSON can never match (Issue #141, F9).
+    """
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child = f"{path}.{key}"
+            if (
+                key == "total"
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and value == 0
+            ):
+                found.append(child)
+            found.extend(_zero_total_paths(value, child))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.extend(_zero_total_paths(value, f"{path}[{index}]"))
+    return found
+
+
 class _WorkspaceDebtFixture(unittest.TestCase):
     """Common fixture: scratch skill_dir + scratch repo_dir + fake scripts."""
 
@@ -331,8 +358,19 @@ class FailClosedTests(_WorkspaceDebtFixture):
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["counts"], None)
         self.assertEqual(report["reason_code"], "backend_incomplete")
-        # The validator-pinned assertion: no zero anywhere.
-        self.assertNotIn('"total":0', json.dumps(report))
+        # No `total` anywhere in the payload may read 0: a zero reads as
+        # "clean", the one thing an unmeasured gauge must never claim.
+        # (The old check searched the dumped text for '"total":0', which
+        # `json.dumps` never emits - it writes '"total": 0', with a space -
+        # so the assertion could not fail. It was also mislabelled: no
+        # validator rule pins this payload, `scripts/validate_skill.py` has
+        # no rule about it at all.)
+        zero_totals = _zero_total_paths(report)
+        self.assertEqual(
+            zero_totals,
+            [],
+            f"the report claims a zero total: {zero_totals}",
+        )
 
     def test_cli_error_returns_unavailable_and_reason(self) -> None:
         self.write_dev_config()
@@ -384,16 +422,36 @@ class FailClosedTests(_WorkspaceDebtFixture):
         self.assertIn("timed out", report["reason"])
 
     def test_missing_wrapper_returns_unavailable(self) -> None:
-        # No wrapper or detector files written under scratch skill_dir.
+        # The wrapper is absent, so the gauge has to fail closed on the
+        # wrapper lookup itself. A detector left `incomplete` stops at the
+        # backend-incomplete gate before the wrapper is ever looked for, and
+        # this test then stays green with the missing-wrapper guard deleted
+        # - which is exactly what it used to assert.
         self.write_dev_config()
-        # Detector returns `incomplete` so the gauge reports at the
-        # backend-incomplete gate rather than failing for a different
-        # reason.
-        self.write_detector(_fake_detector_incomplete())
+        self.write_detector(
+            _fake_detector_body(
+                json.dumps(
+                    {
+                        "execution_backend": "traycer",
+                        "detection_status": "ready",
+                        "traycer_agent_id": "lead-self",
+                        "traycer_epic_id": "epic",
+                        "backend_source": "detected",
+                        "reason": "ok",
+                    }
+                )
+            )
+        )
+        # No wrapper file written under the scratch skill_dir.
         report = self.report_for()
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["counts"], None)
-        self.assertEqual(report["reason_code"], "backend_incomplete")
+        self.assertEqual(report["reason_code"], "worktree_list_failed")
+        self.assertEqual(report["backend"], "traycer")
+        # The reason has to name the missing wrapper: the worktree-list
+        # failure code is also what a crashed CLI returns, so the code alone
+        # cannot tell the two apart.
+        self.assertIn("traycer_cli.py wrapper missing", report["reason"])
 
     def test_unparseable_wrapper_output_returns_unavailable(self) -> None:
         self.write_dev_config()
@@ -427,6 +485,47 @@ class FailClosedTests(_WorkspaceDebtFixture):
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["counts"], None)
         self.assertEqual(report["reason_code"], "dev_config_invalid")
+
+
+class ZeroTotalCheckTests(unittest.TestCase):
+    """The zero-total walk must be able to find a zero (Issue #141 F9).
+
+    The old check searched the dumped report for `"total":0`, which
+    `json.dumps` never emits - it writes `"total": 0`, with a space - so the
+    assertion could not fail. These tests exercise the walk directly, so a
+    report that does contain a zero total is provably caught.
+    """
+
+    def test_walk_finds_a_zero_total(self) -> None:
+        self.assertEqual(
+            _zero_total_paths({"counts": {"worktrees": {"total": 0}}}),
+            ["$.counts.worktrees.total"],
+        )
+
+    def test_walk_ignores_nonzero_totals(self) -> None:
+        self.assertEqual(
+            _zero_total_paths(
+                {"counts": {"worktrees": {"total": 5}, "tier_null": 0}}
+            ),
+            [],
+        )
+
+    def test_walk_finds_a_zero_total_inside_a_list(self) -> None:
+        self.assertEqual(
+            _zero_total_paths({"rows": [{"total": 0}]}),
+            ["$.rows[0].total"],
+        )
+
+    def test_walk_finds_a_zero_total_on_an_unavailable_report(self) -> None:
+        # The shape the gauge actually emits: counts null, so a stray zero
+        # total can only come from the payload itself.
+        report = {
+            "status": "unavailable",
+            "reason_code": "backend_incomplete",
+            "counts": None,
+            "totals": {"total": 0},
+        }
+        self.assertEqual(_zero_total_paths(report), ["$.totals.total"])
 
 
 @unittest.skipIf(shutil.which("git") is None, "git not on PATH")
