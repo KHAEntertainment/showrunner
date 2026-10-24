@@ -40,6 +40,13 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   follows `backends/traycer.md` exactly: both inbox reads are required, and
   the response ID must match in full. New tests reject one read and a
   prefix or substring match.
+- Tests: the `scripts/verify.sh` harness now records each gate command's
+  arguments and checks all 11 steps in order, so a reordered or wrong
+  command fails `tests/test_verify_script.py`
+  ([#141](https://github.com/KHAEntertainment/showrunner/issues/141)). In
+  `tests/test_workspace_debt.py`, the missing-wrapper test now reaches the
+  wrapper check, and the zero-total check walks the parsed report instead of
+  matching a string it could never find.
 
 ### Fixed
 
