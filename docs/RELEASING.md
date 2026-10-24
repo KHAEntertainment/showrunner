@@ -101,11 +101,12 @@ tag name it proposes; do not let it create the tag.
 
    Pushing the tag also starts the **Release Gate** workflow
    (`.github/workflows/release-gate.yml`): the Bash installer tests on ubuntu
-   and macOS and the PowerShell installer tests on Windows, run against the
-   tagged commit. Every PR skips them to save runner minutes, so this is their
-   only automatic run. Wait for both jobs to pass before step 5. To run them
-   before tagging, add the `run-installer-tests` label to the release PR, or
-   start the workflow from the Actions tab.
+   and macOS, the PowerShell installer tests on Windows, and strict
+   `claude plugin validate . --strict` with no fallback, run against the
+   tagged commit. Unlabeled PRs skip these jobs to save runner minutes; a
+   release-tag push runs them automatically. Wait for all of its jobs to pass
+   before step 5. To run them before tagging, add the `run-installer-tests`
+   label to the release PR, or start the workflow from the Actions tab.
 
 5. **Publish to the central catalog.** This needs the tag from steps 3 and 4,
    because the central CI clones the pinned ref. In a clone of

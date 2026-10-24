@@ -28,6 +28,12 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   if called, so the Release Gate no longer stubs `rtk` and the suites run
   on machines without it. The PowerShell suite gains the symlink-target and
   explicit-target legacy cases the Bash suite already had.
+- CI: the Release Gate gains `Strict plugin validation`
+  ([#141](https://github.com/KHAEntertainment/showrunner/issues/141)), which
+  runs `claude plugin validate . --strict` and `claude plugin tag --dry-run .`
+  with the pinned Claude Code CLI and no fallback. A release can no longer
+  pass on the PR job's JSON-only fallback. The job fails if its CLI pin
+  differs from `ci.yml`'s.
 
 ### Fixed
 

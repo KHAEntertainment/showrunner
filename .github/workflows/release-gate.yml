@@ -2,9 +2,10 @@ name: Release Gate
 
 # Install simulation on three runners is the costly part of CI, so it runs only
 # when a release is cut (a vX.Y.Z tag push), on demand from the Actions tab, or
-# on a PR carrying the run-installer-tests label. On an unlabeled PR both jobs
-# are skipped and use no runner minutes. The lint and packaging checks stay in
-# ci.yml and still run on every PR.
+# on a PR carrying the run-installer-tests label, together with strict plugin
+# validation that has no fallback. On an unlabeled PR every job is skipped and
+# uses no runner minutes. The lint and packaging checks stay in ci.yml and
+# still run on every PR.
 on:
   push:
     # In filter globs `*` also matches `-`, so v*.*.* alone would match
@@ -19,7 +20,7 @@ on:
 permissions:
   contents: read
 
-# Runs that will skip both jobs (an unrelated label, a push to an unlabeled PR)
+# Runs that will skip every job (an unrelated label, a push to an unlabeled PR)
 # get their own group, so they never cancel a real run in progress.
 concurrency:
   group: release-gate-${{ github.ref }}-${{ github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'run-installer-tests') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-installer-tests')) }}
@@ -48,3 +49,32 @@ jobs:
       - name: Run PowerShell installer tests
         shell: pwsh
         run: pwsh tests/test-install.ps1
+
+  # ci.yml's packaging job falls back to a name/version JSON check when the
+  # Claude Code CLI cannot be installed, which is acceptable on a PR. A release
+  # must not ship on that fallback, so this job has none (Issue #141, F11).
+  packaging-strict:
+    name: Strict plugin validation
+    if: ${{ github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'run-installer-tests') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-installer-tests')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate with the pinned Claude Code CLI, no fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Keep in step with claude_code_version in ci.yml's packaging job;
+          # the check below fails the run when the two pins differ.
+          claude_code_version=2.1.251
+          ci_pin=$(sed -n 's/^ *claude_code_version=\([0-9.]*\)$/\1/p' .github/workflows/ci.yml)
+          if [ "$ci_pin" != "$claude_code_version" ]; then
+            echo "::error title=Claude Code pin drift::ci.yml pins '${ci_pin}', release-gate.yml pins '${claude_code_version}'"
+            exit 1
+          fi
+          npm install --global "@anthropic-ai/claude-code@${claude_code_version}"
+          command -v claude
+          claude plugin validate . --strict
+          claude plugin tag --dry-run .
