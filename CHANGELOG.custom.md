@@ -34,6 +34,12 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   with the pinned Claude Code CLI and no fallback. A release can no longer
   pass on the PR job's JSON-only fallback. The job fails if its CLI pin
   differs from `ci.yml`'s.
+- Tests: the swap-time recovery model in `tests/test_backend_contract.py` is
+  now labeled as specification examples, not runtime coverage
+  ([#141](https://github.com/KHAEntertainment/showrunner/issues/141)). It
+  follows `backends/traycer.md` exactly: both inbox reads are required, and
+  the response ID must match in full. New tests reject one read and a
+  prefix or substring match.
 
 ### Fixed
 
