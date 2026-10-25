@@ -116,7 +116,7 @@ The termination condition is kept because the cause is lossy on purpose. `trunca
 
 ## Pull request record schema
 
-Each `pull_requests` entry records: `number`, `issue`, `branch`, `headRefOid`, `qa_status`, `qa_agent_id`, `internal_review_status`, `reviewer_agent_id`, `external_review_state`, `external_review_payload_snapshots`, `expected_reviewers`, `requested_reviewers`, `observed_reviewers`, `pending_reviewers`, `completed_reviewers`, `external_findings`, `unresolved_actionable_findings`, `review_deadline`, `wait_extensions`, `approved_review_requests`, `consecutive_rate_limits`, `external_reviewer_unavailable`, `external_review_substitutions`, `approved_bypasses`, `review_debt`, `required_checks`, `blockers`, `updated_at`, and `next_action`.
+Each `pull_requests` entry records: `number`, `issue`, `branch`, `headRefOid`, `qa_status`, `qa_agent_id`, `internal_review_status`, `reviewer_agent_id`, `external_review_state`, `external_review_payload_snapshots`, `expected_reviewers`, `requested_reviewers`, `observed_reviewers`, `pending_reviewers`, `completed_reviewers`, `external_findings`, `unresolved_actionable_findings`, `review_deadline`, `wait_extensions`, `approved_review_requests`, `consecutive_rate_limits`, `external_reviewer_unavailable`, `external_review_substitutions`, `approved_bypasses`, `review_debt`, `required_checks`, `ci_runs`, `blockers`, `updated_at`, and `next_action`.
 
 `external_review_payload_snapshots` is an append-only list of `{observed_at, headRefOid, path}` records, one per gate run, including disposition reruns. Each path points to the verbatim raw current-PR JSON saved by `--payload-snapshot` before inspection. Keep every snapshot unchanged, including its original formatting; do not replace it with a summary, diff, or interpretation. A missing or failed snapshot is an evidence failure, not a successful observation. The lead records the failure and resolves it before accepting the gate result.
 
@@ -136,18 +136,56 @@ Keep `consecutive_rate_limits` per reviewer current while retrying and carry it 
 
 Each `approved_bypasses` / `review_debt` entry must record the reason, approver, timestamp, and the exact unreviewed commit range that no reviewer saw — `<reviewed-head>..<merged-head>` when a review completed at that head, or `<base-head>..<merged-head>` when no review ever completed on the PR (there is no reviewed head to anchor the range, so every commit is unreviewed) — the PR number alone is not sufficient.
 
+## CI evidence record schema (Issue #134)
+
+`ci_runs` is additive under `schema_version: 2`: a ledger written without it stays valid, and a reader that finds it absent treats CI coverage as not yet recorded, never as passing. It is an append-only list on each `pull_requests` entry, and the lead, as sole ledger writer, fills it from `gh run view` output and the job's checkout step, never from inference. One entry records one job attempt: `run`, `job` (the workflow's `name:` value), `attempt`, `definition_ref` and `definition_rev` (the workflow file and its blob revision, so a changed check invalidates reuse), `tested_subject`, `environment`, `conclusion`, `url`, `observed_at`, `covers` (the gate commands the job ran), and `applicability`.
+
+`tested_subject` is `{sha, kind, head, base_oid}` and is never the same field as `headRefOid`. `headRefOid` is the source head the author pushed. `tested_subject.sha` is the commit CI actually checked out: for a `pull_request` run, GitHub's temporary merge commit of the head onto the base (`kind: merge_ref`); for a run on a pushed commit, that commit (`kind: head`). Recording the merge ref as the head would claim a tree nobody tested. `applicability` is `established` only when the run, job and attempt are retrievable, `covers` includes every required command the ownership table in `PROJECT_CONTEXT.md` assigns to the job, the tested subject is known, and the environment and `definition_rev` match; otherwise it is `uncertain`, and uncertain coverage is incomplete, never a pass. A new head or a changed check starts a new entry; it does not edit an old one.
+
+Worked example: the source head is `4e683b4`, but the job tested the merge commit `7a0b5d1`, built on the base `b720c68`.
+
+```yaml
+pull_requests:
+  - number: 142
+    issue: 141
+    branch: feat/141-example
+    headRefOid: 4e683b4
+    base_oid: b720c68
+    ci_runs:
+      - run: 123
+        job: Skill validation
+        attempt: 1
+        definition_ref: .github/workflows/ci.yml#skill
+        definition_rev: 2ab2b59
+        tested_subject:
+          sha: 7a0b5d1
+          kind: merge_ref
+          head: 4e683b4
+          base_oid: b720c68
+        environment: ubuntu-latest, python 3.x
+        conclusion: success
+        url: https://github.com/OWNER/REPO/actions/runs/123
+        observed_at: 2026-10-24T15:02:11Z
+        covers: python3 scripts/validate_skill.py, python3 -m unittest discover -s tests
+        applicability: established
+```
+
 ## Post-merge verification record schema
 
 Each merged PR gets one post-merge verification record, appended as a
 timestamped recovery entry once the lead completes the unconditional check in
 `${CLAUDE_SKILL_DIR}/phases/phase4.md`. A record holds `merge_sha`,
-`gate_result`, and `criteria_verdict`.
+`tested_subject` (the `{sha, kind, head, base_oid}` the CI evidence recorded, per
+the CI evidence record schema above), `gate_result`, and `criteria_verdict`.
 
 `gate_result` is `applies_verbatim` when the merge commit's tree hash matched
-the verified PR head's tree hash, so the PR-head Verification Gate result
-carries over rather than being re-run, or `rerun_pass` / `rerun_fail` when the
-tree hashes differed and the gate was re-run against `main` checked out at the
-merge commit.
+the tree hash of the recorded `tested_subject`, so the Verification Gate result
+on record for that subject carries over rather than being re-run, or
+`rerun_pass` / `rerun_fail` when the tree hashes differed (or no tested subject
+was recorded) and the full recorded gate result was obtained for `main` at the
+merge commit: CI's `push` run on `main`, or the one designated executor's run.
+A match against the PR head's tree is not a match: the head is not what CI
+tested.
 
 `criteria_verdict` is `confirmed` when every acceptance criterion of the
 closed Issue was re-read against the merged code and held, or `unmet` when at

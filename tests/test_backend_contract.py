@@ -970,7 +970,7 @@ class BackendContractTests(unittest.TestCase):
             "focus internal QA and review on changed behavior",
             "Reopen the full review if scope, interfaces, architecture, a safety boundary, or material dependencies changed",
             "or if the affected scope is uncertain",
-            "Run the full required Verification Gate at the final head",
+            "Obtain the full required Verification Gate result at the final head",
             "distinct from implementation and each other",
             "reviewed base, target head, review scope, executed checks and remaining findings",
             "Internal delta review does not satisfy external review",
@@ -1322,8 +1322,9 @@ class BackendContractTests(unittest.TestCase):
             "Post-Merge Verification (unconditional)",
             "This is not a merge gate",
             "the merge commit's tree hash",
-            "the verified PR head's tree hash",
-            "run the full recorded Verification Gate",
+            "the tree hash of the **actual tested subject**",
+            "obtain the full recorded Verification Gate result",
+            "A scoped recheck never replaces the full gate here.",
             "Auto-closure by a merge keyword is never evidence of completion",
             "merge_sha",
             "gate_result",
@@ -1434,7 +1435,10 @@ class BackendContractTests(unittest.TestCase):
         qa = self.read("agents/qa-agent.md")
         for prompt in (report_back, qa):
             self.assertIn("executed command's actual output", prompt)
-            self.assertIn("re-run the full Verification Gate", prompt)
+            # Issue #134: replaces the retired `re-run the full Verification
+            # Gate` pin; a fix is followed by a fresh gate result from each
+            # check's one executor, not a by-role rerun.
+            self.assertIn("obtain the full Verification Gate result again", prompt)
         # qa-agent.md owns the canonical wording; report-back cross-references
         # it rather than restating it.
         self.assertIn("Tool Capability Boundary", report_back)
@@ -1475,14 +1479,205 @@ class BackendContractTests(unittest.TestCase):
         # not run - absence of execution reading as satisfaction, inside the
         # file written to prevent exactly that.
         qa = self.read("agents/qa-agent.md")
-        self.assertIn("Execute the full Verification Gate.", qa)
+        self.assertIn("Account for the full Verification Gate.", qa)
         self.assertIn("Reading the gate is not running it.", qa)
-        self.assertIn("record each command with the exit code it returned", qa)
-        self.assertIn("Any gate command that fails, or does not run, fails QA.", qa)
+        self.assertIn("the command with the exit code it returned", qa)
+        self.assertIn("Any gate command that fails fails QA.", qa)
         # A project with no recorded gate is a finding, not a silent skip.
         self.assertIn("records no Verification Gate", qa)
         # The report has somewhere to put the evidence.
         self.assertIn("### Verification Gate", qa)
+
+    def test_check_ownership_is_declared_by_job_and_consumed_by_every_role(self) -> None:
+        """Issue #134: one executor per check; roles cite CI evidence."""
+        project = " ".join((ROOT / "PROJECT_CONTEXT.md").read_text(encoding="utf-8").split())
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        release = (ROOT / ".github" / "workflows" / "release-gate.yml").read_text(
+            encoding="utf-8"
+        )
+        # The ownership table names real job names, so a renamed job breaks
+        # this test instead of silently orphaning the declaration.
+        for job in ("Skill validation", "Shell validation", "Packaging validation"):
+            with self.subTest(job=job):
+                self.assertIn(f"name: {job}", ci)
+                self.assertIn(f"job `{job}`", project)
+        for job in ("PowerShell installer", "Strict plugin validation"):
+            with self.subTest(job=job):
+                self.assertIn(f"name: {job}", release)
+                self.assertIn(f"`{job}`", project)
+        self.assertIn("name: Bash installer (${{ matrix.os }})", release)
+        self.assertIn("`Bash installer (ubuntu-latest)`", project)
+        self.assertIn("`Bash installer (macos-latest)`", project)
+        self.assertIn("**Check ownership**", project)
+        self.assertIn("No mandatory worker pre-push gate exists in this policy today.", project)
+
+        phase4 = " ".join(self.read("phases/phase4.md").split())
+        for requirement in (
+            "## Check Ownership and CI Evidence",
+            "**One executor per check.**",
+            "A lane may cite a CI run it read by id, never one it assumes.",
+            "the **tested subject** is established",
+            "Pending CI never triggers local execution",
+            "Missing, skipped, cancelled, failed, incomplete or stale evidence",
+            "is **incomplete** and is never read as a pass",
+            "A recorded reason alone is not authority.",
+            "one designated executor",
+            "records the reason, scope (the checks run), tested subject, environment and result",
+            "A local pass never replaces required CI or erases a known failure.",
+            "A mandatory pre-push requirement already in project policy",
+            "until explicitly amended",
+        ):
+            with self.subTest(phase4=requirement):
+                self.assertIn(requirement, phase4)
+
+        for relative in ("agents/qa-agent.md", "agents/report-back.md"):
+            prompt = " ".join(self.read(relative).split())
+            with self.subTest(prompt=relative):
+                self.assertIn("One executor per check.", prompt)
+                self.assertIn("Check Ownership and CI Evidence", prompt)
+                self.assertIn("run, job and attempt", prompt)
+        qa = " ".join(self.read("agents/qa-agent.md").split())
+        self.assertIn("leaves its verdict pending under the existing wait bounds", qa)
+        self.assertIn("with no automatic local fallback", qa)
+        self.assertIn("leaves required coverage incomplete and is never read as a pass", qa)
+
+        # Workers run focused checks and project-required pre-push
+        # prerequisites; the generic full local suite is gone.
+        for relative in ("agents/worker-new.md", "agents/worker-fix.md"):
+            prompt = " ".join(self.read(relative).split())
+            with self.subTest(prompt=relative):
+                self.assertIn("one executor per check", prompt)
+                self.assertIn("Check Ownership and CI Evidence", prompt)
+                self.assertIn("any prerequisite `PROJECT_CONTEXT.md` requires before a push", prompt)
+                self.assertNotIn("run the full test suite", prompt)
+                self.assertNotIn("rerun the full", prompt)
+
+    def test_report_back_keeps_seven_sections_after_ci_evidence_change(self) -> None:
+        report_back = self.read("agents/report-back.md")
+        headings = re.findall(r"^\d\. \*\*([^*]+)\*\*", report_back, re.M)
+        self.assertEqual(
+            headings[:7],
+            [
+                "Outputs",
+                "Commands + exit codes",
+                "Deviations",
+                "Quality-gate self-assessment",
+                "Acceptance criteria",
+                "Evidence",
+                "Scope / ownership",
+            ],
+        )
+
+    def test_validator_fails_when_ownership_sentences_are_removed(self) -> None:
+        """Issue #134 AC-6: the validator, not only this suite, fails without them.
+
+        Runs `scripts/validate_skill.py` on a fresh temp copy per mutation,
+        never the test suite, one case at a time.
+        """
+        import shutil
+        import subprocess
+        import sys as _sys
+        import tempfile
+
+        def run_case(relative: str, old: str) -> subprocess.CompletedProcess:
+            with tempfile.TemporaryDirectory() as scratch:
+                scratch_path = Path(scratch)
+                (scratch_path / "scripts").mkdir()
+                shutil.copy2(ROOT / "scripts" / "validate_skill.py", scratch_path / "scripts")
+                shutil.copytree(ROOT / "skills", scratch_path / "skills")
+                shutil.copy2(ROOT / "PROJECT_CONTEXT.md", scratch_path / "PROJECT_CONTEXT.md")
+                shutil.copy2(ROOT / "CHANGELOG.custom.md", scratch_path / "CHANGELOG.custom.md")
+                target = scratch_path / "skills" / "dev" / relative
+                text = target.read_text(encoding="utf-8")
+                self.assertIn(old, text)
+                target.write_text(text.replace(old, "MUTATION: sentence removed"), encoding="utf-8")
+                return subprocess.run(
+                    [
+                        _sys.executable,
+                        "scripts/validate_skill.py",
+                        "--skill-dir",
+                        str(scratch_path / "skills" / "dev"),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    cwd=scratch_path,
+                )
+
+        cases = (
+            ("agents/qa-agent.md", "One executor per check.", "One executor per check."),
+            ("agents/report-back.md", "One executor per check.", "One executor per check."),
+            ("phases/phase4.md", "**One executor per check.**", "One executor per check."),
+            (
+                "agents/qa-agent.md",
+                "**Reading the gate is not running it.**",
+                "Reading the gate is not running it.",
+            ),
+        )
+        for relative, old, expected in cases:
+            with self.subTest(file=relative, sentence=expected):
+                result = run_case(relative, old)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(expected, result.stderr + result.stdout)
+
+    def test_ci_evidence_example_parses_and_separates_head_from_tested_subject(
+        self,
+    ) -> None:
+        """Issue #134 AC-7: the worked ledger example is valid and honest."""
+        import subprocess
+        import sys as _sys
+        import tempfile
+
+        template = self.read("templates/DEV_STATE_TEMPLATE.md")
+        blocks = re.findall(
+            r"^## CI evidence record schema.*?^```yaml\n(.*?)^```", template, re.M | re.S
+        )
+        self.assertEqual(len(blocks), 1, "expected one worked ci_runs example")
+        example = blocks[0]
+        ledger = (
+            "---\nschema_version: 2\nrun_id: example\nrun_status: active\n"
+            + example
+            + "---\n"
+        )
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "dev-state.md"
+            path.write_text(ledger, encoding="utf-8")
+            result = subprocess.run(
+                [
+                    _sys.executable,
+                    str(SKILL / "scripts" / "dev_state.py"),
+                    "--validate",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        head = re.search(r"^    headRefOid: (\w+)$", example, re.M)
+        tested = re.search(
+            r"^        tested_subject:\n          sha: (\w+)\n          kind: (\w+)\n"
+            r"          head: (\w+)\n          base_oid: (\w+)$",
+            example,
+            re.M,
+        )
+        self.assertIsNotNone(head)
+        self.assertIsNotNone(tested)
+        tested_sha, kind, tested_head, tested_base = tested.groups()
+        self.assertEqual(kind, "merge_ref")
+        self.assertNotEqual(head.group(1), tested_sha)
+        self.assertEqual(head.group(1), tested_head)
+        self.assertIn(f"base_oid: {tested_base}", example)
+        for field in ("run:", "job:", "attempt:", "definition_rev:", "environment:",
+                      "conclusion:", "observed_at:", "applicability:"):
+            with self.subTest(field=field):
+                self.assertIn(field, example)
+        # Additive under schema_version 2, and the post-merge record compares
+        # the actual tested subject rather than the PR head.
+        self.assertIn("`ci_runs` is additive under `schema_version: 2`", template)
+        self.assertIn("the tree hash of the recorded `tested_subject`", " ".join(template.split()))
+        self.assertIn("A match against the PR head's tree is not a match", " ".join(template.split()))
 
     def test_coverage_term_denies_a_full_score_rather_than_failing_a_lane(self) -> None:
         # The prose claimed an unexecuted criterion should keep a lane from

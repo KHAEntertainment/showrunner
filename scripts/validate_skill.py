@@ -43,6 +43,33 @@ REQUIRED = {
 }
 
 
+# Issue #134: one execution owner per check. Pinned per file because the
+# global `required_policy` matches the concatenated Skill, so one lane keeping
+# "One executor per check." would hide a sibling dropping it. The QA lane keeps
+# the pre-existing "reading is not running" sentence beside it.
+CHECK_OWNERSHIP_PINS = {
+    "agents/qa-agent.md": (
+        "One executor per check.",
+        "Reading the gate is not running it.",
+        "leaves its verdict pending under the existing wait bounds, with no automatic local fallback",
+        "never read as a pass",
+    ),
+    "agents/report-back.md": (
+        "One executor per check.",
+        "never as a pass",
+    ),
+    "phases/phase4.md": (
+        "**One executor per check.**",
+        "Pending CI never triggers local execution",
+        "A local pass never replaces required CI or erases a known failure.",
+        "A `pull_request` checkout tests GitHub's temporary merge commit",
+    ),
+    "templates/DEV_STATE_TEMPLATE.md": (
+        "## CI evidence record schema (Issue #134)",
+        "`tested_subject` is `{sha, kind, head, base_oid}` and is never the same field as `headRefOid`.",
+    ),
+}
+
 # Issue #97: swap-time report-back evidence. Pinned per file, as the rest of the
 # report-back enforcement is: `contract.md` states the backend-neutral
 # constraints, `traycer.md` the rule itself, `report-back.md` the first-line
@@ -549,7 +576,17 @@ def main() -> int:
         # definition of "verified"; `report-back.md` cross-references it.
         "Tool Capability Boundary",
         "executed command's actual output",
-        "re-run the full Verification Gate",
+        # Issue #134: the retired `re-run the full Verification Gate` pin said
+        # every lane reruns the suite by role. It is replaced, not dropped:
+        # the gate result is obtained again after a fix, from each check's one
+        # executor, and a lane cites CI evidence rather than repeating it.
+        "obtain the full Verification Gate result again",
+        "One executor per check.",
+        "Check Ownership and CI Evidence",
+        "never read as a pass",
+        "Pending CI never triggers local execution",
+        "A local pass never replaces required CI or erases a known failure.",
+        "A `pull_request` checkout tests GitHub's temporary merge commit",
         # QA scoring: absence of signal must not read as a positive result.
         # Each token pins one path by which a lane that measured nothing could
         # otherwise return a passing number.
@@ -577,7 +614,7 @@ def main() -> int:
         # QA must execute the whole gate, not read it. Without this the lane
         # could run the test suite, never run lint or type checks, and pass
         # with nothing recording that they had not run.
-        "Execute the full Verification Gate.",
+        "Account for the full Verification Gate.",
         "Reading the gate is not running it.",
         # A convenience entry point that omits a recorded command reports
         # success over something that never ran - the same defect one layer up.
@@ -940,8 +977,11 @@ def main() -> int:
             "Post-Merge Verification (unconditional)",
             "This is not a merge gate",
             "the merge commit's tree hash",
-            "the verified PR head's tree hash",
-            "run the full recorded Verification Gate",
+            # Issue #134: the comparison is against the actual tested subject
+            # (GitHub's merge ref under a pull_request checkout), not the head.
+            "the tree hash of the **actual tested subject**",
+            "obtain the full recorded Verification Gate result",
+            "A scoped recheck never replaces the full gate here.",
             "Auto-closure by a merge keyword is never evidence of completion",
             "merge_sha",
             "gate_result",
@@ -1165,6 +1205,8 @@ def main() -> int:
         ),
     }
     for relative, tokens in SWAP_EVIDENCE_PINS.items():
+        per_file_policy[relative] = per_file_policy.get(relative, ()) + tokens
+    for relative, tokens in CHECK_OWNERSHIP_PINS.items():
         per_file_policy[relative] = per_file_policy.get(relative, ()) + tokens
     for relative, tokens in sorted(per_file_policy.items()):
         target = skill_dir / relative

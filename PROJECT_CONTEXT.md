@@ -77,8 +77,10 @@ Runtime prerequisites for the Skill (not for installing it): `rtk`, `gh`, `git`,
 
 ## Verification Gate
 
-The exact commands worker, QA, and reviewer must all run. Replaces the language
-defaults in `${CLAUDE_SKILL_DIR}/phases/phase4.md`.
+The commands that make up the gate. Replaces the language defaults in
+`${CLAUDE_SKILL_DIR}/phases/phase4.md`. Each command has one executor, named in
+the ownership table below; no role re-runs a command another owner already ran
+at an applicable tested subject and environment.
 
 - **Lint**: `shellcheck install.sh tests/test-install.sh tests/migration-scratch.sh scripts/check_plugin_root.sh`
 - **Type check**: `n/a` — no typed surface
@@ -87,7 +89,22 @@ defaults in `${CLAUDE_SKILL_DIR}/phases/phase4.md`.
 - **Tests**: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'`, `bash tests/test-install.sh`, and — on Windows, or any runner with PowerShell — `pwsh tests/test-install.ps1`. The PowerShell suite is the only coverage `install.ps1` has; a gate that omits it can pass green while the Windows installer is broken.
 - **Packaging**: `scripts/check_plugin_root.sh` and `python3 scripts/check_version_sync.py`. CI then attempts `claude plugin validate . --strict` and `claude plugin tag --dry-run .`; if the Claude Code CLI cannot be installed, it records that reason and instead fails closed on malformed JSON or missing required `name` or `version` fields in `plugin.json`. The plugin catalog is no longer hosted here (ADR-014), so these checks run with it absent; the central catalog entry is verified separately at release time by scripts/check_central_catalog.py (network, so deliberately not part of the offline gate; see docs/RELEASING.md). On a developer machine with Claude Code available, run the two Claude commands as well.
 
-A change is not complete until every command above exits clean.
+A change is not complete until every command above has exited clean at its owner's run, per the table below.
+
+**Check ownership** (Issue #134). One executor per check definition, tested subject and environment. The job names are the `name:` values in the workflow files.
+
+| Gate commands | Executor (owner) | Evidence consumers cite |
+| --- | --- | --- |
+| `python3 scripts/validate_skill.py`, the Python `unittest` discovery | PR CI: Verification Gate workflow, job `Skill validation` | run, job, attempt |
+| `bash -n install.sh`, `shellcheck` over the shell scripts, the PowerShell parse check of `install.ps1` and `tests/test-install.ps1` | PR CI: Verification Gate workflow, job `Shell validation` | run, job, attempt |
+| `scripts/check_plugin_root.sh`, `python3 scripts/check_version_sync.py`, the source-archive check, the `claude plugin` manifest validation or its fail-closed JSON fallback | PR CI: Verification Gate workflow, job `Packaging validation` | run, job, attempt |
+| `bash tests/test-install.sh`, `pwsh tests/test-install.ps1`, strict `claude plugin validate . --strict` | Release Gate workflow, jobs `Bash installer (ubuntu-latest)`, `Bash installer (macos-latest)`, `PowerShell installer`, `Strict plugin validation`; runs on a `vX.Y.Z` tag, from the Actions tab, or on a PR the lead labels `run-installer-tests` | run, job, attempt |
+| Focused checks for the change: the tests the diff touches, and any prerequisite this policy requires before a push | The worker, within this policy | report-back commands and exit codes |
+
+- **Verification Gate jobs run on every PR and on `main`.** Worker, QA, reviewer and lead cite the run, job and attempt, plus the tested subject (the PR checks out GitHub's temporary merge commit, not the PR head). They do not repeat the jobs above.
+- **Release Gate jobs are skipped on an ordinary PR.** A skipped job is not passing evidence. A PR that changes `install.sh`, `install.ps1` or an installer test gets the label; no lane runs the installer suites locally by role.
+- **No mandatory worker pre-push gate exists in this policy today.** If this file later records a pre-push requirement, workers keep it until this file explicitly amends it.
+- **Local full-gate execution** needs an approved fallback trigger or a separate project requirement, plus one designated executor (see Check Ownership and CI Evidence in the Dev skill's phases/phase4.md).
 
 ---
 

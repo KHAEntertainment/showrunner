@@ -43,9 +43,9 @@ it belongs in the Limitations section of your report.
 
 **When Graft is available per `${CLAUDE_SKILL_DIR}/graft.md`, produce callers-of/dependents evidence from `rtk proxy graft callers <symbol> -d N --json` + freshness for blast-radius analysis; else record `graph_evidence: unavailable` + cause and trace manually with `rg`/`git grep`. Graph output = static evidence, never execution confirmation.**
 
-After any fix, re-run the full Verification Gate rather than only the check that
-failed. A targeted re-run shows the one symptom went away; it does not show the
-fix left everything else intact. A gate result carried over from an earlier
+After any fix, obtain the full Verification Gate result again at the new head
+rather than only the check that failed. A targeted re-run shows the one symptom
+went away; it does not show the fix left everything else intact. A gate result carried over from an earlier
 commit is not evidence at this commit.
 
 For bounded corrections, use **Review after fixes** in
@@ -70,15 +70,15 @@ restating it.
 
 3. Run `rtk gh pr diff [N] --repo github.com/[pr-repository] --name-only` and focus on modified files plus their direct callers. Record the exact QA scope; do not claim a whole-repository review.
 
-4. **Run the full test suite through the relevant RTK wrapper when available.** Failing tests mean QA fails immediately.
+4. **Establish the test evidence.** Tests the Verification Gate assigns to CI are consumed from CI evidence per **Check Ownership and CI Evidence** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`: cite the run, job and attempt and the tested subject, and do not repeat them. Run locally only the focused or acceptance checks assigned to this lane, and a gate check with no applicable CI evidence only when an eligible fallback applies. Failing tests, whether in the cited CI evidence or in your own run, mean QA fails immediately.
 
-   Whether the project has a test framework is a conclusion you must reach and show, not an assumption you may hold. Look at the dependency manifest, the test directory, the CI workflow, and any Verification Gate recorded in `PROJECT_CONTEXT.md`, and state what you looked at. If you find a framework, run it. If the PR supplies a verification script in place of a framework, run that and report its actual output as the executed evidence. If neither exists, record **No test framework detected** as a Medium finding with the basis for that conclusion attached. Absence of a test framework is a reportable gap, never a silent skip, and it never scores the same as passing tests.
+   Whether the project has a test framework is a conclusion you must reach and show, not an assumption you may hold. Look at the dependency manifest, the test directory, the CI workflow, and any Verification Gate recorded in `PROJECT_CONTEXT.md`, and state what you looked at. If you find a framework, take its results from its recorded executor as above. If the PR supplies a verification script in place of a framework, run that and report its actual output as the executed evidence. If neither exists, record **No test framework detected** as a Medium finding with the basis for that conclusion attached. Absence of a test framework is a reportable gap, never a silent skip, and it never scores the same as passing tests.
 
-5. **Execute the full Verification Gate.** Run every command recorded under the Verification Gate in `PROJECT_CONTEXT.md` — lint, type check, static analysis, tests, packaging — and record each command with the exit code it returned. A single entry point may be used only when it is known to run every recorded command; check its coverage against the recorded list and run any remainder individually. An entry point that omits a recorded command reports success over something that never ran.
+5. **Account for the full Verification Gate.** For every command recorded under the Verification Gate in `PROJECT_CONTEXT.md` — lint, type check, static analysis, tests, packaging — name its executor from the ownership table and record the evidence: for a CI-owned command, the run, job and attempt, the tested subject and the conclusion; for any command this lane ran, the command with the exit code it returned. One executor per check. Do not run a CI-owned command again because this lane needs a report, and do not run it at all unless an approved fallback or a separate project requirement names this lane as its one executor. A single entry point may be used only when it is known to run every recorded command; check its coverage against the recorded list and account for any remainder individually. An entry point that omits a recorded command reports success over something that never ran.
 
-   **Reading the gate is not running it.** Confirming the gate exists, or that the commands look right, verifies nothing; a gate you did not execute is not evidence at this commit. Report the commands and their exit codes as they came back — never paraphrase a result, and never carry one forward from an earlier run or another commit. Any gate command that fails, or does not run, fails QA.
+   **Reading the gate is not running it.** Confirming the gate exists, or that the commands look right, verifies nothing; a gate you neither executed nor read as CI evidence by run id is not evidence at this commit. Report the commands and their exit codes as they came back — never paraphrase a result, and never carry one forward from an earlier run or another commit. Any gate command that fails fails QA. A command whose CI evidence is queued or running leaves its verdict pending under the existing wait bounds, with no automatic local fallback. A command with missing, skipped, cancelled or stale evidence leaves required coverage incomplete and is never read as a pass.
 
-   If the gate includes the test suite, step 4 is satisfied by this run; report one set of figures from it rather than a separate figure from an earlier partial run. After any fix lands, re-run the whole gate rather than the check that failed, and report the exit codes from that final run.
+   If the gate includes the test suite, step 4 is satisfied by this accounting; report one set of figures from it rather than a separate figure from an earlier partial run. After any fix lands, obtain the whole gate result again at the new head rather than the check that failed, and report the evidence from that final run.
 
    If `PROJECT_CONTEXT.md` records no Verification Gate, say so with the basis for that conclusion and record it as a Medium finding. A project with no recorded gate is a reportable gap, not a step that quietly contributes nothing.
 
