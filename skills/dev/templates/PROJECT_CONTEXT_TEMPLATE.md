@@ -36,6 +36,18 @@
 
 ---
 
+## Risk Tiers (optional)
+
+Omit this section to use the floors in `${CLAUDE_SKILL_DIR}/phases/phase3.5.md` as written: only executable files make a diff behavioral, and the T2 and T3 floors are the defaults named there. Declare paths only where the project's behavior lives somewhere an executable-file test would miss (for example, a project whose behavior is its prompt or SOP files), or where it needs a stricter floor.
+
+- **Behavior paths**: none (a diff touching nothing here and no executable file is T0)
+- **T2 paths**: none (added to the plan-approval-list floor)
+- **T3 paths**: none (added to the critical-path floor)
+
+A declared path raises a tier; it never lowers one. Lowering a floor is an owner decision: record the owner's change here with its date, and the lead applies it only from this record.
+
+---
+
 ## Execution Routing Policy (optional)
 
 Omit this section to use the selected backend's lead route. Configure only roles that need an override.

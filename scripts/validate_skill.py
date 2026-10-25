@@ -447,6 +447,150 @@ def check_bounded_remediation(skill_dir: Path, errors: list[str]) -> None:
                     )
 
 
+# Issue #149: the size-only QA trigger is replaced by deterministic risk tiers.
+# `phases/phase3.5.md` (Risk Tiers) is the one place the rule is stated; the
+# Phase 0 router in `SKILL.md` mirrors each tier's Phase 3.5 value and marks
+# every path `3.5 (per risk tier)`. The check below compares the two documents
+# with each other (so they cannot drift, #107) and with the pinned policy (so
+# both cannot agree on the wrong rule).
+TIER_NAMES = {"T0": "nonbehavioral", "T1": "ordinary", "T2": "elevated", "T3": "critical"}
+TIER_PHASE35 = {"T0": "skip", "T1": "run", "T2": "run", "T3": "run"}
+ROUTER_PATH_MARKER = "3.5 (per risk tier)"
+TIER_ROUTER_HEADING = "## Phase 0 — Entry Router"
+TIER_TRIGGER_HEADING = "## Risk Tiers"
+RETIRED_TRIGGER_TOKENS = (
+    "Quantitative Trigger",
+    "quantitative triggers",
+    "Added or modified diff lines",
+    "Modified files ≥ 3",
+    "Database schema change | Yes",
+)
+TIER_RULE_PINS = (
+    "The rule applies to every router path, Emergency Hotfix included.",
+    "There is no per-path exemption.",
+    "The lead never lowers a floor",
+    "Discovery raises the tier.",
+)
+_TIER_CELL = re.compile(r"^(T\d)\s+(\w+)$")
+
+
+def _table_cells(line: str) -> list[str] | None:
+    line = line.strip()
+    if not (line.startswith("|") and line.endswith("|")):
+        return None
+    return [cell.strip() for cell in line.strip("|").split("|")]
+
+
+def parse_tier_table(section: str) -> tuple[dict[str, tuple[str, str]], list[str]]:
+    """Map tier id -> (name, Phase 3.5 value) from the tier rows of a section.
+
+    A tier row is a table row whose first cell is `T<digit> <name>`; its last
+    cell begins with the Phase 3.5 value (`skip` or `run`). Duplicate ids are
+    reported, never overwritten.
+    """
+    rows: dict[str, tuple[str, str]] = {}
+    problems: list[str] = []
+    for line in section.splitlines():
+        cells = _table_cells(line)
+        if not cells or len(cells) < 2:
+            continue
+        match = _TIER_CELL.match(cells[0])
+        if not match:
+            continue
+        tier, name = match.groups()
+        words = cells[-1].split()
+        value = words[0].lower() if words else ""
+        if tier in rows:
+            problems.append(f"tier {tier} appears more than once")
+            continue
+        rows[tier] = (name, value)
+    return rows, problems
+
+
+def router_path_cells(section: str) -> dict[str, str]:
+    """Map each router request type to its Path cell (rows with a bold type)."""
+    paths: dict[str, str] = {}
+    for line in section.splitlines():
+        cells = _table_cells(line)
+        if cells and len(cells) == 3 and cells[0].startswith("**") and cells[0].endswith("**"):
+            paths[cells[0].strip("*")] = cells[2]
+    return paths
+
+
+def check_risk_tiers(skill_dir: Path) -> list[str]:
+    """Return errors when the router and the Phase 3.5 trigger disagree (Issue #149)."""
+    errors: list[str] = []
+    entry = skill_dir / "SKILL.md"
+    trigger = skill_dir / "phases" / "phase3.5.md"
+    if not entry.is_file() or not trigger.is_file():
+        return errors  # the required-manifest check already reports the missing file
+    entry_text = entry.read_text(encoding="utf-8")
+    trigger_text = trigger.read_text(encoding="utf-8")
+
+    for token in RETIRED_TRIGGER_TOKENS:
+        for name, text in (("SKILL.md", entry_text), ("phases/phase3.5.md", trigger_text)):
+            if token in text:
+                fail(errors, f"{name} still carries the retired size-only QA trigger: {token!r}")
+
+    trigger_section = markdown_section(trigger_text, TIER_TRIGGER_HEADING)
+    router_section = markdown_section(entry_text, TIER_ROUTER_HEADING)
+    if trigger_section is None:
+        fail(errors, f"phases/phase3.5.md must contain a `{TIER_TRIGGER_HEADING}` section")
+        return errors
+    if router_section is None:
+        fail(errors, f"SKILL.md must contain a `{TIER_ROUTER_HEADING}` section")
+        return errors
+
+    for pin in TIER_RULE_PINS:
+        if pin not in normalize(trigger_section):
+            fail(errors, f"phases/phase3.5.md Risk Tiers must state: {pin}")
+
+    trigger_rows, trigger_problems = parse_tier_table(trigger_section)
+    router_rows, router_problems = parse_tier_table(router_section)
+    for problem in trigger_problems:
+        fail(errors, f"phases/phase3.5.md Risk Tiers: {problem}")
+    for problem in router_problems:
+        fail(errors, f"SKILL.md router tier table: {problem}")
+
+    expected = set(TIER_NAMES)
+    for label, rows in (("phases/phase3.5.md Risk Tiers", trigger_rows), ("SKILL.md router tier table", router_rows)):
+        missing = sorted(expected - set(rows))
+        extra = sorted(set(rows) - expected)
+        if missing:
+            fail(errors, f"{label} is missing tier(s): {', '.join(missing)}")
+        if extra:
+            fail(errors, f"{label} has unknown tier(s): {', '.join(extra)}")
+        for tier, (name, value) in sorted(rows.items()):
+            if tier in TIER_NAMES and name != TIER_NAMES[tier]:
+                fail(errors, f"{label}: tier {tier} must be named {TIER_NAMES[tier]!r}, not {name!r}")
+            if value not in ("skip", "run"):
+                fail(errors, f"{label}: tier {tier} Phase 3.5 value must be `skip` or `run`, not {value!r}")
+
+    for tier in sorted(expected & set(trigger_rows) & set(router_rows)):
+        if trigger_rows[tier][1] != router_rows[tier][1]:
+            fail(
+                errors,
+                f"SKILL.md router and phases/phase3.5.md disagree on {tier}: "
+                f"router says {router_rows[tier][1]!r}, Phase 3.5 says {trigger_rows[tier][1]!r}",
+            )
+    for label, rows in (("phases/phase3.5.md", trigger_rows), ("SKILL.md router", router_rows)):
+        for tier, value in TIER_PHASE35.items():
+            if tier in rows and rows[tier][1] in ("skip", "run") and rows[tier][1] != value:
+                fail(errors, f"{label}: tier {tier} must be `{value}` for Phase 3.5, not `{rows[tier][1]}`")
+
+    paths = router_path_cells(router_section)
+    if not paths:
+        fail(errors, "SKILL.md router table has no request-type rows to check")
+    for request_type, path in sorted(paths.items()):
+        if path.count(ROUTER_PATH_MARKER) != 1 or path.count("3.5") != 1:
+            fail(
+                errors,
+                f"SKILL.md router path for {request_type!r} must state Phase 3.5 exactly once as "
+                f"`{ROUTER_PATH_MARKER}`; the tier decides, not the path: {path!r}",
+            )
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1496,6 +1640,7 @@ def main() -> int:
             )
 
     check_bounded_remediation(skill_dir, errors)
+    errors.extend(check_risk_tiers(skill_dir))
 
     state_template = skill_dir / "templates" / "DEV_STATE_TEMPLATE.md"
     if state_template.is_file():

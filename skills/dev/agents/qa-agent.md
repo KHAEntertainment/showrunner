@@ -85,7 +85,7 @@ restating it.
 6. Verify each acceptance criterion using:
    `[AC-N] [criterion] → evaluator: [ci / test / demonstration / independent reviewer / human] → method: [code analysis / test execution / CI evidence] → outcome: [pass / fail / inconclusive / not_applicable] + reason`
 
-   Every criterion has one assigned **evaluator type**, taken from the Issue, the lead's envelope or the criteria record; where none is assigned, record the evaluator you used and say so. A criterion passes only by its assigned evaluator. A worker demonstration satisfies only a criterion whose assigned evaluator is the demonstration; it never stands in for `ci`, `test`, `independent reviewer` or `human`. A pass by static reading alone satisfies only a criterion assigned to code analysis by the Issue; otherwise it is `inconclusive`, with the evaluator that was not run named.
+   Every criterion has one assigned **evaluator type**, taken from the Issue, the lead's envelope or the criteria record; where none is assigned, record the evaluator you used and say so. A criterion passes only by its assigned evaluator. A worker demonstration satisfies only a criterion whose assigned evaluator is the demonstration; it never stands in for `ci`, `test`, `independent reviewer` or `human`. A pass by static reading alone satisfies no criterion: reading the code or diff is a method, never an evaluator type. Unless the criterion's assigned evaluator ran, the outcome is `inconclusive`, with the evaluator that was not run named.
 
 7. Static-check the following common issues:
    - Boundary conditions: is there handling code for empty input, None, extreme values, special characters?

@@ -2,19 +2,27 @@
 
 ---
 
-## Quantitative Trigger
+## Risk Tiers
 
-Run QA when any condition is true; otherwise record why QA was skipped and continue to Phase 4:
+This section is the single statement of the rule that decides whether Phase 3.5 runs. The Phase 0 router in `SKILL.md` mirrors only the last column, and `scripts/validate_skill.py` fails when the two disagree. No size threshold (changed lines, file count, interface or schema change) decides anything: a tier floor is a property of the paths and kinds of file the diff touches.
 
-| Condition | QA required |
-|---|---|
-| Added or modified diff lines ≥ 50 | Yes |
-| Modified files ≥ 3 | Yes |
-| New external interface, API endpoint, or public function signature | Yes |
-| Database schema change | Yes |
-| Authentication or authorization logic | Yes |
+| Tier | Floor | Lane set | Phase 3.5 |
+|---|---|---|---|
+| T0 nonbehavioral | The diff touches no executable file and nothing under the project's declared behavior paths | CI + lead review; no reviewer lane, no acceptance lane | skip |
+| T1 ordinary | Default: any diff that matches no higher floor and is not T0 | CI + one qualified independent review + post-merge verification; acceptance lane only if a declared acceptance check applies | run |
+| T2 elevated | The plan-approval list in `${CLAUDE_SKILL_DIR}/phases/phase3.md` (architecture, databases, auth, shared interfaces, migrations, broad refactors), or any path the project declares as a T2 path | Current T2 protections, unchanged | run |
+| T3 critical | `resolve_repository.py` (repository and push/PR target resolution), destructive migrations, review-gate policy, release and tag paths, secrets, or any path the project declares as a T3 path | Full current cycle; only the owner lowers a T3 floor, never the lead | run |
 
-Use compact diff statistics first. Do not substitute subjective judgment for these thresholds. The Tech Lead may also require QA for lower-volume but high-risk changes.
+Rules:
+
+- The tier is the highest floor the diff matches, computed from the diff's file list (`rtk gh pr diff <PR> --name-only` or `rtk proxy git diff --name-only`). Record the tier, the matching floor and the evidence (the paths) in `.agent/dev-state.md` before deciding whether Phase 3.5 runs.
+- An executable file is any file the project runs, installs or builds from: source code, scripts, installers, CI workflow definitions, and package or build manifests. Declared behavior paths are paths the project names in `PROJECT_CONTEXT.md` **Risk Tiers** (see `${CLAUDE_SKILL_DIR}/templates/PROJECT_CONTEXT_TEMPLATE.md`); a project that declares none has only executable files as its behavior surface.
+- The rule applies to every router path, Emergency Hotfix included. There is no per-path exemption.
+- Discovery raises the tier. A raised tier adds its checks to the same PR; evidenced work is not restarted.
+- Lowering a floor is an owner decision recorded in `PROJECT_CONTEXT.md`. The lead never lowers a floor, and never reads an undeclared path as T0 to save a lane.
+- During the T1 pilot the T1 lane set above is the target and is implemented separately. Until it lands, T1 keeps the current lanes (this Phase, then the Phase 4 review), and T2 and T3 keep their current protections unchanged.
+
+When the tier is T0, record why Phase 3.5 was skipped (the tier and the paths that placed it there) and continue to Phase 4. The Tech Lead may raise a tier for a change whose risk the floors do not capture; the lead may not lower one.
 
 ## Prepare the QA Lane
 
