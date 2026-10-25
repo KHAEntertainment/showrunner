@@ -3161,5 +3161,203 @@ class SwapTimeEvidenceTests(unittest.TestCase):
         self.assertIn("does not replace the correlation rule", report_back)
 
 
+class BoundedRemediationTests(unittest.TestCase):
+    """Issue #150: defect-episode fix batches and lead diagnosis before batch 3."""
+
+    def read(self, relative: str) -> str:
+        return (SKILL / relative).read_text(encoding="utf-8")
+
+    def example(self) -> str:
+        blocks = re.findall(
+            r"^## Defect episode record schema.*?^```yaml\n(.*?)^```",
+            self.read("templates/DEV_STATE_TEMPLATE.md"),
+            re.M | re.S,
+        )
+        self.assertEqual(len(blocks), 1, "expected one worked defect_episodes example")
+        return blocks[0]
+
+    @staticmethod
+    def validate(content: str):
+        import subprocess
+        import sys as _sys
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "dev-state.md"
+            path.write_text(content, encoding="utf-8")
+            return subprocess.run(
+                [_sys.executable, str(SKILL / "scripts" / "dev_state.py"), "--validate", str(path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+    @staticmethod
+    def ledger(body: str) -> str:
+        return "---\nschema_version: 2\nrun_id: example\nrun_status: active\n" + body + "---\n"
+
+    @staticmethod
+    def limit(example: str) -> tuple[int, int]:
+        """Return (fix_batches, bound + sum(authorized_additional_batches))."""
+        batches = int(re.search(r"^    fix_batches: (\d+)$", example, re.M).group(1))
+        bound = int(re.search(r"^    bound: (\d+)$", example, re.M).group(1))
+        authorized = sum(
+            int(n) for n in re.findall(r"^        authorized_additional_batches: (\d+)$", example, re.M)
+        )
+        return batches, bound + authorized
+
+    def test_bounded_remediation_rules_are_pinned_in_phase4_and_qa_fails(self) -> None:
+        phase4 = " ".join(self.read("phases/phase4.md").split())
+        section = phase4.split("## Bounded remediation ", 1)[1].split(" ## Merge Order", 1)[0]
+        for requirement in (
+            "Batch 3 requested without a diagnosis entry → dispatch refused by this SOP.",
+            "A fix batch beyond the episode's bound is refused until a diagnosis entry covers it",
+            "Batches 1 and 2 are automatic.",
+            "Only material findings drive a fix batch.",
+            "Advisory findings go to the debt log and never produce a batch, an automatic Issue or a PR.",
+            "A diagnosis authorizes only the named additional batch count, never unlimited rounds.",
+            "reaching it again needs a new diagnosis",
+            "A cap never clears a blocker and never escalates by itself.",
+            "the blocker stays open",
+            "carries the same `defect_episode_ref` and continues the episode's count",
+            "`consecutive_rate_limits` is never counted as a fix batch",
+        ):
+            with self.subTest(phase4=requirement):
+                self.assertIn(requirement, section)
+        # Entry points reach the section from the existing fix-batch paths.
+        self.assertIn("follow **Bounded remediation** below before dispatching it", phase4)
+        self.assertIn("apply **Bounded remediation** below before dispatching it", phase4)
+        qa_fails = self.read("phases/phase3.5.md").split("### QA fails\n", 1)[1]
+        qa_fails = " ".join(qa_fails.split())
+        for requirement in (
+            "following **Bounded remediation** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`",
+            "Batch 3 requested without a diagnosis entry → dispatch refused by this SOP",
+            "Only unresolved material findings and `fail` outcomes drive a batch",
+        ):
+            with self.subTest(qa_fails=requirement):
+                self.assertIn(requirement, qa_fails)
+        # The P4 definition and the earlier fix-batch rules stay intact.
+        for kept in (
+            "Dispatch confirmed blockers together",
+            "avoid extra commits solely for advisory cleanup",
+        ):
+            with self.subTest(kept=kept):
+                self.assertIn(kept, phase4)
+
+    def test_defect_episode_example_parses_and_carries_the_count(self) -> None:
+        example = self.example()
+        result = self.validate(self.ledger(example))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # AC-3/AC-4: both PRs of the episode point at the one episode record.
+        episode_id = re.search(r"^  - id: (\S+)$", example, re.M).group(1)
+        refs = re.findall(r"^    defect_episode_ref: (\S+)$", example, re.M)
+        self.assertEqual(refs, [episode_id, episode_id])
+        prs = [int(n) for n in re.findall(r"^      - (\d+)$", example, re.M)]
+        numbers = [int(n) for n in re.findall(r"^  - number: (\d+)$", example, re.M)]
+        self.assertEqual(prs, numbers)
+        # AC-5: the example used exactly its named bound, no more.
+        batches, limit = self.limit(example)
+        self.assertGreater(batches, 2)
+        self.assertEqual(batches, limit)
+        for field in ("opened_at:", "what_failed:", "decision:", "authorized_additional_batches:"):
+            with self.subTest(field=field):
+                self.assertIn(field, example)
+
+    def test_example_invariant_rejects_counterexamples(self) -> None:
+        example = self.example()
+        # A fourth batch against a bound that authorized three is over the limit.
+        overrun = example.replace("fix_batches: 3", "fix_batches: 4")
+        batches, limit = self.limit(overrun)
+        self.assertGreater(batches, limit)
+        # Batch 3 with the diagnosis removed has nothing authorizing it.
+        undiagnosed = re.sub(
+            r"^    diagnoses:\n(?:        .*\n|      - .*\n)+", "    diagnoses: []\n", example, flags=re.M
+        )
+        batches, limit = self.limit(undiagnosed)
+        self.assertGreater(batches, limit)
+        # The mutated shapes are still valid YAML-subset ledgers: the SOP rule,
+        # not the parser, is what refuses the dispatch.
+        for body in (overrun, undiagnosed):
+            self.assertEqual(self.validate(self.ledger(body)).returncode, 0)
+
+    def test_ledgers_without_the_new_fields_stay_valid(self) -> None:
+        template = self.read("templates/DEV_STATE_TEMPLATE.md")
+        self.assertIn("\ndefect_episodes: []\n", template)
+        old_template = template.replace("defect_episodes: []\n", "", 1)
+        self.assertNotIn("defect_episodes", old_template.split("\n---\n", 1)[0])
+        self.assertEqual(self.validate(old_template).returncode, 0)
+        old_ledger = self.ledger(
+            "pull_requests:\n  - number: 150\n    issue: 150\n    branch: feat/150-example\n"
+            "    headRefOid: 4e683b4\n"
+        )
+        self.assertNotIn("defect_episode_ref", old_ledger)
+        self.assertEqual(self.validate(old_ledger).returncode, 0)
+        # The ledger profile still refuses flow syntax on the new key.
+        flow = self.validate(self.ledger("defect_episodes: [ep-1, ep-2]\n"))
+        self.assertNotEqual(flow.returncode, 0)
+        self.assertIn("flow", flow.stderr)
+
+    def test_validator_fails_when_bounded_remediation_pins_are_removed(self) -> None:
+        """Runs only `scripts/validate_skill.py` on a temp copy per mutation."""
+        import shutil
+        import subprocess
+        import sys as _sys
+        import tempfile
+
+        def run_case(relative: str, old: str) -> subprocess.CompletedProcess:
+            with tempfile.TemporaryDirectory() as scratch:
+                scratch_path = Path(scratch)
+                (scratch_path / "scripts").mkdir()
+                shutil.copy2(ROOT / "scripts" / "validate_skill.py", scratch_path / "scripts")
+                shutil.copytree(ROOT / "skills", scratch_path / "skills")
+                shutil.copy2(ROOT / "PROJECT_CONTEXT.md", scratch_path / "PROJECT_CONTEXT.md")
+                shutil.copy2(ROOT / "CHANGELOG.custom.md", scratch_path / "CHANGELOG.custom.md")
+                target = scratch_path / "skills" / "dev" / relative
+                text = target.read_text(encoding="utf-8")
+                self.assertIn(old, text)
+                target.write_text(text.replace(old, "MUTATION: sentence removed"), encoding="utf-8")
+                return subprocess.run(
+                    [_sys.executable, "scripts/validate_skill.py", "--skill-dir",
+                     str(scratch_path / "skills" / "dev")],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    cwd=scratch_path,
+                )
+
+        cases = (
+            (
+                "phases/phase4.md",
+                "Batch 3 requested without a diagnosis entry → dispatch refused by this SOP.",
+                "dispatch refused by this SOP",
+            ),
+            (
+                "phases/phase4.md",
+                "A cap never clears a blocker and never escalates by itself.",
+                "A cap never clears a blocker",
+            ),
+            (
+                "phases/phase4.md",
+                "A diagnosis authorizes only the named additional batch count, never unlimited rounds.",
+                "named additional batch count",
+            ),
+            (
+                "phases/phase3.5.md",
+                "Batch 3 requested without a diagnosis entry → dispatch refused by this SOP",
+                "`### QA fails` missing required policy",
+            ),
+            (
+                "templates/DEV_STATE_TEMPLATE.md",
+                "A diagnosis never authorizes an open-ended number of batches.",
+                "open-ended number of batches",
+            ),
+        )
+        for relative, old, expected in cases:
+            with self.subTest(file=relative, sentence=expected):
+                result = run_case(relative, old)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(expected, result.stderr + result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

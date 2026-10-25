@@ -389,6 +389,64 @@ def parse_frontmatter_block(block: str, errors: list[str]) -> dict[str, str]:
     return parsed
 
 
+# Issue #150: bounded remediation. Pinned per file (not against the
+# concatenated Skill) so one lane keeping a sentence cannot hide a sibling
+# dropping it. Each sentence sits on one line in its source file. The phase3.5
+# pins are scoped to the `### QA fails` section, where the gate belongs.
+BOUNDED_REMEDIATION_PINS = {
+    "phases/phase4.md": (
+        "## Bounded remediation",
+        "Batch 3 requested without a diagnosis entry → dispatch refused by this SOP.",
+        "A fix batch beyond the episode's bound is refused until a diagnosis entry covers it",
+        "A diagnosis authorizes only the named additional batch count, never unlimited rounds.",
+        "A cap never clears a blocker and never escalates by itself.",
+        "carries the same `defect_episode_ref` and continues the episode's count",
+        "Only material findings drive a fix batch.",
+        "`consecutive_rate_limits` is never counted as a fix batch",
+    ),
+    "templates/DEV_STATE_TEMPLATE.md": (
+        "## Defect episode record schema (Issue #150)",
+        "`defect_episodes` is additive under `schema_version: 2`",
+        "plus the sum of `authorized_additional_batches` over `diagnoses`",
+        "A diagnosis never authorizes an open-ended number of batches.",
+        "a positive integer for the first three values, and 0 for `owner_decision`",
+        "Every PR in the same episode carries the same `defect_episode_ref`",
+    ),
+}
+BOUNDED_REMEDIATION_QA_FAILS_PINS = (
+    "following **Bounded remediation** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`",
+    "Batch 3 requested without a diagnosis entry → dispatch refused by this SOP",
+    "Only unresolved material findings and `fail` outcomes drive a batch",
+)
+
+
+def check_bounded_remediation(skill_dir: Path, errors: list[str]) -> None:
+    for relative, tokens in BOUNDED_REMEDIATION_PINS.items():
+        target = skill_dir / relative
+        if not target.is_file():
+            continue
+        target_text = target.read_text(encoding="utf-8")
+        for token in tokens:
+            if token not in target_text:
+                fail(errors, f"{relative} missing required policy: {token}")
+    qa_phase = skill_dir / "phases" / "phase3.5.md"
+    if qa_phase.is_file():
+        match = re.search(
+            r"^### QA fails$(.*?)(?=^##+ |\Z)",
+            qa_phase.read_text(encoding="utf-8"),
+            re.M | re.S,
+        )
+        if match is None:
+            fail(errors, "phases/phase3.5.md missing required section: QA fails")
+        else:
+            for token in BOUNDED_REMEDIATION_QA_FAILS_PINS:
+                if token not in match.group(1):
+                    fail(
+                        errors,
+                        f"phases/phase3.5.md `### QA fails` missing required policy: {token}",
+                    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1436,6 +1494,8 @@ def main() -> int:
                 "If the edit is intentional, update ROUTING_SECTION_BODY in "
                 "scripts/validate_skill.py in the same commit.",
             )
+
+    check_bounded_remediation(skill_dir, errors)
 
     state_template = skill_dir / "templates" / "DEV_STATE_TEMPLATE.md"
     if state_template.is_file():
