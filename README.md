@@ -48,7 +48,7 @@ Showrunner already works with the goal modes you have, such as Claude Code's `/g
 ### Quality gates on every pull request
 
 - Each coding agent gets its own branch, its own worktree, and an explicit list of files it owns.
-- QA checks the change against its Issue's acceptance criteria, runs the project's verification gate, and scores the result; a pass needs 80 or more and no critical or high findings. It runs when a change crosses a size or risk threshold, such as 50 or more changed lines or an auth change; otherwise the skip and its reason are recorded. Emergency hotfixes always skip QA.
+- QA checks the change against its Issue's acceptance criteria, runs the project's verification gate, and scores the result; a pass needs 80 or more and no critical or high findings. It runs by the change's risk tier, not its size: a docs-only change outside the project's behavior paths is T0 and skips QA, and every other change runs it. The skip and its reason are recorded. Emergency hotfixes follow the same tiers.
 - Review runs on every pull request: a scope-drift check, static analysis, two review passes, an audit of which code paths the tests cover, and specialist reviewers when the change calls for them.
 - A green status check or a bot's "acknowledged" comment doesn't count as a review. If your external reviewer is rate-limited three times in a row, Showrunner brings in a reviewer from a different model family instead of merging unreviewed.
 - After each merge, Showrunner verifies the merged commit, re-checks the Issue's acceptance criteria, and reopens the Issue if something didn't ship.
@@ -83,11 +83,11 @@ Showrunner picks a path based on what you ask for, tells you which one and why, 
 | --- | --- |
 | A new project | Align → break down → build → QA → review and merge → retro |
 | A feature or large change | Break down → build → QA → review and merge → retro |
-| A small fix | Light breakdown → build → QA when a threshold is crossed → review and merge → retro |
+| A small fix | Light breakdown → build → QA unless the change is T0 → review and merge → retro |
 | An emergency hotfix | Express breakdown, branched from `main` → build → review and merge → retro |
 | A refactor or architecture change | Breakdown with an impact check or refactor rules → build → QA → review and merge → retro |
 
-QA runs when a change crosses a size or risk threshold, such as 50 or more changed lines or an auth change. Emergency hotfixes always skip it.
+QA runs by risk tier: only a T0 change (no executable file and nothing under the project's declared behavior paths) skips it, on every path including an emergency hotfix.
 
 ## Quick start
 

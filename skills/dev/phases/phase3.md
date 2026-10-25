@@ -33,7 +33,7 @@ For every role, execute adapter `resolve_route` and validate it before `launch`.
 - Both Traycer topologies use distinct receive-capable Chat/GUI child agents. Topology controls scheduling and ownership, not backend selection.
 - Map each agent to exactly one Issue or explicit lane. Agents never self-claim unrelated work.
 - Give coding agents explicit file ownership and one pre-created, verified worktree.
-- Require plan approval before edits involving architecture, databases, auth, shared interfaces, migrations, or broad refactors.
+- Require plan approval before edits involving architecture, databases, auth, shared interfaces, migrations, or broad refactors. This list is also the T2 floor of the risk tiers in `${CLAUDE_SKILL_DIR}/phases/phase3.5.md`; change one and change the other.
 - Send the full worker prompt and provider-neutral assignment envelope. Record the agent ID, resolved route/source, and communication response ID.
 
 ## Backend-Neutral Task Board
