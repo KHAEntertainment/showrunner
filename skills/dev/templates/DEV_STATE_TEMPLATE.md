@@ -48,6 +48,7 @@ workspace_debt:
   threshold: null
   threshold_tripped: null
 pull_requests: []
+defect_episodes: []
 blockers: []
 run_id: null
 run_status: null
@@ -116,7 +117,7 @@ The termination condition is kept because the cause is lossy on purpose. `trunca
 
 ## Pull request record schema
 
-Each `pull_requests` entry records: `number`, `issue`, `branch`, `headRefOid`, `qa_status`, `qa_agent_id`, `internal_review_status`, `reviewer_agent_id`, `external_review_state`, `external_review_payload_snapshots`, `expected_reviewers`, `requested_reviewers`, `observed_reviewers`, `pending_reviewers`, `completed_reviewers`, `external_findings`, `unresolved_actionable_findings`, `review_deadline`, `wait_extensions`, `approved_review_requests`, `consecutive_rate_limits`, `external_reviewer_unavailable`, `external_review_substitutions`, `approved_bypasses`, `review_debt`, `required_checks`, `ci_runs`, `blockers`, `updated_at`, and `next_action`.
+Each `pull_requests` entry records: `number`, `issue`, `branch`, `headRefOid`, `qa_status`, `qa_agent_id`, `internal_review_status`, `reviewer_agent_id`, `external_review_state`, `external_review_payload_snapshots`, `expected_reviewers`, `requested_reviewers`, `observed_reviewers`, `pending_reviewers`, `completed_reviewers`, `external_findings`, `unresolved_actionable_findings`, `review_deadline`, `wait_extensions`, `approved_review_requests`, `consecutive_rate_limits`, `external_reviewer_unavailable`, `external_review_substitutions`, `approved_bypasses`, `review_debt`, `required_checks`, `ci_runs`, `defect_episode_ref`, `blockers`, `updated_at`, and `next_action`.
 
 `external_review_payload_snapshots` is an append-only list of `{observed_at, headRefOid, path}` records, one per gate run, including disposition reruns. Each path points to the verbatim raw current-PR JSON saved by `--payload-snapshot` before inspection. Keep every snapshot unchanged, including its original formatting; do not replace it with a summary, diff, or interpretation. A missing or failed snapshot is an evidence failure, not a successful observation. The lead records the failure and resolves it before accepting the gate result.
 
@@ -168,6 +169,45 @@ pull_requests:
         observed_at: 2026-10-24T15:02:11Z
         covers: python3 scripts/validate_skill.py, python3 -m unittest discover -s tests
         applicability: established
+```
+
+## Defect episode record schema (Issue #150)
+
+`defect_episodes` is additive under `schema_version: 2`: a ledger written without it, or a `pull_requests` entry written without `defect_episode_ref`, stays valid, and a reader that finds either absent treats the fix-batch count as not yet recorded, never as zero batches used. It is a top-level list in the lead's ledger, and the lead, as sole ledger writer, fills it; no second counter store exists. The procedure that reads and writes it is **Bounded remediation** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`.
+
+One entry records one defect episode: `id`, `opened_at`, `prs` (the PR numbers in the episode), `fix_batches`, `bound`, and `diagnoses`. `fix_batches` counts dispatched fix batches and is incremented in the same ledger write that records the dispatch. `bound` is the number of automatic batches and defaults to 2. Each `diagnoses` entry records `at`, `what_failed`, `decision`, and `authorized_additional_batches`.
+
+Allowed `decision` values: `narrowed_fix`, `targeted_specialist`, `bounded_extension`, and `owner_decision`. `authorized_additional_batches` is the named number of further batches the diagnosis authorizes: a positive integer for the first three values, and 0 for `owner_decision`, which records that the lead found a consequential intent, authority or risk decision that belongs to the owner. A fix batch may be dispatched only while `fix_batches` is below `bound` plus the sum of `authorized_additional_batches` over `diagnoses`. A diagnosis never authorizes an open-ended number of batches.
+
+`defect_episode_ref` on a `pull_requests` entry is the `id` of its episode. Every PR in the same episode carries the same `defect_episode_ref`, so the count carries across heads, worker swaps, lead handoffs and related PRs. `consecutive_rate_limits` is a provider retry budget and is never counted in `fix_batches`.
+
+Worked example: PR 150 and its related PR 153 share episode `ep-1`. Batches 1 and 2 were automatic, the lead wrote one diagnosis authorizing one more batch, and batch 3 has been dispatched, so the episode has used its whole bound. A fourth batch needs a new diagnosis.
+
+```yaml
+defect_episodes:
+  - id: ep-1
+    opened_at: 2026-10-24T15:02:11Z
+    prs:
+      - 150
+      - 153
+    fix_batches: 3
+    bound: 2
+    diagnoses:
+      - at: 2026-10-24T17:40:00Z
+        what_failed: batches 1 and 2 fixed the parser but the same acceptance criterion failed again on the new head
+        decision: narrowed_fix
+        authorized_additional_batches: 1
+pull_requests:
+  - number: 150
+    issue: 150
+    branch: feat/150-example
+    headRefOid: 4e683b4
+    defect_episode_ref: ep-1
+  - number: 153
+    issue: 150
+    branch: fix/150-follow-up
+    headRefOid: 9c1d2e7
+    defect_episode_ref: ep-1
 ```
 
 ## Post-merge verification record schema

@@ -147,6 +147,7 @@ internal review, and external review. Dispatch confirmed blockers together.
 Do not wait indefinitely for another review source to join the batch or delay
 urgent security/data-loss containment. Once the batch is ready, avoid extra
 commits solely for advisory cleanup. New material evidence can still require a fix.
+Count every batch on its defect episode and follow **Bounded remediation** below before dispatching it.
 
 ## Coverage-Path Audit
 
@@ -196,6 +197,7 @@ Must give one explicit rating:
 - **REQUEST CHANGES**: any Pass 1 failure, confirmed Scope Drift, or unresolved ASK item
   → list each issue and expected fix in comments
   → re-dispatch Worker Agent to make changes
+  → count the batch and apply **Bounded remediation** below before dispatching it
   → **after fixes, run Phase 3.5 (QA) + Phase 4 (Review) using Review after fixes below**
 
 - **COMMENT**: questions that don't block the merge (decide after user confirmation)
@@ -231,6 +233,17 @@ Both QA and internal review must issue fresh results for the new head:
 Record base/target, review scope and outcome in the existing timestamped recovery
 entries in `.agent/dev-state.md`. Complete the correction review when these
 steps pass; do not reopen unrelated settled analysis without new evidence.
+
+## Bounded remediation
+
+Every fix batch is counted on a defect episode, so a remediation loop is bounded and the bound cannot be reset by a new head, a worker swap, a lead handoff or a related PR. The fields are in the **Defect episode record schema** in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`.
+
+1. **Open or reuse the episode.** An episode is one underlying defect or finding family. Before the first fix batch, the lead opens an entry in `defect_episodes[]` and sets `defect_episode_ref` on the PR. A related PR for the same episode carries the same `defect_episode_ref` and continues the episode's count. An unrelated defect opens a new episode.
+2. **Count the batch.** The lead increments `fix_batches` in the same ledger write that records the dispatch. Provider retry budgets stay separate: `consecutive_rate_limits` is never counted as a fix batch.
+3. **Batches 1 and 2 are automatic.** Consolidate findings from CI, review and acceptance and dispatch them together, as above. Only material findings drive a fix batch. Advisory findings go to the debt log and never produce a batch, an automatic Issue or a PR.
+4. **Batch 3 needs a diagnosis.** Batch 3 requested without a diagnosis entry → dispatch refused by this SOP. A fix batch beyond the episode's bound is refused until a diagnosis entry covers it, and no worker is dispatched. Before it, the lead appends an entry to the episode's `diagnoses` and a timestamped recovery entry in `.agent/dev-state.md` that record what failed, whether the fix is narrowed, whether a targeted specialist is dispatched, and whether a bounded extension is authorized.
+5. **A diagnosis authorizes only what it names.** A diagnosis authorizes only the named additional batch count, never unlimited rounds. The episode's limit is `bound` plus the sum of `authorized_additional_batches`; reaching it again needs a new diagnosis. Consequential intent, authority or risk decisions go to the owner and are recorded as `owner_decision`.
+6. **A cap never clears a blocker.** A cap never clears a blocker and never escalates by itself. When the limit is reached with a blocker open, the blocker stays open, the PR stays unmerged under REQUEST CHANGES, and the lead's next action is the diagnosis.
 
 ## Merge Order
 

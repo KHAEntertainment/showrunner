@@ -38,8 +38,9 @@ Require a PR comment whose report lists an explicit outcome (`pass | fail | inco
 ### QA fails
 
 1. Read the QA report and turn each `fail` outcome and each unresolved material finding into explicit fix instructions. Turn each `inconclusive` outcome into a request for the missing evidence or evaluator it names (CI evidence, infrastructure, an independent reviewer or a human); an `inconclusive` outcome is never read as a pass, and never fixed by relabeling it `not_applicable`.
-2. Re-dispatch a fix worker in the existing coding worktree when safe, or create and verify a replacement worktree when recovery is required.
-3. Never rely on an `@mention` to reactivate a completed worker or QA session.
-4. After fixes, reset completion to pending for the new head and run Phase 3.5 and Phase 4 using **Review after fixes** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`. Retain old reports as historical evidence; bounded corrections may receive focused analysis with fresh final-head checks and reports.
+2. Count the fix batch on its defect episode before dispatching it, following **Bounded remediation** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`. Batch 3 requested without a diagnosis entry → dispatch refused by this SOP, and a QA failure never clears a blocker by hitting the cap. Only unresolved material findings and `fail` outcomes drive a batch; a request for missing evidence that changes no code is not a fix batch.
+3. Re-dispatch a fix worker in the existing coding worktree when safe, or create and verify a replacement worktree when recovery is required.
+4. Never rely on an `@mention` to reactivate a completed worker or QA session.
+5. After fixes, reset completion to pending for the new head and run Phase 3.5 and Phase 4 using **Review after fixes** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`. Retain old reports as historical evidence; bounded corrections may receive focused analysis with fresh final-head checks and reports.
 
 Treat each QA turn as a read-only lane: it requires an unchanged checkout and an unchanged PR head and must leave zero tracked changes. QA reports evidence; it does not approve, merge, or modify code. A QA agent ID must differ from the implementation worker ID and the reviewer agent ID. A new push invalidates its approval for the new head; historical context may be reused in a fresh correction review.
