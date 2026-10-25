@@ -587,24 +587,29 @@ def main() -> int:
         "Pending CI never triggers local execution",
         "A local pass never replaces required CI or erases a known failure.",
         "A `pull_request` checkout tests GitHub's temporary merge commit",
-        # QA scoring: absence of signal must not read as a positive result.
+        # QA outcomes: absence of signal must not read as a positive result.
         # Each token pins one path by which a lane that measured nothing could
-        # otherwise return a passing number.
+        # otherwise return a passing conclusion.
         "qa_error: no acceptance criteria",
         "qa_error: no verification executed",
         "No test framework detected",
-        "not verified by test execution",
         "Limitations are load-bearing",
-        # The coverage term swings 10 points per criterion, so the predicate
-        # deciding it must stay decidable. Without these two the term degrades
-        # into a self-assessed judgment and two lanes scoring the same PR can
-        # legitimately reach different numbers.
-        "Test-executable is a decidable predicate",
-        "without new infrastructure",
-        # A failed criterion already lowers the ratio; deducting coverage on
-        # top of it counts the same fact twice and fails legitimate work for
-        # arithmetic reasons. Found by the formula's first real use.
-        "The coverage term applies only to criteria that passed.",
+        # Issue #135: the numeric gate (score >= 80, with its coverage term) is
+        # retired and replaced, not dropped. Every criterion and gate check gets
+        # one explicit outcome; "not executed" is carried by `inconclusive`, so
+        # a criterion that could not be evaluated can no longer pass.
+        "A criterion that cannot be evaluated is `inconclusive`.",
+        "A required check or criterion cannot be `not_applicable`.",
+        "pass / fail / inconclusive / not_applicable",
+        "independent reviewer",
+        "A worker demonstration satisfies only a criterion whose assigned evaluator is the demonstration",
+        "Determine the outcomes.",
+        "Materiality decides whether a finding blocks, not its label.",
+        # The score line is a diagnostic. These pin that it is optional and
+        # never decides; the validator deliberately does not require the line.
+        "The health score is optional.",
+        "Its absence is valid",
+        "it never decides the conclusion",
         # The prototype lanes' opposing principle. Pinned positively: a guard
         # that only asserts a ladder is absent cannot be told apart from a
         # vacuous one, and no token list can enumerate every paraphrase. With

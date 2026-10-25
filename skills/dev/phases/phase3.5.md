@@ -33,11 +33,11 @@ The Tech Lead resolves the branch before dispatch; the QA agent must not guess i
 
 ### QA passes
 
-Require a PR comment containing `QA ✓ Health: [N]/100`, no Critical/High findings, and a passing score. Continue to Phase 4.
+Require a PR comment whose report lists an explicit outcome (`pass | fail | inconclusive | not_applicable`) for every acceptance criterion and every Verification Gate check, with its evaluator type, executor, evidence reference and reason, and the close-out `QA ✓ Pass — outcomes: [n] pass, 0 fail, 0 inconclusive, [n] not_applicable`. The lane passes only when every applicable criterion and required check is `pass` by its assigned evaluator and no material finding is unresolved. A required check or criterion is never `not_applicable`. A health score line is an optional diagnostic: its absence is valid, and it never decides the result. Continue to Phase 4.
 
 ### QA fails
 
-1. Read the QA report and turn each failing criterion or Critical/High finding into explicit fix instructions.
+1. Read the QA report and turn each `fail` outcome and each unresolved material finding into explicit fix instructions. Turn each `inconclusive` outcome into a request for the missing evidence or evaluator it names (CI evidence, infrastructure, an independent reviewer or a human); an `inconclusive` outcome is never read as a pass, and never fixed by relabeling it `not_applicable`.
 2. Re-dispatch a fix worker in the existing coding worktree when safe, or create and verify a replacement worktree when recovery is required.
 3. Never rely on an `@mention` to reactivate a completed worker or QA session.
 4. After fixes, reset completion to pending for the new head and run Phase 3.5 and Phase 4 using **Review after fixes** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`. Retain old reports as historical evidence; bounded corrections may receive focused analysis with fresh final-head checks and reports.
