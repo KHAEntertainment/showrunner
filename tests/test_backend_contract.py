@@ -3237,7 +3237,7 @@ class RiskTierTests(unittest.TestCase):
                 with self.subTest(file=relative, retired=retired):
                     self.assertNotIn(retired, text)
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        for retired in ("50 or more changed lines", "Emergency hotfixes always skip", "when a threshold is crossed"):
+        for retired in ("50 or more changed lines", "Emergency hotfixes always skip", "when a threshold is crossed", "a pass needs 80"):
             with self.subTest(file="README.md", retired=retired):
                 self.assertNotIn(retired, readme)
         self.assertIn("runs by the change's risk tier, not its size", readme)
