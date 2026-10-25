@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="docs/assets/showrunner-banner.webp" alt="Showrunner. Your coding agents write the code. Showrunner runs the room." width="100%">
+  <img alt="Showrunner" src="https://ascii.rest/banner/Showrunner.dark.svg?color=e88e45,6697d6&font=tall&shadow=rounded&fill=block&size=l">
 </h1>
 
 **Showrunner plans the work, hands it out to your coding agents, checks every pull request, and merges what passes.**
