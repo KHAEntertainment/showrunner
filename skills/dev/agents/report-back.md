@@ -53,12 +53,20 @@ evidence.
 - Every completion claim maps to an executed command's actual output. If you
   cannot name the command and what it printed, do not make the claim — record
   what was not run instead. An unrun check is reported as unrun, never omitted.
-- After any fix, re-run the full Verification Gate rather than only the check
-  that failed. A targeted re-run shows the one symptom went away; it does not
-  show the fix left everything else intact.
-- Every exit code you report comes from that final full run, at the head commit
-  you report. Never carry an exit code forward from a run that preceded the
-  change, and report a partial re-run as partial.
+- One executor per check. The Verification Gate in `PROJECT_CONTEXT.md` names
+  who runs each check; a check CI owns is cited, not re-run by your role. For a
+  CI-owned check, cite the run, job and attempt, the tested subject and the
+  conclusion, read by id, in place of a command and exit code. Pending, missing,
+  skipped, cancelled or stale CI evidence is reported as incomplete coverage,
+  never as a pass; see **Check Ownership and CI Evidence** in
+  `${CLAUDE_SKILL_DIR}/phases/phase4.md`.
+- After any fix, obtain the full Verification Gate result again at the new head
+  rather than only the check that failed: CI evidence for the checks CI owns,
+  your own run for the focused checks you own. A targeted re-run shows the one
+  symptom went away; it does not show the fix left everything else intact.
+- Every exit code you report comes from your final run of that check, at the
+  head commit you report. Never carry an exit code forward from a run that
+  preceded the change, and report a partial re-run as partial.
 - What counts as "verified" is defined once, in the Tool Capability Boundary of
   `${CLAUDE_SKILL_DIR}/agents/qa-agent.md`. Every lane uses that definition;
   this contract does not restate it.

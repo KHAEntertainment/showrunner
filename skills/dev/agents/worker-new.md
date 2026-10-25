@@ -113,7 +113,7 @@ Whether launched through Claude-native or Traycer execution:
 12. **Confirm the rung.** State which rung of the Step 2 reuse-first ladder the implementation actually sits on, and confirm it is the lowest rung that satisfies every acceptance criterion. If a lower rung would also have satisfied them, drop to it now. If you reached a lower rung by dropping a validation, error-handling, security, or accessibility guard, restore the guard and take the higher rung — the carve-out outranks the ladder.
 
 13. **Run tests**:
-    - If project has a test framework: run the full test suite through the relevant RTK wrapper when available — all must pass
+    - If project has a test framework: run the focused checks for your change (the tests the diff touches, plus any prerequisite `PROJECT_CONTEXT.md` requires before a push) through the relevant RTK wrapper when available — all must pass. Do not run a broad check the Verification Gate assigns to CI (one executor per check; see **Check Ownership and CI Evidence** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`). Report in the PR body what you ran, and name any mandatory overlap with CI
     - If no test framework: write a verification script and run it. **Script must include**:
       - At least 1 happy path case (proves the feature works)
       - At least 1 error/boundary path case (proves no new problems introduced)
@@ -133,7 +133,7 @@ Whether launched through Claude-native or Traycer execution:
 
 ## [Step 5: Retest and Submit PR]
 
-15. If self-check changed any code, rerun the relevant full test and static-check set. Do not rely on an earlier passing run.
+15. If self-check changed any code, rerun the focused checks you own and any pre-push prerequisite the project requires. Do not rely on an earlier passing run. CI's Verification Gate runs the broad checks it owns on the PR.
 16. Create semantic, bisectable commits in dependency order: shared infrastructure, core logic, interface layer, then tests. Keep every commit runnable.
 17. Immediately before pushing, run this worktree's `.dev.json` pre-write verification per `${CLAUDE_SKILL_DIR}/phases/repository-context.md`, using the exact assigned branch. Replace `<assigned-worktree>` with the absolute path assigned and verified in Step 1, never the ambient directory:
     ```bash

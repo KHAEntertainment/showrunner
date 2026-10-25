@@ -42,8 +42,10 @@ The Tech Lead may directly correct review/planning documentation only in a docs-
 
 ## Static Analysis Gate (run before human review)
 
-Run the project's **Verification Gate** recorded in `PROJECT_CONTEXT.md` when
-present; otherwise run these defaults:
+Obtain the project's **Verification Gate** result recorded in `PROJECT_CONTEXT.md`
+when present, from each check's recorded executor (see **Check Ownership and CI
+Evidence** below: the checks assigned to CI are consumed from the `ci_runs`
+record, not re-run); otherwise run these defaults:
 - Python: `rtk proxy flake8` / `rtk proxy pylint` / `rtk mypy`; security scan: `rtk proxy bandit -r .` (if not installed: ask before installing, then use `rtk pip install bandit`)
 - JavaScript: `rtk lint` or `rtk npx eslint`
 
@@ -53,6 +55,38 @@ present; otherwise run these defaults:
 
 If static analysis reports significant errors (not nitpicks), send back to Worker Agent for fixes — do not proceed to human review.
 If the dependency scans find High or Critical vulnerabilities, also send back and require dependency upgrades.
+
+---
+
+## Check Ownership and CI Evidence
+
+**One executor per check.** The Verification Gate in `PROJECT_CONTEXT.md` assigns
+each check definition, tested subject and environment to one executor, and its
+ownership table is authoritative. CI owns the broad checks it assigns to CI.
+Workers run focused implementation checks and any prerequisite the project
+requires before a push. The lead, QA and the reviewer consume applicable
+evidence and do not repeat an equivalent check solely because their role needs
+a report. A justified bounded retry, a new target, and a distinct platform
+check are not repetition.
+
+**Consume CI evidence through `ci_runs[]`** (schema in
+`${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`). A lane may cite a CI run
+it read by id, never one it assumes. Evidence is applicable only when all hold:
+
+- the run, job and attempt are retrievable (`rtk gh run view <run> --repo github.com/<confirmed pullRequestRepository> --json jobs`), and the conclusion is `success`;
+- the job covers every required check the ownership table assigns to it;
+- the **tested subject** is established. A `pull_request` checkout tests GitHub's temporary merge commit (`kind: merge_ref`), not the PR head: `gh run view` reports the PR head as `headSha`, so read the tested sha from the job's checkout step and record it as `tested_subject`, separate from `headRefOid`. A tested subject you cannot establish leaves applicability uncertain;
+- the environment and the check-definition revision match what the ownership table requires; a new head, or a changed relevant check, dependency, policy or environment, requires a fresh assessment.
+
+**CI outcomes.**
+
+- Queued or in progress: the dependent verdict stays **pending** under the bounded wait policy that already applies to that route. Independent authorized work may continue. Pending CI never triggers local execution, and this section adds no timeout, retry allowance or bypass.
+- Missing, skipped, cancelled, failed, incomplete or stale evidence, or uncertain applicability: required coverage is **incomplete** and is never read as a pass. A skipped Release Gate job on an ordinary PR is expected and is not passing evidence. A test failure is never relabeled an infrastructure failure. A failure already present on `main` is recorded as `baseline_failure` with the `main` run that proves it, and does not permit merge when the project requires the check.
+- An optional check may be recorded `not_applicable` with a reason. A required check cannot disappear.
+
+**Fallback.** A local full-gate run needs an approved fallback trigger, which may already exist in project or run policy, or a separate local project requirement. It also needs one designated executor, suitable coverage and environment, and the existing execution and resource limits (heavy runs serial and wrapped). A recorded reason alone is not authority. The executor records the reason, scope (the checks run), tested subject, environment and result. A local pass never replaces required CI or erases a known failure. With no eligible route, the verdict stays pending, blocked or inconclusive and the missing requirement is recorded.
+
+**Preserved.** A mandatory pre-push requirement already in project policy, repository hooks, the fix-and-retest rules, and the post-merge verification below all stay in force until explicitly amended.
 
 ---
 
@@ -181,9 +215,11 @@ Both QA and internal review must issue fresh results for the new head:
    on changed behavior, affected callers/invariants, and regression evidence.
    Reopen the full review if scope, interfaces, architecture, a safety boundary,
    or material dependencies changed, or if the affected scope is uncertain.
-3. Run the full required Verification Gate at the final head under the existing
-   role requirements. Keep QA and reviewer identities distinct from implementation
-   and each other, with a clean checkout and an unchanged head during each turn.
+3. Obtain the full required Verification Gate result at the final head from each
+   check's recorded executor: CI evidence for the checks CI owns (a result from an
+   earlier head is stale), the designated executor's run for any other. Keep QA and
+   reviewer identities distinct from implementation and each other, with a clean
+   checkout and an unchanged head during each turn.
 4. Each lane's fresh report names its reviewed base, target head, review scope,
    executed checks and remaining findings. Prior reports may inform analysis but
    cannot stand in for current test results or approval.
@@ -226,15 +262,23 @@ Issue it closed is actually done — a question five clean pre-merge lanes can
 each answer "yes" to individually while it stays unasked.
 
 1. **Verify the merged tree.** Compare the merge commit's tree hash against
-   the verified PR head's tree hash: `rtk proxy git -C "<selected-worktree>"
-   rev-parse <merge-sha>^{tree}` against the recorded `headRefOid^{tree}`.
-   - Equal → the PR-head Verification Gate result already on record applies
-     verbatim to `main`; record that equivalence rather than re-running the
-     gate.
-   - Unequal (a non-fast-forward merge commit, a squash that picked up late
-     changes, or any other divergence) → check out `main` at the merge commit
-     in a clean worktree and run the full recorded Verification Gate there —
-     the gate has otherwise only ever run on the PR branch.
+   the tree hash of the **actual tested subject** recorded in `ci_runs[]` —
+   not the PR head's tree, which CI did not test: `rtk proxy git -C
+   "<selected-worktree>" rev-parse <merge-sha>^{tree}` against the recorded
+   `tested_subject.sha^{tree}`. Under the default pull-request checkout the
+   tested subject is GitHub's temporary merge commit (`kind: merge_ref`); fetch
+   it if it is not already local. A tested subject that was never recorded or
+   cannot be fetched counts as unequal.
+   - Equal → the Verification Gate result already on record for that tested
+     subject applies verbatim to `main`; record that equivalence rather than
+     re-running the gate.
+   - Unequal (the base advanced after the run, a squash that picked up late
+     changes, a non-fast-forward merge commit, or any other divergence) →
+     obtain the full recorded Verification Gate result for `main` at the merge
+     commit: the `push` run of the Verification Gate workflow on `main` is CI's
+     evidence for it, read by run id once it has completed; if no applicable
+     run exists, the one-executor fallback rules above apply.
+     A scoped recheck never replaces the full gate here.
 2. **Re-check the closed Issue's acceptance criteria against the merged
    code.** Read each criterion and confirm it against what actually shipped
    on `main`, not against the PR description or the review that preceded
@@ -244,7 +288,7 @@ each answer "yes" to individually while it stays unasked.
    **Auto-closure by a merge keyword is never evidence of completion.**
    GitHub closing an Issue because a merged PR said `Closes #N` records that
    a merge happened, not that the criteria were met.
-3. **Record the result.** Append `merge_sha`, `gate_result`, and
+3. **Record the result.** Append `merge_sha`, `tested_subject`, `gate_result`, and
    `criteria_verdict` (with the reopen list when unmet) to the post-merge
    verification record in `.agent/dev-state.md`, per the schema in
    `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`.

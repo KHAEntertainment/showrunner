@@ -70,7 +70,7 @@ Whether launched through Claude-native or Traycer execution:
    - Verify each acceptance criterion from the Issue using `[trigger condition] → [actual code behavior]` format (✓/✗)
 
 10. **Regression testing**:
-   - If project has a test framework: run the full test suite through the relevant RTK wrapper when available, confirm no regression, fix any failing tests
+   - If project has a test framework: run the focused regression checks for the fix (the tests the diff touches, plus any prerequisite `PROJECT_CONTEXT.md` requires before a push) through the relevant RTK wrapper when available, confirm no regression, fix any failing tests. Do not run a broad check the Verification Gate assigns to CI (one executor per check; see **Check Ownership and CI Evidence** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`)
    - If no test framework: write a verification script and run it. Script must cover:
      - The fixed happy path (proves the problem is resolved)
      - At least 1 adjacent boundary case (proves no new problems introduced)
@@ -84,7 +84,7 @@ Whether launched through Claude-native or Traycer execution:
 
 ## [Step 4: Submit PR]
 
-12. If self-check changed code, rerun the full relevant regression and static-check set.
+12. If self-check changed code, rerun the focused regression checks you own and any pre-push prerequisite the project requires. CI's Verification Gate runs the broad checks it owns on the PR.
 13. Create semantic, bisectable commits; keep every commit runnable.
 14. Immediately before pushing, run this worktree's `.dev.json` pre-write verification per `${CLAUDE_SKILL_DIR}/phases/repository-context.md`, using the exact assigned branch. Replace `<assigned-worktree>` with the absolute path assigned and verified in Step 1, never the ambient directory:
     ```bash
