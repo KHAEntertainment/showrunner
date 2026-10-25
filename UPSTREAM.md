@@ -1,6 +1,24 @@
 # Upstream Maintenance
 
-This fork maintains a customized English personal Skill while retaining upstream history.
+This repository maintains a customized English personal Skill while retaining upstream history.
+
+## Tracking upstream
+
+Showrunner is detached from upstream's GitHub fork network (owner decision,
+2026-10-24). It is a standalone repository. Upstream history stays in the
+`master` mirror and in the merged ancestry of `main`.
+
+- **Remote.** Upstream is tracked by the `upstream` Git remote below. Add it in
+  a fresh clone with
+  `git remote add upstream https://github.com/hnaymyh123-henry/claude-dev-skill.git`.
+- **Notification.** The owner's GitHub account watches upstream for releases
+  only (Watch → Custom → Releases). A release notification is the signal to
+  run the Sync Procedure below.
+- **Cadence.** Upstream last shipped `v1.3.0` on 2026-05-27, the commit already
+  merged as the first audited merge below. An occasional `git fetch upstream`
+  is enough; no scheduled sync job exists.
+- **Port log.** Record anything upstream ships that is worth porting under
+  [Port log](#port-log), whether or not it is merged yet.
 
 ## Remotes
 
@@ -35,6 +53,15 @@ upstream ships it wherever this list says nothing about it.
   rewritten. One sentence on Situation A's routing entry and one Prohibited
   Behaviors bullet accompany it. Upstream content is otherwise untouched
   (v2.1.2, #74).
+
+## Port log
+
+Upstream changes worth porting, newest first. Each entry names the upstream tag
+or commit, what it changes, and the decision: `ported` (with the PR),
+`deferred` (with the reason), or `declined` (with the reason).
+
+- `v1.3.0` (`3e87db0`, 2026-05-27): module-progressive Phase 1 and prototyping
+  sub-agents. `ported`: the first audited merge.
 
 ## Sync Procedure
 
