@@ -117,12 +117,21 @@ Classify the request, explain your reasoning to the user, get confirmation, then
 
 | Type | Criteria | Path |
 |------|----------|------|
-| **New Project** | No existing repo, starting from scratch | Phase 1 → 2 → 3 → 3.5 → 4 → 5 |
-| **New Feature / Large Change** | Existing repo, touches multiple files or new modules | Phase 2 → 3 → 3.5 → 4 → 5 |
-| **Small Change / Bug Fix** | Existing repo, scope is clear and limited | Phase 2 (lightweight) → 3 → 4 → 5 |
-| **Emergency Hotfix** | Live incident requiring immediate fix, cannot wait for scheduling | Phase 2 (express) → 3 → 4 → 5, **run rebase scan after merge** |
-| **Architectural Change** | Requirements overturn existing architecture decisions (e.g. replacing auth system, rewriting core module) | Phase 2 (with change impact assessment) → 3 → 3.5 → 4 → 5 |
-| **Refactoring** | Changing internal structure without adding new external behavior | Phase 2 (refactor mode) → 3 (**forced serial**: refactor before features that depend on it) → 3.5 → 4 → 5 |
+| **New Project** | No existing repo, starting from scratch | Phase 1 → 2 → 3 → 3.5 (per risk tier) → 4 → 5 |
+| **New Feature / Large Change** | Existing repo, touches multiple files or new modules | Phase 2 → 3 → 3.5 (per risk tier) → 4 → 5 |
+| **Small Change / Bug Fix** | Existing repo, scope is clear and limited | Phase 2 (lightweight) → 3 → 3.5 (per risk tier) → 4 → 5 |
+| **Emergency Hotfix** | Live incident requiring immediate fix, cannot wait for scheduling | Phase 2 (express) → 3 → 3.5 (per risk tier) → 4 → 5, **run rebase scan after merge** |
+| **Architectural Change** | Requirements overturn existing architecture decisions (e.g. replacing auth system, rewriting core module) | Phase 2 (with change impact assessment) → 3 → 3.5 (per risk tier) → 4 → 5 |
+| **Refactoring** | Changing internal structure without adding new external behavior | Phase 2 (refactor mode) → 3 (**forced serial**: refactor before features that depend on it) → 3.5 (per risk tier) → 4 → 5 |
+
+**Risk tier (applies to every path above, Emergency Hotfix included):** whether Phase 3.5 runs is decided by the diff's risk tier, not by the request type and not by diff size. The tier floors are defined once, in `${CLAUDE_SKILL_DIR}/phases/phase3.5.md` (Risk Tiers); this table only mirrors each tier's Phase 3.5 value, and `scripts/validate_skill.py` fails when the two disagree.
+
+| Tier | Phase 3.5 |
+|------|-----------|
+| T0 nonbehavioral | skip |
+| T1 ordinary | run |
+| T2 elevated | run |
+| T3 critical | run |
 
 **Classification rules:**
 - Emergency Hotfix: Worker Agent **must base the hotfix branch on main**, never on any feature branch
@@ -177,7 +186,7 @@ All delegated lanes end with the shared report-back contract in `${CLAUDE_SKILL_
 **Before entering this Phase, read the detailed rules:**
 `${CLAUDE_SKILL_DIR}/phases/phase3.5.md`
 
-Core principle: use quantitative triggers to decide whether QA is required; resolve the PR branch and current head before dispatch; launch a distinct read-only QA identity through the selected adapter; route failures through a newly dispatched fix worker and repeat Phase 3.5 + Phase 4.
+Core principle: use the deterministic risk tier of the diff (T0–T3, defined once in `phase3.5.md`) to decide whether QA is required; resolve the PR branch and current head before dispatch; launch a distinct read-only QA identity through the selected adapter; route failures through a newly dispatched fix worker and repeat Phase 3.5 + Phase 4.
 
 Start trusted external-review observation for the exact PR head during this Phase. The reconciliation gate is defined in `${CLAUDE_SKILL_DIR}/phases/external-review.md` and completes in Phase 4.
 

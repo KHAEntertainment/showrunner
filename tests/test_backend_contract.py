@@ -3161,5 +3161,170 @@ class SwapTimeEvidenceTests(unittest.TestCase):
         self.assertIn("does not replace the correlation rule", report_back)
 
 
+class RiskTierTests(unittest.TestCase):
+    """Issue #149: tier floors replace the size-only QA trigger (#107).
+
+    The Phase 0 router and the Phase 3.5 tier table state one rule; the
+    validator fails when they disagree. The mutation tests run
+    `check_risk_tiers` against a temp copy of the Skill so each way the two
+    documents could drift is proven to fail.
+    """
+
+    def read(self, relative: str) -> str:
+        return (SKILL / relative).read_text(encoding="utf-8")
+
+    def validator(self):
+        return _validator_module()
+
+    def mutated(self, relative: str, old: str, new: str, count: int = 1) -> list[str]:
+        """Apply one text mutation to a temp copy of the Skill; return the tier errors."""
+        import shutil
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "dev"
+            shutil.copytree(SKILL, copy)
+            target = copy / relative
+            text = target.read_text(encoding="utf-8")
+            self.assertEqual(text.count(old), count, f"mutation anchor {old!r} in {relative}")
+            target.write_text(text.replace(old, new), encoding="utf-8")
+            return self.validator().check_risk_tiers(copy)
+
+    def test_live_router_and_trigger_agree(self) -> None:
+        self.assertEqual(self.validator().check_risk_tiers(SKILL), [])
+
+    def test_tier_table_states_each_floor_once(self) -> None:
+        # AC-1 / AC-2: the floors, in the one place that states them.
+        section = _markdown_section(self.read("phases/phase3.5.md"), "## Risk Tiers")
+        self.assertIsNotNone(section)
+        for token in (
+            "| T0 nonbehavioral | The diff touches no executable file and nothing under the project's declared behavior paths | CI + lead review; no reviewer lane, no acceptance lane | skip |",
+            "| T1 ordinary | Default:",
+            "acceptance lane only if a declared acceptance check applies",
+            "| T2 elevated | The plan-approval list in `${CLAUDE_SKILL_DIR}/phases/phase3.md`",
+            "Current T2 protections, unchanged",
+            "| T3 critical |",
+            "`resolve_repository.py`",
+            "only the owner lowers a T3 floor, never the lead",
+            "Lowering a floor is an owner decision recorded in `PROJECT_CONTEXT.md`.",
+            "T1 keeps the current lanes",
+            "T2 and T3 keep their current protections unchanged",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, section)
+
+    def test_t2_floor_cross_references_the_plan_approval_list(self) -> None:
+        phase3 = self.read("phases/phase3.md")
+        self.assertIn(
+            "Require plan approval before edits involving architecture, databases, auth, shared interfaces, migrations, or broad refactors.",
+            phase3,
+        )
+        self.assertIn("also the T2 floor of the risk tiers in `${CLAUDE_SKILL_DIR}/phases/phase3.5.md`", phase3)
+
+    def test_size_trigger_is_retired_not_left_beside_the_tiers(self) -> None:
+        # AC-4: the retired pins are replaced, not dropped. The size
+        # thresholds and the "quantitative trigger" framing must not return.
+        for relative in ("phases/phase3.5.md", "SKILL.md"):
+            text = self.read(relative)
+            for retired in (
+                "Quantitative Trigger",
+                "quantitative triggers",
+                "Added or modified diff lines",
+                "Modified files ≥ 3",
+                "New external interface, API endpoint, or public function signature",
+                "Do not substitute subjective judgment for these thresholds",
+            ):
+                with self.subTest(file=relative, retired=retired):
+                    self.assertNotIn(retired, text)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for retired in ("50 or more changed lines", "Emergency hotfixes always skip", "when a threshold is crossed", "a pass needs 80"):
+            with self.subTest(file="README.md", retired=retired):
+                self.assertNotIn(retired, readme)
+        self.assertIn("runs by the change's risk tier, not its size", readme)
+
+    def test_router_marks_every_path_with_the_tier_rule(self) -> None:
+        # #107: no path omits Phase 3.5 and none lists it unconditionally.
+        router = _markdown_section(self.read("SKILL.md"), "## Phase 0 — Entry Router")
+        paths = self.validator().router_path_cells(router)
+        self.assertEqual(len(paths), 6)
+        for request_type, path in paths.items():
+            with self.subTest(path=request_type):
+                self.assertEqual(path.count("3.5 (per risk tier)"), 1)
+                self.assertEqual(path.count("3.5"), 1)
+        self.assertIn("Emergency Hotfix included", router)
+
+    def test_template_and_project_context_declare_behavior_paths(self) -> None:
+        template = self.read("templates/PROJECT_CONTEXT_TEMPLATE.md")
+        for token in ("## Risk Tiers (optional)", "**Behavior paths**", "**T2 paths**", "**T3 paths**", "Lowering a floor is an owner decision"):
+            with self.subTest(token=token):
+                self.assertIn(token, template)
+        context = (ROOT / "PROJECT_CONTEXT.md").read_text(encoding="utf-8")
+        section = _markdown_section(context, "## Risk Tiers")
+        self.assertIsNotNone(section)
+        self.assertIn("- **Behavior paths**: `skills/dev/`", section)
+        self.assertIn("`skills/dev/backends/`, `skills/dev/phases/`", section)
+        self.assertIn("`skills/dev/scripts/resolve_repository.py`", section)
+
+    def test_qa_step_6_names_only_step_10_evaluator_types(self) -> None:
+        # AC-5: the P4 advisory. Step 6's evaluator list equals step 10's,
+        # and "assigned to code analysis" (not an evaluator type) is gone.
+        qa = self.read("agents/qa-agent.md")
+        self.assertNotIn("assigned to code analysis", qa)
+        step6 = re.search(r"→ evaluator: \[([^\]]+)\]", qa)
+        step10 = re.search(r"\(`ci`, `test`, `demonstration`, `independent reviewer` or `human`\)", qa)
+        self.assertIsNotNone(step6)
+        self.assertIsNotNone(step10)
+        self.assertEqual(
+            [part.strip() for part in step6.group(1).split("/")],
+            ["ci", "test", "demonstration", "independent reviewer", "human"],
+        )
+        self.assertIn("reading the code or diff is a method, never an evaluator type", qa)
+
+    def test_validator_fails_when_router_and_trigger_disagree(self) -> None:
+        # AC-3 mutation tests: each is a way the two documents could drift.
+        cases = {
+            "router flips T0 to run": ("SKILL.md", "| T0 nonbehavioral | skip |", "| T0 nonbehavioral | run |"),
+            "trigger flips T1 to skip": ("phases/phase3.5.md", "post-merge verification; acceptance lane only if a declared acceptance check applies | run |", "post-merge verification; acceptance lane only if a declared acceptance check applies | skip |"),
+            "router flips T2 to skip": ("SKILL.md", "| T2 elevated | run |", "| T2 elevated | skip |"),
+            "router renames a tier": ("SKILL.md", "| T3 critical | run |", "| T3 severe | run |"),
+            "trigger drops a tier": ("phases/phase3.5.md", "| T3 critical |", "| T3x critical-ish |"),
+            "router adds a tier": ("SKILL.md", "| T3 critical | run |", "| T3 critical | run |\n| T4 extra | run |"),
+            "router duplicates a tier": ("SKILL.md", "| T1 ordinary | run |", "| T1 ordinary | run |\n| T1 ordinary | skip |"),
+            "router value is not skip or run": ("SKILL.md", "| T1 ordinary | run |", "| T1 ordinary | maybe |"),
+            "small change path omits 3.5": ("SKILL.md", "Phase 2 (lightweight) → 3 → 3.5 (per risk tier) → 4 → 5", "Phase 2 (lightweight) → 3 → 4 → 5"),
+            "hotfix path omits 3.5": ("SKILL.md", "Phase 2 (express) → 3 → 3.5 (per risk tier) → 4 → 5", "Phase 2 (express) → 3 → 4 → 5"),
+            "path lists 3.5 unconditionally": ("SKILL.md", "Phase 1 → 2 → 3 → 3.5 (per risk tier) → 4 → 5", "Phase 1 → 2 → 3 → 3.5 → 4 → 5"),
+            "trigger drops the hotfix rule": ("phases/phase3.5.md", "Emergency Hotfix included. There is no per-path exemption.", "Emergency Hotfix is exempt."),
+            "size trigger returns": ("phases/phase3.5.md", "## Prepare the QA Lane", "## Quantitative Trigger\n\nModified files ≥ 3 | Yes\n\n## Prepare the QA Lane"),
+            "tier section removed": ("phases/phase3.5.md", "## Risk Tiers", "## Something Else"),
+        }
+        for label, (relative, old, new) in cases.items():
+            with self.subTest(mutation=label):
+                self.assertTrue(self.mutated(relative, old, new), f"validator accepted: {label}")
+
+    def test_validator_cli_exits_nonzero_on_disagreement(self) -> None:
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "dev"
+            shutil.copytree(SKILL, copy)
+            entry = copy / "SKILL.md"
+            entry.write_text(
+                entry.read_text(encoding="utf-8").replace("| T0 nonbehavioral | skip |", "| T0 nonbehavioral | run |"),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "validate_skill.py"), "--skill-dir", str(copy)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("router and phases/phase3.5.md disagree on T0", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
