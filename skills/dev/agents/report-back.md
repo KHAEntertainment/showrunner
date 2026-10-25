@@ -97,8 +97,13 @@ nothing has not reported.
      - invalid JSON from any query → classified as `query_failure` with `graph_evidence: unavailable` and the manual fallback recorded
    Silence never passes — a lane that records `unavailable` without documenting the manual fallback is incomplete.
 - **QA** (`qa-agent`): use the QA report template as the role-specific form of
-  the contract and finish with `QA ✓ Health: [N]/100`; a failing lane still
-  reports its evidence and stops.
+  the contract and finish with the outcome close-out
+  `QA ✓ Pass — outcomes: [n] pass, 0 fail, 0 inconclusive, [n] not_applicable`;
+  the per-criterion and per-check outcomes (`pass | fail | inconclusive |
+  not_applicable`, each with evaluator type, executor, evidence reference and
+  reason) live inside the existing sections 4 and 5, not in an added section. A
+  health score line is optional and never decides; a lane that is not a clean
+  pass reports `Needs Fix` with its evidence and stops.
 - **Reviewer** (`reviewer`): repeat the correlation ID, the reviewed commit,
   and clean-worktree evidence; classify findings `blocking` / `advisory` /
   `question` / `clear`.

@@ -27,7 +27,7 @@ The cap is a target for routine turns, not a hard technical limit enforced chara
 Some content is surfaced first and in full, regardless of the cap:
 
 - A material failure (a gate that failed, a lane that could not complete its assignment).
-- A gate verdict (QA health score, review rating, external-review outcome) once one exists.
+- A gate verdict (QA outcome conclusion, review rating, external-review outcome) once one exists.
 - A decision the user must make (an ambiguous acceptance criterion, a scope conflict, a merge-order choice).
 - Confirmation before an irreversible action (a merge, a force-push, a deletion, a bypass).
 - A security or data-loss finding, at any severity.

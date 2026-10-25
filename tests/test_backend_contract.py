@@ -1445,33 +1445,105 @@ class BackendContractTests(unittest.TestCase):
         self.assertIn("agents/qa-agent.md", report_back)
         self.assertIn("canonical definition", qa)
 
-    def test_qa_score_cannot_read_absence_of_signal_as_a_pass(self) -> None:
+    def test_qa_outcomes_cannot_read_absence_of_signal_as_a_pass(self) -> None:
         qa = self.read("agents/qa-agent.md")
         # No denominator, nothing executed, and an undetected framework are all
-        # explicit outcomes rather than paths to an implicit 100.
+        # explicit outcomes rather than paths to an implicit pass.
         self.assertIn("qa_error: no acceptance criteria", qa)
         self.assertIn("qa_error: no verification executed", qa)
         self.assertIn("No test framework detected", qa)
         self.assertIn("never a silent skip", qa)
-        # The score carries a coverage term, and Limitations feed the result.
-        self.assertIn("not verified by test execution", qa)
+        # Limitations feed the result: each resolves to `inconclusive`,
+        # a contestable `not_applicable`, or a blocking skipped step.
         self.assertIn("Limitations are load-bearing", qa)
         self.assertIn("blocks the pass", qa)
 
-    def test_coverage_term_predicate_is_decidable(self) -> None:
-        # The coverage term is worth 10 points per criterion, so "could this
-        # have been test-executed?" must not be self-assessed. This repository
-        # pins prose with doc-assertion tests, so "it is only prose" must not
-        # read as non-executable and quietly zero the deduction.
+    def test_qa_criterion_that_cannot_be_evaluated_is_inconclusive(self) -> None:
+        # Issue #135 AC-1: the coverage term's job (making "not executed"
+        # visible) moved to the `inconclusive` reason, and the lane does not
+        # pass on it.
         qa = self.read("agents/qa-agent.md")
-        self.assertIn("Test-executable is a decidable predicate", qa)
-        self.assertIn("without new infrastructure", qa)
-        self.assertIn("doc-assertion tests over shipped prose", qa)
-        self.assertIn("is not by itself a reason to call it non-executable", qa)
-        # A non-executable judgment is free, so it must be recorded and named.
-        self.assertIn("naming the infrastructure that is missing", qa)
-        self.assertIn("Not test-executable", qa)
-        self.assertIn("Test-executable but not executed", qa)
+        for outcome in ("pass", "fail", "inconclusive", "not_applicable"):
+            self.assertIn(f"`{outcome}`", qa)
+        self.assertIn("pass / fail / inconclusive / not_applicable", qa)
+        self.assertIn("A criterion that cannot be evaluated is `inconclusive`.", qa)
+        self.assertIn("Name the missing infrastructure or the missing evaluator", qa)
+        self.assertIn("The lane does not pass on an `inconclusive` entry.", qa)
+        self.assertIn("is an `inconclusive` reason, not a deduction and not a pass", qa)
+        # Pending/missing/skipped/cancelled/stale CI evidence is never `pass`.
+        self.assertIn("pending, missing, skipped, cancelled or stale", qa)
+
+    def test_qa_required_check_or_criterion_cannot_be_not_applicable(self) -> None:
+        # Issue #135 AC-2.
+        qa = self.read("agents/qa-agent.md")
+        self.assertIn("A required check or criterion cannot be `not_applicable`.", qa)
+        self.assertIn("`not_applicable` is available only to an optional check", qa)
+        self.assertIn("with a stated reason the lead can contest", qa)
+
+    def test_qa_records_evaluator_type_and_demonstration_rule(self) -> None:
+        # Issue #135 AC-3: each criterion records its assigned evaluator type,
+        # and a worker demonstration satisfies only a demonstration criterion.
+        qa = self.read("agents/qa-agent.md")
+        for evaluator in ("ci", "test", "demonstration", "independent reviewer", "human"):
+            self.assertIn(evaluator, qa)
+        self.assertIn(
+            "ci / test / demonstration / independent reviewer / human", qa
+        )
+        self.assertIn("| Criterion | Outcome | Evaluator type | Executor | Evidence ref | Reason |", qa)
+        self.assertIn(
+            "A worker demonstration satisfies only a criterion whose assigned "
+            "evaluator is the demonstration",
+            qa,
+        )
+        self.assertIn("A criterion passes only by its assigned evaluator.", qa)
+
+    def test_qa_lane_conclusion_is_outcomes_and_material_findings(self) -> None:
+        qa = self.read("agents/qa-agent.md")
+        self.assertIn("**Lane conclusion.**", qa)
+        self.assertIn("no material finding is unresolved", qa)
+        self.assertIn("The conclusion is determined by the outcomes and findings alone.", qa)
+        # Materiality, not the severity label, decides whether a finding blocks;
+        # a Medium finding is not newly blocking.
+        self.assertIn("Materiality decides whether a finding blocks, not its label.", qa)
+        self.assertIn("Recorded finding, no deduction", qa)
+
+    def test_qa_health_score_is_an_optional_diagnostic(self) -> None:
+        # Issue #135 AC-4: the score line is optional, absence is valid, it
+        # never decides, and the validator does not require it. The numeric
+        # gate and its coverage term must not come back as a pass condition.
+        qa = self.read("agents/qa-agent.md")
+        phase = self.read("phases/phase3.5.md")
+        report_back = self.read("agents/report-back.md")
+        self.assertIn("The health score is optional.", qa)
+        self.assertIn("Its absence is valid", qa)
+        self.assertIn("never decides the conclusion", qa)
+        for retired in (
+            "Require a score of at least 80",
+            "Calculate the health score",
+            "The coverage term",
+            "coverage deduction",
+            "10 per PASSED test-executable acceptance criterion",
+        ):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, qa)
+        for text in (phase, report_back):
+            self.assertNotIn("passing score", text)
+            self.assertNotIn("`QA ✓ Health: [N]/100`", text)
+        self.assertIn("never decides", phase)
+        self.assertIn("QA ✓ Pass — outcomes:", phase)
+        self.assertIn("QA ✓ Pass — outcomes:", report_back)
+        # The validator must not require the score line.
+        validator = (ROOT / "scripts" / "validate_skill.py").read_text(encoding="utf-8")
+        current = _parse_required_policy(validator)
+        self.assertFalse([t for t in current if "Health:" in t or "/100" in t])
+
+    def test_qa_outcome_detail_stays_inside_the_seven_section_contract(self) -> None:
+        # Issue #135 AC-5: the transport contract is unchanged; outcome detail
+        # lives inside the existing sections.
+        report_back = self.read("agents/report-back.md")
+        flat = " ".join(report_back.split())
+        self.assertIn("live inside the existing sections 4 and 5, not in an added section", flat)
+        self.assertEqual(len(re.findall(r"^\d\. \*\*", report_back.split("## Evidence discipline")[0], re.M)), 7)
 
     def test_qa_executes_the_whole_gate_not_only_the_test_suite(self) -> None:
         # Requiring only the test suite let a lane pass with the gate's lint
@@ -1678,29 +1750,6 @@ class BackendContractTests(unittest.TestCase):
         self.assertIn("`ci_runs` is additive under `schema_version: 2`", template)
         self.assertIn("the tree hash of the recorded `tested_subject`", " ".join(template.split()))
         self.assertIn("A match against the PR head's tree is not a match", " ".join(template.split()))
-
-    def test_coverage_term_denies_a_full_score_rather_than_failing_a_lane(self) -> None:
-        # The prose claimed an unexecuted criterion should keep a lane from
-        # reaching 80, but one deduction leaves a clean lane at 90 and passing.
-        # Prose and arithmetic must agree on which was meant.
-        qa = self.read("agents/qa-agent.md")
-        self.assertIn(
-            "The coverage term denies a full score; it does not by itself fail a lane.",
-            qa,
-        )
-        self.assertIn("should not receive a full score", qa)
-        self.assertNotIn("should not reach 80", qa)
-
-    def test_coverage_term_does_not_double_count_failed_criteria(self) -> None:
-        # A failed criterion already reduced the ratio. Deducting coverage on
-        # top of it penalises the same fact twice and can push legitimate work
-        # under the 80 threshold for arithmetic reasons rather than quality.
-        qa = self.read("agents/qa-agent.md")
-        self.assertIn("10 per PASSED test-executable acceptance criterion", qa)
-        self.assertIn("The coverage term applies only to criteria that passed.", qa)
-        self.assertIn(
-            "Never apply a coverage deduction to a criterion you marked failed.", qa
-        )
 
     def test_project_context_defers_role_routing_to_the_selection_guide(self) -> None:
         # PROJECT_CONTEXT.md outranks the agent selection guide in the adapter's
