@@ -1741,8 +1741,8 @@ class BackendContractTests(unittest.TestCase):
         self.assertNotEqual(head.group(1), tested_sha)
         self.assertEqual(head.group(1), tested_head)
         self.assertIn(f"base_oid: {tested_base}", example)
-        for field in ("run:", "job:", "attempt:", "definition_rev:", "environment:",
-                      "conclusion:", "observed_at:", "applicability:"):
+        for field in ("run:", "job:", "attempt:", "definition_ref:\n", "rev:", "environment:",
+                      "conclusion:", "observed_at:", "applicability:\n", "established: true"):
             with self.subTest(field=field):
                 self.assertIn(field, example)
         # Additive under schema_version 2, and the post-merge record compares

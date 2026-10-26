@@ -48,6 +48,7 @@ workspace_debt:
   threshold: null
   threshold_tripped: null
 pull_requests: []
+parent_acceptance: []
 defect_episodes: []
 blockers: []
 run_id: null
@@ -139,9 +140,9 @@ Each `approved_bypasses` / `review_debt` entry must record the reason, approver,
 
 ## CI evidence record schema (Issue #134)
 
-`ci_runs` is additive under `schema_version: 2`: a ledger written without it stays valid, and a reader that finds it absent treats CI coverage as not yet recorded, never as passing. It is an append-only list on each `pull_requests` entry, and the lead, as sole ledger writer, fills it from `gh run view` output and the job's checkout step, never from inference. One entry records one job attempt: `run`, `job` (the workflow's `name:` value), `attempt`, `definition_ref` and `definition_rev` (the workflow file and its blob revision, so a changed check invalidates reuse), `tested_subject`, `environment`, `conclusion`, `url`, `observed_at`, `covers` (the gate commands the job ran), and `applicability`.
+`ci_runs` is additive under `schema_version: 2`: a ledger written without it stays valid, and a reader that finds it absent treats CI coverage as not yet recorded, never as passing. It is an append-only list on each `pull_requests` entry, and the lead, as sole ledger writer, fills it from `gh run view` output and the job's checkout step, never from inference. One entry records one job attempt: `run`, `job` (the workflow's `name:` value), `attempt`, `definition_ref` (`ref`, the workflow file and job, and `rev`, its blob revision, so a changed check invalidates reuse), `tested_subject`, `environment`, `conclusion`, `url`, `observed_at`, `covers` (the gate commands the job ran), and `applicability` (`to`, `established`, `note`). These spellings follow the approved evidence profile in the evidence record schema below.
 
-`tested_subject` is `{sha, kind, head, base_oid}` and is never the same field as `headRefOid`. `headRefOid` is the source head the author pushed. `tested_subject.sha` is the commit CI actually checked out: for a `pull_request` run, GitHub's temporary merge commit of the head onto the base (`kind: merge_ref`); for a run on a pushed commit, that commit (`kind: head`). Recording the merge ref as the head would claim a tree nobody tested. `applicability` is `established` only when the run, job and attempt are retrievable, `covers` includes every required command the ownership table in `PROJECT_CONTEXT.md` assigns to the job, the tested subject is known, and the environment and `definition_rev` match; otherwise it is `uncertain`, and uncertain coverage is incomplete, never a pass. A new head or a changed check starts a new entry; it does not edit an old one.
+`tested_subject` is `{sha, kind, head, base_oid}` and is never the same field as `headRefOid`. `headRefOid` is the source head the author pushed. `tested_subject.sha` is the commit CI actually checked out: for a `pull_request` run, GitHub's temporary merge commit of the head onto the base (`kind: merge_ref`); for a run on a pushed commit, that commit (`kind: head`). Recording the merge ref as the head would claim a tree nobody tested. `applicability.to` names the source head the run applies to. `applicability.established` is `true` only when the run, job and attempt are retrievable, `covers` includes every required command the ownership table in `PROJECT_CONTEXT.md` assigns to the job, the tested subject is known, and the environment and `definition_ref.rev` match; otherwise it is `false`, and uncertain coverage is incomplete, never a pass. `applicability.note` states the basis in one line. A new head or a changed check starts a new entry; it does not edit an old one.
 
 Worked example: the source head is `4e683b4`, but the job tested the merge commit `7a0b5d1`, built on the base `b720c68`.
 
@@ -156,8 +157,9 @@ pull_requests:
       - run: 123
         job: Skill validation
         attempt: 1
-        definition_ref: .github/workflows/ci.yml#skill
-        definition_rev: 2ab2b59
+        definition_ref:
+          ref: .github/workflows/ci.yml#skill
+          rev: 2ab2b59
         tested_subject:
           sha: 7a0b5d1
           kind: merge_ref
@@ -168,7 +170,10 @@ pull_requests:
         url: https://github.com/OWNER/REPO/actions/runs/123
         observed_at: 2026-10-24T15:02:11Z
         covers: python3 scripts/validate_skill.py, python3 -m unittest discover -s tests
-        applicability: established
+        applicability:
+          to: 4e683b4
+          established: true
+          note: every required command ran on the merge ref of the head onto the then-current base
 ```
 
 ## Defect episode record schema (Issue #150)
@@ -239,6 +244,353 @@ closed/open state.
 When the merge used the external-review bypass, this record cross-references
 that PR's `review_debt` entry above rather than restating its commit-range
 rule.
+
+Under Issue #155 the same record is also written as one `post_merge` entry on
+the merged PR's `pull_requests` entry, carrying per-check and per-criterion
+outcomes at the merge sha, each with `basis: fresh | reused`; the fields are
+defined in the evidence record schema below.
+
+## Evidence record schema (Issue #155)
+
+The evidence fields are additive under `schema_version: 2`. A ledger written
+without them stays valid, and a reader that finds them absent treats the
+evidence as not yet recorded, never as passing. They produce records at the
+shared profile `completion-evidence-v1`, the evidence interface approved on
+2026-10-19 (reconciliation report §2). This template does not change that
+profile's meanings or its version; a version change is a shared owner decision,
+and fields marked private sit outside the profile and never change it. The
+ledger is block-style YAML, so every flow map in the approved example is
+written here as a block map with the same names.
+
+**One record per PR.** A `pull_requests` entry that carries
+`profile_version: completion-evidence-v1` is the PR record
+(`scope: pr_assurance`). It keeps every field of the pull request record schema
+above, including `ci_runs` with its `tested_subject` and `defect_episode_ref`,
+and adds:
+
+- Identity: `profile_version`, `scope`, `repository` (`OWNER/REPO`), `issue`
+  written qualified as `OWNER/REPO#N`, `parent_ref` (a qualified parent such as
+  `OWNER/REPO#N` or `linear:KEY-N`; null is allowed for a standalone single-PR
+  delivery), `criteria_ref`, `criteria_ids`, and `policy_ref` (`ref`, `rev`).
+- Subject: `base_oid` and `target_branch` beside the existing `headRefOid`.
+- Observation: `checks` and `criteria`, below.
+- Progress: `demonstrated`, `assurance`, `post_merge`, and `integrated`, below.
+- Provenance: `limitations` (a list, empty when none) and the private
+  `host_load_at_launch`.
+
+`criteria_ref` is `sha256:<digest>` of the **approved acceptance content only**,
+extracted from the Issue body at approval, never the Issue's status prose.
+Consumers treat it as opaque and never recompute it; they compare revisions by
+reference and by the `amendment` chain. `criteria_ids` lists the criteria this PR
+contributes to as stable IDs qualified by that revision (`AC-2@9f3c`).
+**Criteria edited after approval mark the affected outcomes `inconclusive`.**
+When the Issue's approved acceptance content no longer digests to the recorded
+`criteria_ref`, every affected `criteria` and `post_merge` criterion outcome
+becomes `inconclusive` until its tests and evaluator judgment are reassessed
+against the new intent, whatever files changed. An authorized amendment records
+the new `criteria_ref` with an explicit `criteria_map` and `amendment` on the
+parent-acceptance record below. An amended criterion is never retired through
+`not_applicable`.
+
+Each `checks` entry records `id`, `definition_ref` (`ref` and its blob `rev`, so
+a changed definition invalidates reuse), `executor` (`ci`, `worker:<agent_id>`,
+`qa:<agent_id>`, `reviewer:<agent_id>`, or `provider:<name>`), `tested_subject`
+(the sha the executor actually ran), `environment` (`ci`, `ci:<runner>`,
+`host:<id>`, or a named environment such as a preview), `real_vs_mocked` for an
+acceptance check, `outcome`, `evidence_ref`, and `observed_at`. Each `criteria`
+entry records `id`, `evaluator` (`type` and `id`), `outcome`, `evidence_ref`, and
+`reason` when the outcome is not `pass`. Outcomes use the vocabulary of the QA
+outcome model in `${CLAUDE_SKILL_DIR}/agents/qa-agent.md`: `pass`, `fail`,
+`inconclusive`, `not_applicable`. A required check or criterion is never
+`not_applicable`. `evidence_ref` is durable: a run, job and attempt, a review id,
+or a PR comment with its retained snapshot. An `evidence_ref` that only names a
+local path the consumer cannot reach makes that outcome `inconclusive`.
+
+`demonstrated` is `{what, where, revision, how}` or the scalar `unverified`. It
+records Working: a demonstration at an identified revision and environment. A
+demonstration satisfies a criterion only when that criterion's assigned evaluator
+is `demonstration`. An expired preview marks it `expired`.
+
+`assurance` is the lead-derived PR/slice result and records `outcome` (`pass`,
+`fail`, `pending`, `inconclusive`, or `unknown`), `reason`, `revision`,
+`observed_at`, `current`, and `stale_reason`. It is `pass` only when every
+contributed criterion passes by its assigned evaluator and no material finding is
+unresolved at `revision`. `current: false` with a `stale_reason` marks an
+assurance whose revision no longer applies (a new head, a withdrawn integration,
+or an invalidated input), and a non-current assurance is never reused. No
+`verified` boolean existed in this ledger before `assurance`, so it replaces
+none. **The PR record carries no goal-completion field.** Goal completion is the
+completion verifier's result type, kept in its own record.
+
+Each `post_merge` entry records `merge_sha`, `merged_at`, `tested_vs_merged`
+(`same` or `differs`), `action` (`applies_verbatim` or
+`full_required_gate_rerun`), `run` (the rerun's run, job, attempt,
+`tested_subject` and `conclusion`, when one ran), the existing `gate_result` and
+`criteria_verdict`, and per-item `checks` and `criteria`. Each per-item entry
+records `id`, `at` (the merge sha), `outcome`, `basis` (`fresh` or `reused`), and
+`evidence_ref`; a `reused` entry also records a `justification` naming the diff
+that shows the item's inputs, definition and environment are unchanged. **A reuse
+without a stated basis or justification is `inconclusive` at the merge sha**, and
+parent acceptance cannot count it. Reuse never replaces the full required gate
+rerun when the merged tree differs from the tested tree.
+
+`integrated` records `current` (`branch`, `merge_sha`, `revision`, or null) and
+`history`, a list of `{branch, merge_sha, integrated_at, withdrawn_at, reason}`.
+`current` is null until merge and after any withdrawal; a rollback withdraws
+`current` and keeps the history entry.
+
+`host_load_at_launch` (private) is the host's load average when the lane
+launched a local heavy run under the resource policy in
+`${CLAUDE_SKILL_DIR}/backends/contract.md`, or null when no local heavy run
+happened.
+
+**Parent acceptance is a separate record.** `parent_acceptance` is a top-level
+list. Each entry records `profile_version`, `scope: parent_acceptance`,
+`parent`, `mode` (`standalone`), `criteria_ref` (the current approved revision),
+`criteria_map` (old ID to new ID), `amendment` (`from`, `to`, `changed`,
+`approved_by`, `recorded_by`, `at`), `contributions` (one entry per PR:
+`pr`, `issue`, `criteria`, `assurance`, `integrated`), `criteria`, `outcome`,
+`reason`, `observed_at`, and `goal_completion_ref`. In standalone mode the owner
+approves an amendment and the lead records it. `goal_completion_ref` only points
+to the verifier's result and is null until one exists; the parent record never
+carries that result. Managed-mode references (`mode: managed`, `managed`,
+`assignment_ref`, `parent_mapping`) belong to the same profile and are not
+written by this version of the Skill.
+
+Worked example (the approved §2 records, block style): PR 23 was tested on
+GitHub's merge ref, merged after the base had advanced, and later reverted.
+
+```yaml
+pull_requests:
+  - number: 23
+    profile_version: completion-evidence-v1
+    scope: pr_assurance
+    repository: KHAEntertainment/SupaConsole
+    issue: KHAEntertainment/SupaConsole#41
+    parent_ref: KHAEntertainment/SupaConsole#40
+    criteria_ref: sha256:9f3c
+    criteria_ids:
+      - AC-1@9f3c
+      - AC-2@9f3c
+    policy_ref:
+      ref: PROJECT_CONTEXT.md#verification-gate
+      rev: 3c1e9a0
+    headRefOid: 4e683b4
+    base_oid: b720c68
+    target_branch: main
+    ci_runs:
+      - run: 123
+        job: build
+        attempt: 1
+        definition_ref:
+          ref: .github/workflows/ci.yml#build
+          rev: 2ab2b59
+        tested_subject:
+          sha: 7a0b5d1
+          kind: merge_ref
+          head: 4e683b4
+          base_oid: b720c68
+        environment: "ubuntu-latest / node 22 / prisma generate, tsc --noEmit, eslint, vitest run"
+        conclusion: success
+        url: https://github.com/KHAEntertainment/SupaConsole/actions/runs/123
+        observed_at: 2026-10-20T15:02:11Z
+        applicability:
+          to: 4e683b4
+          established: true
+          note: "all four required commands ran; merge ref of head onto the then-current base"
+    checks:
+      - id: build
+        definition_ref:
+          ref: .github/workflows/ci.yml#build
+          rev: 2ab2b59
+        executor: ci
+        tested_subject: 7a0b5d1
+        environment: ci
+        outcome: pass
+        evidence_ref: "run 123 attempt 1"
+        observed_at: 2026-10-20T15:02:11Z
+      - id: acceptance:e2e-verify
+        definition_ref:
+          ref: "ops/e2e.sh verify"
+          rev: 9d2c044
+        executor: qa:7a1c
+        tested_subject: 4e683b4
+        environment: preview-vps
+        real_vs_mocked: real
+        outcome: pass
+        evidence_ref:
+          comment: "https://github.com/KHAEntertainment/SupaConsole/pull/23#issuecomment-991"
+          snapshot: evidence/23/e2e-verify-4e683b4.txt
+        observed_at: 2026-10-20T15:40:00Z
+    criteria:
+      - id: AC-1@9f3c
+        evaluator:
+          type: test
+          id: "vitest src/app/api/projects/rename.test.ts"
+        outcome: pass
+        evidence_ref: "run 123 attempt 1"
+      - id: AC-2@9f3c
+        evaluator:
+          type: demonstration
+          id: worker:9b2
+        outcome: pass
+        evidence_ref: "PR body demonstration, revision 4e683b4"
+    review:
+      source: coderabbit
+      qualified: true
+      head: 4e683b4
+      evidence_ref:
+        review_id: 2201
+        thread_heads:
+          - 4e683b4
+      unresolved_material: 0
+      observed_at: 2026-10-20T15:30:00Z
+    defect_episode_ref: ep-1
+    demonstrated:
+      what: "POST /api/projects/:id/rename returns 200 and the new slug"
+      where: worker dev server
+      revision: 4e683b4
+      how: curl output in PR body
+    assurance:
+      outcome: pass
+      reason: "all contributed criteria pass by assigned evaluator; no unresolved material finding"
+      revision: 4e683b4
+      observed_at: 2026-10-20T15:45:00Z
+      current: false
+      stale_reason: "integration withdrawn 2026-10-23 (revert e5a0c3b); outcome stands at revision 4e683b4 only and is not reusable"
+    post_merge:
+      - merge_sha: d44f1e0
+        merged_at: 2026-10-20T16:10:00Z
+        tested_vs_merged: differs
+        action: full_required_gate_rerun
+        run:
+          run: 130
+          job: build
+          attempt: 1
+          tested_subject:
+            sha: d44f1e0
+            kind: head
+          conclusion: success
+          observed_at: 2026-10-20T16:25:00Z
+        gate_result: rerun_pass
+        criteria_verdict: confirmed
+        checks:
+          - id: build
+            at: d44f1e0
+            outcome: pass
+            basis: fresh
+            evidence_ref: "run 130 attempt 1"
+          - id: acceptance:e2e-verify
+            at: d44f1e0
+            outcome: pass
+            basis: reused
+            justification: "git diff 4e683b4..d44f1e0 -- src/app/api/projects/ prisma/ ops/ is empty (base advance touched docs/ only); definition rev 9d2c044 unchanged; preview-vps ran 4e683b4 whose rename path is byte-identical"
+            evidence_ref: "issuecomment-991 + snapshot evidence/23/e2e-verify-4e683b4.txt"
+        criteria:
+          - id: AC-1@9f3c
+            at: d44f1e0
+            outcome: pass
+            basis: fresh
+            evaluator:
+              type: test
+            evidence_ref: "run 130 attempt 1 (vitest re-executed on the merged tree)"
+          - id: AC-2@9f3c
+            at: d44f1e0
+            outcome: pass
+            basis: reused
+            evaluator:
+              type: demonstration
+              id: worker:9b2
+            justification: "same empty diff on the rename path; demonstration at 4e683b4 applies"
+            evidence_ref: "PR body demonstration, revision 4e683b4"
+    integrated:
+      current: null
+      history:
+        - branch: main
+          merge_sha: d44f1e0
+          integrated_at: 2026-10-20T16:10:00Z
+          withdrawn_at: 2026-10-23T09:12:00Z
+          reason: "reverted by e5a0c3b after Issue #40 reopened"
+    limitations: []
+    host_load_at_launch: null
+parent_acceptance:
+  - profile_version: completion-evidence-v1
+    scope: parent_acceptance
+    parent: KHAEntertainment/SupaConsole#40
+    mode: standalone
+    criteria_ref: sha256:b17e
+    criteria_map:
+      AC-1@9f3c: AC-1@b17e
+      AC-2@9f3c: AC-2@b17e
+      AC-3@9f3c: AC-3@b17e
+      AC-4@9f3c: AC-4@b17e
+    amendment:
+      from: sha256:9f3c
+      to: sha256:b17e
+      changed:
+        - AC-3
+      approved_by: owner
+      recorded_by: lead
+      at: 2026-10-21T10:00:00Z
+    contributions:
+      - pr: 23
+        issue: KHAEntertainment/SupaConsole#41
+        criteria:
+          - AC-1
+          - AC-2
+        assurance:
+          outcome: pass
+          revision: 4e683b4
+          current: false
+        integrated: withdrawn
+      - pr: 24
+        issue: KHAEntertainment/SupaConsole#42
+        criteria:
+          - AC-3
+          - AC-4
+        assurance:
+          outcome: pending
+          revision: 1f9e77c
+        integrated: null
+    criteria:
+      - id: AC-1@b17e
+        evaluator:
+          type: test
+        outcome: inconclusive
+        reason: "contribution PR 23 integration withdrawn 2026-10-23; re-establish at a current revision"
+      - id: AC-2@b17e
+        evaluator:
+          type: demonstration
+        outcome: inconclusive
+        reason: same withdrawal
+      - id: AC-3@b17e
+        evaluator:
+          type: independent_reviewer
+          id: reviewer lane
+        outcome: inconclusive
+        reason: "criterion amended 2026-10-21; tests and evaluator judgment to be reassessed against the new intent; PR 24 pending"
+      - id: AC-4@b17e
+        evaluator:
+          type: human
+          id: owner
+        outcome: pending
+        reason: human evaluation not yet performed
+    outcome: not_complete
+    reason: "2 of 4 criteria withdrawn by rollback, 1 amended and unassessed, 1 awaiting its human evaluator"
+    observed_at: 2026-10-23T09:30:00Z
+    goal_completion_ref: null
+```
+
+The digests are shortened for the example. `review` is the approved example's
+review record, carried here verbatim; the Skill's review fields remain those of
+the pull request record schema above. Where Dev spelling differs from the
+approved example, the meanings map as follows:
+
+| Approved example | Dev ledger field |
+|---|---|
+| `pull_request` | the entry's existing `number` |
+| `fix_batches` (private) | the `fix_batches` of the episode named by `defect_episode_ref` |
+| `tier` (private) | the risk tier the lead records for the PR |
 
 ## Inventory record schema (Issue #73)
 
