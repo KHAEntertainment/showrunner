@@ -8,7 +8,61 @@ build metadata in `skills/dev/SKILL.md` (`2.0.0+upstream.3e87db0`). Entries belo
 `v2.0.0` predate that scheme: they use `custom-vX.Y.Z-upstream.SHA` headings and
 record upstream SHAs as plain text in their `### Upstream` blocks.
 
-## Unreleased (v2.2.0)
+## Unreleased (v2.1.3)
+
+### Changed (verification SOP, v2.1.3 P1–P6)
+
+The progress-first verification plan: less repeated checking by role, the same
+protections where risk is high. Planned in the v2.1.3 Dev/Showrunner
+architecture investigation; each package is one PR and reverts on its own.
+
+- One executor per check
+  ([#134](https://github.com/KHAEntertainment/showrunner/issues/134), PR #146).
+  `PROJECT_CONTEXT.md` names who runs each Verification Gate command: PR CI
+  for skill, shell and packaging validation, the Release Gate for the installer
+  suites. Workers, QA, the reviewer and the lead cite the CI run, job and
+  attempt instead of re-running the suite. Pending CI stays pending, with no
+  automatic local fallback, and missing, skipped or stale CI evidence is never
+  a pass. Post-merge verification compares against the commit CI actually
+  tested (GitHub's merge commit), not the PR head.
+- Explicit outcomes replace the QA score gate
+  ([#135](https://github.com/KHAEntertainment/showrunner/issues/135), PR #147).
+  Every criterion and check gets `pass`, `fail`, `inconclusive` or
+  `not_applicable` with its evaluator, executor, evidence and reason. A
+  required item can't be `not_applicable`. The ≥ 80 health-score gate is gone;
+  the score is an optional diagnostic line. A finding blocks only when it is
+  material.
+- Risk tiers replace the size-only QA trigger
+  ([#149](https://github.com/KHAEntertainment/showrunner/issues/149), PR #151;
+  resolves [#107](https://github.com/KHAEntertainment/showrunner/issues/107)).
+  T0 to T3 come from the paths a diff touches, not its size. The Phase 0
+  router and Phase 3.5 state one rule, and the validator fails when they
+  disagree. Hotfixes are not exempt. Projects declare behavior, T2 and T3
+  paths in `PROJECT_CONTEXT.md`.
+- T1 lane set
+  ([#154](https://github.com/KHAEntertainment/showrunner/issues/154), PR #156).
+  A T1 PR gets one qualified independent review: a qualified external review
+  at the current head counts, so the internal reviewer isn't dispatched. The
+  QA lane runs at T1 only when a declared acceptance check applies. T2 and T3
+  keep their current lanes. Multi-source reviewer policies stay valid.
+- Bounded remediation
+  ([#150](https://github.com/KHAEntertainment/showrunner/issues/150), PR #152).
+  Fix rounds are counted per defect episode in the ledger (`defect_episodes[]`,
+  `defect_episode_ref`). Rounds 1 and 2 are automatic; a third needs a lead
+  diagnosis, which authorizes only the extra rounds it names. A cap never
+  clears a blocker.
+- Evidence fields at profile `completion-evidence-v1`
+  ([#155](https://github.com/KHAEntertainment/showrunner/issues/155), PR #157).
+  Ledger PR records carry the shared evidence profile agreed with Foreman:
+  criteria and per-check outcomes, `assurance`, `demonstrated`, `integrated`,
+  and post-merge entries marked `basis: fresh | reused`. `ci_runs[]` now
+  spells `definition_ref: {ref, rev}` and `applicability: {to, established,
+  note}`. `contract.md` gains a resource policy for heavy local runs. All
+  fields are additive; old ledgers stay valid. The report-back stays seven
+  sections.
+- `UPSTREAM.md` records how upstream is tracked after leaving the GitHub fork
+  network (PR #148): the `upstream` remote, a releases-only watch, and a new
+  Port log.
 
 ### Changed
 
