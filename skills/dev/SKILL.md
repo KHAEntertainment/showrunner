@@ -186,7 +186,7 @@ All delegated lanes end with the shared report-back contract in `${CLAUDE_SKILL_
 **Before entering this Phase, read the detailed rules:**
 `${CLAUDE_SKILL_DIR}/phases/phase3.5.md`
 
-Core principle: use the deterministic risk tier of the diff (T0–T3, defined once in `phase3.5.md`) to decide whether QA is required; resolve the PR branch and current head before dispatch; launch a distinct read-only QA identity through the selected adapter; route failures through a newly dispatched fix worker and repeat Phase 3.5 + Phase 4.
+Core principle: use the deterministic risk tier of the diff (T0–T3, defined once in `phase3.5.md`) to decide whether QA is required (for T1, only when a declared acceptance check applies; the T1 review is one qualified independent review); resolve the PR branch and current head before dispatch; launch a distinct read-only QA identity through the selected adapter; route failures through a newly dispatched fix worker and repeat Phase 3.5 + Phase 4.
 
 Start trusted external-review observation for the exact PR head during this Phase. The reconciliation gate is defined in `${CLAUDE_SKILL_DIR}/phases/external-review.md` and completes in Phase 4.
 

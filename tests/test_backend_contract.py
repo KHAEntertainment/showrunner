@@ -3405,7 +3405,7 @@ class RiskTierTests(unittest.TestCase):
             "`resolve_repository.py`",
             "only the owner lowers a T3 floor, never the lead",
             "Lowering a floor is an owner decision recorded in `PROJECT_CONTEXT.md`.",
-            "T1 keeps the current lanes",
+            "only when a declared acceptance check applies",
             "T2 and T3 keep their current protections unchanged",
         ):
             with self.subTest(token=token):
@@ -3522,6 +3522,233 @@ class RiskTierTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 1)
         self.assertIn("router and phases/phase3.5.md disagree on T0", result.stderr)
+
+
+class T1LaneSetTests(unittest.TestCase):
+    """Issue #154: T1 runs one qualified independent review; QA only for a declared acceptance check.
+
+    Doc-assertion tests for AC-1 to AC-6, mutation tests proving the validator
+    fails when the T1 lane set drifts back to the P2 interim, and fixtures
+    proving a multi-source `Required reviewers` policy validates (AC-4).
+    """
+
+    HEADING = "## Qualified review for T1"
+
+    def read(self, relative: str) -> str:
+        return (SKILL / relative).read_text(encoding="utf-8")
+
+    def section(self) -> str:
+        section = _markdown_section(self.read("phases/external-review.md"), self.HEADING)
+        self.assertIsNotNone(section)
+        return " ".join(section.split())
+
+    def validator(self):
+        return _validator_module()
+
+    def mutated(self, relative: str, old: str, new: str) -> list[str]:
+        import shutil
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "dev"
+            shutil.copytree(SKILL, copy)
+            target = copy / relative
+            text = target.read_text(encoding="utf-8")
+            self.assertEqual(text.count(old), 1, f"mutation anchor {old!r} in {relative}")
+            target.write_text(text.replace(old, new), encoding="utf-8")
+            return self.validator().check_t1_lane_set(copy)
+
+    def test_live_skill_states_the_t1_lane_set(self) -> None:
+        self.assertEqual(self.validator().check_t1_lane_set(SKILL), [])
+
+    def test_ac1_qualified_provider_at_head_skips_internal_reviewer_and_names_source(self) -> None:
+        section = self.section()
+        self.assertIn(
+            "| Qualified and complete at head, every active finding triaged | Not dispatched |",
+            section,
+        )
+        for token in ("`internal_review_status: not_dispatched`", "qualifying source in `completed_reviewers`", "governing requirement in `expected_reviewers`"):
+            with self.subTest(token=token):
+                self.assertIn(token, section)
+        phase4 = self.read("phases/phase4.md")
+        self.assertIn("the internal reviewer is not dispatched and the record names the source", phase4)
+
+    def test_ac1_qualification_list_matches_the_design(self) -> None:
+        section = self.section()
+        for token in (
+            "A separate evaluator from the author and from every fixer.",
+            "Access to the Issue criteria and the relevant delta.",
+            "Stated coverage of the changed files.",
+            "A trusted identity",
+            "Kilo summary evidence",
+            "Retrievable findings.",
+            "rate-limit breakpoint",
+            "CI is not a review",
+            "Family difference alone is not independence",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, section)
+
+    def test_ac2_rate_limit_past_breakpoint_dispatches_substitute_not_bypass(self) -> None:
+        section = self.section()
+        self.assertIn(
+            "| Rate-limited past the breakpoint | Dispatched as the substitute under **Rate-limit breakpoint** |",
+            section,
+        )
+        self.assertIn("a completed review, never a bypass", section)
+        # The shipped substitution rule is untouched.
+        external = self.read("phases/external-review.md")
+        self.assertIn("The substitute is a fresh identity whose model family differs from the implementation worker, the QA lane, and the internal reviewer.", external)
+        self.assertIn("A completed substitute review satisfies the external gate as a review, not a bypass", external)
+
+    def test_ac3_other_unqualified_states_never_clear_and_substitution_is_not_extended(self) -> None:
+        section = self.section()
+        for state in ("summary-only result", "unmapped identity", "stale head", "unknown or unavailable"):
+            with self.subTest(state=state):
+                self.assertIn(state, section)
+        self.assertIn("A required provider stays `pending` or `incomplete`, never `clear`.", section)
+        self.assertIn("does not extend the substitution rule to these states", section)
+        self.assertIn("May perform the review role", section)
+        self.assertIn("never reads as `clear`", " ".join(self.read("phases/phase4.md").split()))
+
+    def test_ac4_multi_source_policy_is_valid_and_each_source_gates(self) -> None:
+        section = self.section()
+        for token in (
+            "the policy is valid and each source is tracked to completion at the current head",
+            "a qualified review from one source never fills another source's seat",
+            "The record names the governing requirement",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, section)
+
+    def test_ac4_validator_accepts_multi_source_required_reviewers(self) -> None:
+        v = self.validator()
+        base = "\n".join(
+            [
+                "- **Mode**: auto",
+                "- **Trusted reviewers**: coderabbit, kilo, github-copilot, gemini-code-assist, greptile, sourcery, qodo",
+                "- **Required reviewers**: {value}",
+                "- **Ignored reviewers**: none",
+                "- **Additional reviewer identities**: {extra}",
+            ]
+        )
+        valid = (
+            ("kilo", "none"),
+            ("kilo, greptile", "none"),
+            ("greptile, kilo, qodo", "none"),
+            ("none", "none"),
+            ("kilo, acme-review", "acme-review=acme-bot[bot]"),
+            ("kilo, `greptile` (platform requirement)", "none"),
+        )
+        for value, extra in valid:
+            policy = base.format(value=value, extra=extra)
+            if "acme-review" in value:
+                policy = policy.replace("qodo\n", "qodo, acme-review\n", 1)
+            with self.subTest(value=value):
+                self.assertEqual(v.check_required_reviewer_policy(policy), [])
+
+    def test_ac4_validator_still_rejects_invalid_required_reviewers(self) -> None:
+        v = self.validator()
+        trusted = "- **Trusted reviewers**: coderabbit, kilo\n"
+        cases = {
+            "unknown reviewer": trusted + "- **Required reviewers**: kilo, mystery-bot\n",
+            "not in the trusted line": trusted + "- **Required reviewers**: kilo, greptile\n",
+            "duplicate": "- **Required reviewers**: kilo, kilo\n",
+            "none mixed with a name": "- **Required reviewers**: none, kilo\n",
+            "empty": "- **Required reviewers**:\n",
+        }
+        for label, policy in cases.items():
+            with self.subTest(case=label):
+                self.assertTrue(v.check_required_reviewer_policy(policy), f"validator accepted: {label}")
+
+    def test_ac4_kilo_pin_is_membership_not_exact_line(self) -> None:
+        v = self.validator()
+        self.assertIn("kilo", v.parse_required_reviewers("- **Required reviewers**: greptile, kilo\n"))
+        self.assertEqual(v.parse_required_reviewers("- **Required reviewers**: none\n"), [])
+        self.assertIsNone(v.parse_required_reviewers("- **Mode**: auto\n"))
+
+    def test_ac4_live_project_policy_validates(self) -> None:
+        context = (ROOT / "PROJECT_CONTEXT.md").read_text(encoding="utf-8")
+        self.assertEqual(self.validator().check_required_reviewer_policy(context), [])
+        self.assertIn("kilo", self.validator().parse_required_reviewers(context))
+
+    def test_template_default_is_one_qualified_source_and_more_only_by_policy(self) -> None:
+        template = self.read("templates/PROJECT_CONTEXT_TEMPLATE.md")
+        flat = " ".join(template.split())
+        self.assertIn("one qualified independent review source by default", flat)
+        self.assertIn("or, when none is listed, the internal reviewer", flat)
+        self.assertIn("List more than one only when project policy requires it", flat)
+        self.assertIn("each must be trusted and have an identity mapping", flat)
+        self.assertNotIn("default none", flat.lower())
+
+    def test_ac5_qa_lane_for_t1_only_with_declared_acceptance_check(self) -> None:
+        phase35 = self.read("phases/phase3.5.md")
+        flat = " ".join(phase35.split())
+        self.assertIn("acceptance lane only if a declared acceptance check applies", flat)
+        self.assertIn("The QA (acceptance) lane in this Phase runs for a T1 PR only when a declared acceptance check applies", flat)
+        self.assertIn("T2 and T3 keep their current protections unchanged", flat)
+        self.assertIn("| T2 elevated |", phase35)
+        self.assertIn("Current T2 protections, unchanged", phase35)
+        self.assertIn("| T3 critical |", phase35)
+        self.assertIn("Full current cycle", phase35)
+        self.assertNotIn("Until it lands", phase35)
+        self.assertNotIn("T1 keeps the current lanes", phase35)
+
+    def test_contract_invariant_is_tier_aware_and_keeps_distinct_roles(self) -> None:
+        contract = " ".join(self.read("backends/contract.md").split())
+        self.assertNotIn("Worker → PR → QA → Review is unchanged", contract)
+        self.assertIn("T2 and T3 run QA and the internal reviewer as before", contract)
+        self.assertIn("a QA lane only when a declared acceptance check applies", contract)
+        self.assertIn("When they run, QA and review are distinct read-only SOP roles.", contract)
+        self.assertIn("The reviewer and QA must have agent IDs distinct from each other and from every implementation worker", contract)
+
+    def test_ac6_ignored_source_leaves_tracking_only_and_defects_are_still_triaged(self) -> None:
+        section = self.section()
+        self.assertIn("removes a source from completion tracking only", section)
+        self.assertIn("A credible material defect reported by an ignored or non-required source is still triaged by the lead", section)
+        self.assertIn("A credible material defect from an ignored or non-required source is still triaged by the lead", self.read("phases/phase4.md"))
+
+    def test_validator_fails_when_the_t1_lane_set_drifts(self) -> None:
+        cases = {
+            "interim sentence returns": (
+                "phases/phase3.5.md",
+                "T2 and T3 keep their current protections unchanged during the T1 pilot.",
+                "T2 and T3 keep their current protections unchanged. Until it lands, T1 keeps the current lanes.",
+            ),
+            "qa rule dropped": (
+                "phases/phase3.5.md",
+                "runs for a T1 PR only when a declared acceptance check applies",
+                "runs for every T1 PR",
+            ),
+            "old invariant returns": (
+                "backends/contract.md",
+                "- Worker → PR → review is the same for both adapters.",
+                "- Worker → PR → QA → Review is unchanged for both adapters.\n- Worker → PR → review is the same for both adapters.",
+            ),
+            "section removed": (
+                "phases/external-review.md",
+                self.HEADING,
+                "## Something Else",
+            ),
+            "ac3 never-clear pin dropped": (
+                "phases/external-review.md",
+                "A required provider stays `pending` or `incomplete`, never `clear`.",
+                "A required provider is treated as clear.",
+            ),
+            "ac6 ignored pin dropped": (
+                "phases/external-review.md",
+                "removes a source from completion tracking only",
+                "removes a source from the policy",
+            ),
+            "template default dropped": (
+                "templates/PROJECT_CONTEXT_TEMPLATE.md",
+                "one qualified independent review source by default",
+                "no reviewer by default",
+            ),
+        }
+        for label, (relative, old, new) in cases.items():
+            with self.subTest(mutation=label):
+                self.assertTrue(self.mutated(relative, old, new), f"validator accepted: {label}")
 
 
 if __name__ == "__main__":

@@ -20,11 +20,13 @@ Rules:
 - The rule applies to every router path, Emergency Hotfix included. There is no per-path exemption.
 - Discovery raises the tier. A raised tier adds its checks to the same PR; evidenced work is not restarted.
 - Lowering a floor is an owner decision recorded in `PROJECT_CONTEXT.md`. The lead never lowers a floor, and never reads an undeclared path as T0 to save a lane.
-- During the T1 pilot the T1 lane set above is the target and is implemented separately. Until it lands, T1 keeps the current lanes (this Phase, then the Phase 4 review), and T2 and T3 keep their current protections unchanged.
+- T1 lane set: the review lane is one qualified independent review, defined in **Qualified review for T1** in `${CLAUDE_SKILL_DIR}/phases/external-review.md`. The QA (acceptance) lane in this Phase runs for a T1 PR only when a declared acceptance check applies to it; otherwise record that no declared acceptance check applies and skip the QA lane. A provider review is never runtime acceptance, so it does not stand in for a declared acceptance check. T2 and T3 keep their current protections unchanged during the T1 pilot.
 
 When the tier is T0, record why Phase 3.5 was skipped (the tier and the paths that placed it there) and continue to Phase 4. The Tech Lead may raise a tier for a change whose risk the floors do not capture; the lead may not lower one.
 
 ## Prepare the QA Lane
+
+This section applies when the QA lane runs: tier T2 or T3, or a T1 PR with a declared acceptance check. Start external-review observation (step 3) for every tier that reaches this Phase, even when a T1 PR has no QA lane.
 
 Use the absolute worktree path recorded for this PR as `<selected-worktree>` in checks below; do not infer it from the ambient directory. Run local Git operations and validation in that same worktree (explicit cwd or `rtk proxy git -C "<selected-worktree>" ...`). Keep GitHub commands scoped to the confirmed host and repository.
 
