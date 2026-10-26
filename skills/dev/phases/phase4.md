@@ -121,12 +121,16 @@ and follow-up location in the existing debt records or issue tracker.
 
 □ Feature completeness
   Map every acceptance criterion to implementation evidence.
+  Compare the Issue's approved acceptance content with the recorded `criteria_ref`; on a mismatch every affected criterion outcome is `inconclusive` until its tests and evaluator judgment are reassessed against the new intent.
 
 □ Error handling
   Trace DB/API/file failures; DELEGATE-FIX obvious omissions and ASK when failure semantics are ambiguous.
 
 □ Tests and migrations
   Block when the project has a test framework but the new behavior has no tests, or when schema changes bypass the approved migration framework/rollback path.
+
+□ Test changes against intent
+  Compare every changed assertion, skip, fixture and mock with the Issue's intent and the PR body's "Test changes and why" section. Block a weakened or deleted assertion, a new skip, a fixture changed to fit the code, or a mock replacing a real path when no reason ties the change to the intended behavior; a PR body with no such section, or `none` beside changed tests, is incomplete.
 ```
 
 ### Pass 2 — Informational (record unless it exposes a Pass 1 defect)
@@ -305,6 +309,14 @@ each answer "yes" to individually while it stays unasked.
    `criteria_verdict` (with the reopen list when unmet) to the post-merge
    verification record in `.agent/dev-state.md`, per the schema in
    `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`.
+   On a PR record, also write one `post_merge` entry with an outcome at the
+   merge sha for every check and every criterion, each with `basis: fresh`
+   (re-established at the merge sha) or `basis: reused` (carried over from the
+   tested revision) and its `evidence_ref`. A `reused` entry states a
+   diff-based `justification`: the item's inputs, check definition and
+   environment are unchanged between the tested revision and the merge sha.
+   A reuse without a stated basis is `inconclusive` at the merge sha. Reuse
+   never replaces the full required gate rerun in step 1 when the trees differ.
 4. **If the merge used the external-review bypass**, this record inherits
    that bypass's debt rather than restating it: cross-reference the recorded
    `review_debt` entry and the commit-range rule in

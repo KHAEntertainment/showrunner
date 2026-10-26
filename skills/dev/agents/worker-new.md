@@ -144,4 +144,6 @@ Whether launched through Claude-native or Traycer execution:
     Then re-verify the PR target and the `gh` CLI account before creating the PR: `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/resolve_repository.py" --repo-dir "<assigned-worktree>" --operation pr --target <github.pullRequestRepository from .dev.json>`. Do not push or create the PR on anything other than an explicit `ready` result from each check; stop and report the reason if either is not `ready`. Use `rtk gh pr create --repo github.com/<that confirmed pullRequestRepository>`:
     - title: `[Issue #N] [task description]`
     - body: include `Closes #N` (or `Closes OWNER/REPO#N` when the Issue is not in the PR's own repository), change rationale, AC completion status, complete test output, coverage-path audit, and caller impact
+    - body: a **Test changes and why** section naming every changed assertion, skip, fixture and mock with the reason it changed against the Issue's intent, or `none`
+    - body: the demonstration (what, where, revision, how), or `unverified`
 18. Stop after PR is created, report the PR and current head commit through the assigned backend, and wait for Review or shutdown
