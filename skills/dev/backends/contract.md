@@ -26,8 +26,8 @@ Each adapter must implement these operations and either return verified state fo
 - The lead never modifies implementation or test code.
 - Every coding agent receives a pre-created, verified branch/worktree and explicit ownership.
 - GitHub Issues and PRs are canonical; backend task lists are runtime coordination only.
-- Worker → PR → QA → Review is unchanged for both adapters.
-- QA and review are distinct read-only SOP roles. Each turn receives no implementation ownership and must leave zero tracked changes; a correction review requires a fresh report.
+- Worker → PR → review is the same for both adapters. The lanes that run are set by the diff's risk tier (`${CLAUDE_SKILL_DIR}/phases/phase3.5.md`): T2 and T3 run QA and the internal reviewer as before; T1 runs one qualified independent review (an external source, or the internal reviewer when none qualifies, per `${CLAUDE_SKILL_DIR}/phases/external-review.md`) and a QA lane only when a declared acceptance check applies.
+- When they run, QA and review are distinct read-only SOP roles. Each turn receives no implementation ownership and must leave zero tracked changes; a correction review requires a fresh report.
 - The reviewer and QA must have agent IDs distinct from each other and from every implementation worker; the reviewer reviews the recorded current `headRefOid`.
 - A new push resets QA, internal review, and external-review completion to pending for the new head; retain prior reports as historical evidence. Run **Review after fixes** in `${CLAUDE_SKILL_DIR}/phases/phase4.md` for fresh results. Internal delta review does not satisfy external review.
 - RTK-first command rules apply everywhere. Traycer CLI calls use `rtk proxy python3 ${CLAUDE_SKILL_DIR}/scripts/traycer_cli.py`. Never invoke `traycer` directly, and never through a bare `rtk proxy traycer`.

@@ -88,6 +88,8 @@ Omit this section to use the `/dev` defaults shown below.
 - **Default wait minutes**: 10
 - **Allow automatic review requests**: false
 
+Required reviewers: a T1 PR needs one qualified independent review source by default, either a named external provider or, when none is listed, the internal reviewer; the `Required reviewers` line lists a provider only when the project wants that provider to gate every PR. List more than one only when project policy requires it (an existing requirement, a platform requirement, or distinct justified expertise); the policy is valid with several entries, each must be trusted and have an identity mapping, and each is tracked to completion at the current head. See **Qualified review for T1** in `${CLAUDE_SKILL_DIR}/phases/external-review.md`.
+
 `Ignored reviewers` takes precedence over every other setting. Additional identities use `reviewer=login` or `reviewer=login,check-app-slug`. Automatic review requests can consume reviewer credits; enable them per reviewer only when intentionally desired. The `Pending reviewer decisions` line records unknown bots the user has chosen to decide later (login + date); the lead does not re-ask a login already listed there, and the inspector continues to surface it as evidence until the user revisits the decision.
 
 ---

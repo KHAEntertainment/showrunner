@@ -24,7 +24,9 @@ For large or risky PRs, the Tech Lead may use parallel topology through the sele
 
 Review agents are advisory only. They must report findings to the Tech Lead and leave PR comments when instructed, but the Tech Lead owns APPROVE / REQUEST CHANGES / COMMENT and all merge decisions.
 
-Before any independent review, load `${CLAUDE_SKILL_DIR}/agents/reviewer.md`. Require a reviewer agent ID distinct from implementation/fix workers and the QA agent, no implementation ownership, the recorded current `headRefOid`, and clean worktree evidence before and after review.
+Before any dispatched independent review, load `${CLAUDE_SKILL_DIR}/agents/reviewer.md`. Require a reviewer agent ID distinct from implementation/fix workers and the QA agent (when a QA lane ran), no implementation ownership, the recorded current `headRefOid`, and clean worktree evidence before and after review.
+
+For a T1 PR the internal reviewer is dispatched only as **Qualified review for T1** in `${CLAUDE_SKILL_DIR}/phases/external-review.md` directs: not when a qualified external review is complete at the current head, and otherwise (rate-limit breakpoint substitution, an unqualified provider, or no source) as that section's table states. T2 and T3 dispatch it as before. The Tech Lead's own checklist review and rating below run for every tier.
 
 ---
 
@@ -192,6 +194,7 @@ below before rating the PR.
 - A `pending` whose only open seats are filled by a completed, current-head substitution routes as `clear` per **Rate-limit breakpoint** in the external-review gate, provided no finding, the substitute's included, is blocking or awaiting disposition; a substitute at an older head does not count.
 - Any other `pending`, or `incomplete`, external review → do not merge; follow the explicit waiting/approval choices in the external-review gate.
 - `clear` or `not_applicable` → continue to the internal rating below. This is not a substitute for the internal checklist.
+- T1 review lane: a qualified external review complete at the current head with every active finding triaged is the T1 independent review, so the internal reviewer is not dispatched and the record names the source (`internal_review_status: not_dispatched`; see **Qualified review for T1**). A provider that is unqualified for any reason other than a rate limit past the breakpoint never reads as `clear`: a required provider stays `pending` or `incomplete`, and the internal reviewer may perform the review role. A credible material defect from an ignored or non-required source is still triaged by the lead.
 
 Must give one explicit rating:
 

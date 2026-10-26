@@ -591,6 +591,139 @@ def check_risk_tiers(skill_dir: Path) -> list[str]:
     return errors
 
 
+# Issue #154: the T1 lane set. One qualified independent review satisfies the
+# T1 review lane, and the QA lane runs for T1 only when a declared acceptance
+# check applies. The pins below keep the documents from drifting back to the
+# P2 interim (separate QA and reviewer on every T1 PR) and keep the qualified
+# review outcomes stated. The policy parser accepts a multi-source
+# `Required reviewers` list (AC-4).
+T1_LANE_HEADING = "## Qualified review for T1"
+T1_LANE_PINS: dict[str, tuple[str, ...]] = {
+    "phases/external-review.md": (
+        "one qualified independent review",
+        "CI is not a review",
+        "Family difference alone is not independence",
+        "Provider review is never runtime acceptance",
+        "| Qualified and complete at head",
+        "Not dispatched",
+        "`internal_review_status: not_dispatched`",
+        "Rate-limited past the breakpoint",
+        "never `clear`",
+        "does not extend the substitution rule",
+        "each source is tracked to completion at the current head",
+        "names the governing requirement",
+        "removes a source from completion tracking only",
+        "still triaged by the lead",
+    ),
+}
+T1_PHRASE_PINS: dict[str, tuple[str, ...]] = {
+    "phases/phase3.5.md": (
+        "only when a declared acceptance check applies",
+        "T2 and T3 keep their current protections unchanged",
+    ),
+    "phases/phase4.md": ("Qualified review for T1", "`internal_review_status: not_dispatched`"),
+    "backends/contract.md": ("a QA lane only when a declared acceptance check applies",),
+    "templates/PROJECT_CONTEXT_TEMPLATE.md": (
+        "one qualified independent review source by default",
+        "List more than one only when project policy requires it",
+    ),
+}
+T1_RETIRED_PHRASES: dict[str, tuple[str, ...]] = {
+    "phases/phase3.5.md": ("Until it lands, T1 keeps the current lanes", "T1 keeps the current lanes"),
+    "backends/contract.md": ("Worker → PR → QA → Review is unchanged",),
+}
+DEFAULT_TRUSTED_REVIEWERS = (
+    "coderabbit",
+    "kilo",
+    "github-copilot",
+    "gemini-code-assist",
+    "greptile",
+    "sourcery",
+    "qodo",
+)
+
+
+def check_t1_lane_set(skill_dir: Path) -> list[str]:
+    """Return errors when the T1 lane set (Issue #154) is missing or the P2 interim returned."""
+    errors: list[str] = []
+    texts: dict[str, str] = {}
+    for relative in {*T1_LANE_PINS, *T1_PHRASE_PINS, *T1_RETIRED_PHRASES}:
+        path = skill_dir / relative
+        if not path.is_file():
+            return errors  # the required-manifest check already reports the missing file
+        texts[relative] = path.read_text(encoding="utf-8")
+
+    for relative, tokens in T1_LANE_PINS.items():
+        section = markdown_section(texts[relative], T1_LANE_HEADING)
+        if section is None:
+            fail(errors, f"{relative} must contain a `{T1_LANE_HEADING}` section")
+            continue
+        for token in tokens:
+            if token not in normalize(section):
+                fail(errors, f"{relative} `{T1_LANE_HEADING}` must state: {token}")
+    for relative, tokens in T1_PHRASE_PINS.items():
+        for token in tokens:
+            if token not in normalize(texts[relative]):
+                fail(errors, f"{relative} must state: {token}")
+    for relative, tokens in T1_RETIRED_PHRASES.items():
+        for token in tokens:
+            if token in texts[relative]:
+                fail(errors, f"{relative} still carries the retired P2 interim wording: {token!r}")
+    return errors
+
+
+def _policy_value(policy_text: str, label: str) -> str | None:
+    match = re.search(rf"^- \*\*{re.escape(label)}\*\*:[ \t]*(.*)$", policy_text, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def _policy_names(value: str) -> list[str]:
+    """Split a comma-separated reviewer list; a trailing parenthetical note is not an entry."""
+    value = re.sub(r"\s*\(.*$", "", value)
+    return [name.strip().strip("`").lower() for name in value.split(",") if name.strip().strip("`")]
+
+
+def parse_required_reviewers(policy_text: str) -> list[str] | None:
+    """Return the `Required reviewers` entries, [] for `none`, or None when the line is absent."""
+    value = _policy_value(policy_text, "Required reviewers")
+    if value is None:
+        return None
+    names = _policy_names(value)
+    return [] if names == ["none"] else names
+
+
+def check_required_reviewer_policy(policy_text: str) -> list[str]:
+    """Return errors for an invalid `Required reviewers` line; a multi-source list is valid (AC-4)."""
+    errors: list[str] = []
+    value = _policy_value(policy_text, "Required reviewers")
+    if value is None:
+        return errors
+    names = _policy_names(value)
+    if not names:
+        fail(errors, "External Review Policy `Required reviewers` is empty; write `none` or list reviewers")
+        return errors
+    if "none" in names and len(names) > 1:
+        fail(errors, "External Review Policy `Required reviewers` mixes `none` with named reviewers")
+        return errors
+    if names == ["none"]:
+        return errors
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            fail(errors, f"External Review Policy `Required reviewers` lists {name!r} more than once")
+        seen.add(name)
+    trusted_value = _policy_value(policy_text, "Trusted reviewers")
+    trusted = set(_policy_names(trusted_value)) if trusted_value else set(DEFAULT_TRUSTED_REVIEWERS)
+    additional = _policy_value(policy_text, "Additional reviewer identities") or ""
+    mapped = set(DEFAULT_TRUSTED_REVIEWERS) | {m.lower() for m in re.findall(r"([\w.-]+)=", additional)}
+    for name in sorted(seen - (trusted & mapped)):
+        fail(
+            errors,
+            f"External Review Policy `Required reviewers` entry {name!r} is not trusted or has no identity mapping",
+        )
+    return errors
+
+
 # Issue #155: evidence fields at the shared profile `completion-evidence-v1`
 # and the honest resource policy. The pins keep the policy sentences in place;
 # the structural checks keep the template's worked example block-style (the
@@ -1682,13 +1815,17 @@ def main() -> int:
         # QA mutation M8 previously reverted the section to
         # `Required: none` / `Ignored: none` and passed every
         # suite. Pin each value so a silent revert fails closed.
-        if "**Required reviewers**: kilo" not in project_text:
+        # Issue #154 (AC-4): `kilo` must be among the required
+        # reviewers; a multi-source list is a valid policy, so the
+        # pin is membership in the parsed list, not the exact line.
+        if "kilo" not in (parse_required_reviewers(project_text) or []):
             fail(
                 errors,
                 "PROJECT_CONTEXT.md External Review Policy must "
                 "set `Required reviewers: kilo` (Issue #117: Kilo "
                 "is the reviewer of record)",
             )
+        errors.extend(check_required_reviewer_policy(project_text))
         if "**Ignored reviewers**: coderabbit" not in project_text:
             fail(
                 errors,
@@ -1769,6 +1906,7 @@ def main() -> int:
 
     check_bounded_remediation(skill_dir, errors)
     errors.extend(check_risk_tiers(skill_dir))
+    errors.extend(check_t1_lane_set(skill_dir))
     check_evidence_profile(skill_dir, errors)
 
     state_template = skill_dir / "templates" / "DEV_STATE_TEMPLATE.md"
