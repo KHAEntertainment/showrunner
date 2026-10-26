@@ -232,5 +232,68 @@ data: "unclosed
         self.assertIn("quote", stderr.lower())
 
 
+class TestEvidenceFieldsReader(unittest.TestCase):
+    """Issue #155 AC-7: the evidence fields are additive under schema_version 2."""
+
+    @staticmethod
+    def evidence_example() -> str:
+        """The worked example in the template: the approved records, block style."""
+        import re
+
+        blocks = re.findall(
+            r"^## Evidence record schema \(Issue #155\).*?^```yaml\n(.*?)^```",
+            TEMPLATE.read_text(),
+            re.M | re.S,
+        )
+        assert len(blocks) == 1, "expected one worked evidence example"
+        return blocks[0]
+
+    def test_reader_fixture_parses_the_evidence_fields(self):
+        """The reader fixture with every new field passes dev_state.py --validate."""
+        content = (
+            "---\nschema_version: 2\nrun_id: example\nrun_status: active\n"
+            + self.evidence_example()
+            + "---\n"
+        )
+        code, stdout, stderr = run_validator(content)
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("OK:", stdout)
+
+    def test_old_ledger_without_evidence_fields_stays_valid(self):
+        """A ledger written before Issue #155 has none of the fields and still passes."""
+        content = """---
+schema_version: 2
+run_id: v2.1.2-old
+run_status: complete
+pull_requests:
+  - number: 142
+    issue: 141
+    branch: feat/141-example
+    headRefOid: 4e683b4
+    qa_status: complete
+defect_episodes: []
+blockers: []
+next_action: none
+---
+"""
+        for field in ("profile_version", "criteria_ref", "assurance", "parent_acceptance"):
+            self.assertNotIn(field, content)
+        code, _, stderr = run_validator(content)
+        self.assertEqual(code, 0, stderr)
+
+    def test_top_level_flow_map_for_a_new_field_fails(self):
+        """The new fields follow the subset: a flow map is still refused."""
+        content = """---
+schema_version: 2
+run_id: test
+run_status: active
+parent_acceptance: {scope: parent_acceptance}
+---
+"""
+        code, _, stderr = run_validator(content)
+        self.assertNotEqual(code, 0)
+        self.assertIn("flow", stderr.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

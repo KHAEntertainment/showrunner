@@ -72,3 +72,14 @@ A valid child harness:
 4. **Replies in seven-section shape on arrival surface.** The child's report-back reply contains every required section by name: Outputs; Commands + exit codes; Deviations; Quality-gate self-assessment; Acceptance criteria; Evidence; Scope / ownership. A missing or empty section is `report_back: incomplete` per the Report-back enforcement section above; this rule is the same rule, applied at the child surface rather than the adapter surface.
 
 Unmet item → `incomplete`. **Remedy is a different route, never a trimmed prompt.** This sentence is pinned (doc-assertion test).
+
+## Resource policy
+
+Containment is a policy, stated honestly: **no hard local guarantee is claimed.** This host has no cgroups, no running container daemon and unrestricted lane shells, so nothing below bounds a process mechanically. The policy binds every lane in both adapters, and the lead copies it into every brief for a lane that may run tests.
+
+- **CI is the default executor for full suites.** The Verification Gate checks CI owns are cited from CI evidence, never re-run locally by role (one executor per check; **Check Ownership and CI Evidence** in `${CLAUDE_SKILL_DIR}/phases/phase4.md`). Separately required local prerequisites remain in force.
+- **A local heavy run is serial and one per host.** Heavy means a full test suite, a gate or verify script, a batch of mutation checks, a benchmark, or anything run in parallel; a linter, the skill validator or one named test file is light. Before a heavy run the lane messages the lead with what it is and its rough duration and waits for a go. Only one heavy run is active on a host at a time, in the foreground; never `&`, `xargs -P` or a parallel runner unless the owner asks, and a test never launches the test suite.
+- **A local heavy run is wrapped.** Launch it under `nice -n 10` and a `timeout`, with the test runner's worker cap set (for example vitest `--maxWorkers=2`). After it ends, check for leftover runner processes (`pgrep -f <runner>`) and stop the lane's own.
+- **A local heavy run is recorded.** The lane declares it in the report-back Evidence section with the command, the wrapper, and the host load at launch; the lead records that load as `host_load_at_launch` on the PR record in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`.
+- **Obsolete-run cancellation applies to tests only.** Cancelling a superseded test or CI run is allowed; a production-changing operation is never cancelled as obsolete and keeps its own safe-stop or rollback authority.
+- Container isolation is not part of this policy and is not a control. It is a later managed-project improvement, considered only after a recorded local heavy run or a host incident attributable to a test run.

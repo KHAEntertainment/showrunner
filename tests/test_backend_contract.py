@@ -1741,8 +1741,8 @@ class BackendContractTests(unittest.TestCase):
         self.assertNotEqual(head.group(1), tested_sha)
         self.assertEqual(head.group(1), tested_head)
         self.assertIn(f"base_oid: {tested_base}", example)
-        for field in ("run:", "job:", "attempt:", "definition_rev:", "environment:",
-                      "conclusion:", "observed_at:", "applicability:"):
+        for field in ("run:", "job:", "attempt:", "definition_ref:\n", "rev:", "environment:",
+                      "conclusion:", "observed_at:", "applicability:\n", "established: true"):
             with self.subTest(field=field):
                 self.assertIn(field, example)
         # Additive under schema_version 2, and the post-merge record compares
@@ -3749,6 +3749,155 @@ class T1LaneSetTests(unittest.TestCase):
         for label, (relative, old, new) in cases.items():
             with self.subTest(mutation=label):
                 self.assertTrue(self.mutated(relative, old, new), f"validator accepted: {label}")
+
+
+class EvidenceProfileTests(unittest.TestCase):
+    """Issue #155: evidence fields at profile `completion-evidence-v1`.
+
+    The live Skill must pass `check_evidence_profile`; each mutation runs that
+    check against a temp copy of the Skill, so every way the policy or the
+    worked example could drift is proven to fail. The reader-fixture tests in
+    `tests/test_dev_state.py` cover AC-7.
+    """
+
+    def read(self, relative: str) -> str:
+        return (SKILL / relative).read_text(encoding="utf-8")
+
+    def errors(self, skill_dir: Path) -> list[str]:
+        errors: list[str] = []
+        _validator_module().check_evidence_profile(skill_dir, errors)
+        return errors
+
+    def mutated(self, relative: str, old: str, new: str) -> list[str]:
+        """Apply one text mutation to a temp copy of the Skill; return the evidence errors."""
+        import shutil
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "dev"
+            shutil.copytree(SKILL, copy)
+            target = copy / relative
+            text = target.read_text(encoding="utf-8")
+            self.assertEqual(text.count(old), 1, f"mutation anchor {old!r} in {relative}")
+            target.write_text(text.replace(old, new), encoding="utf-8")
+            return self.errors(copy)
+
+    def example(self) -> str:
+        blocks = re.findall(
+            r"^## Evidence record schema \(Issue #155\).*?^```yaml\n(.*?)^```",
+            self.read("templates/DEV_STATE_TEMPLATE.md"),
+            re.M | re.S,
+        )
+        self.assertEqual(len(blocks), 1, "expected one worked evidence example")
+        return blocks[0]
+
+    def test_live_skill_passes_the_evidence_check(self) -> None:
+        self.assertEqual(self.errors(SKILL), [])
+
+    def test_example_carries_every_profile_field(self) -> None:
+        example = self.example()
+        for field in (
+            "profile_version: completion-evidence-v1", "scope: pr_assurance", "parent_ref:",
+            "criteria_ref:", "criteria_ids:", "policy_ref:", "target_branch:", "checks:",
+            "executor:", "environment:", "evidence_ref:", "real_vs_mocked:", "demonstrated:",
+            "assurance:", "stale_reason:", "post_merge:", "basis: fresh", "basis: reused",
+            "justification:", "integrated:", "history:", "host_load_at_launch:",
+            "scope: parent_acceptance", "criteria_map:", "amendment:", "goal_completion_ref: null",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, example)
+        for key in ("outcome", "reason", "revision", "observed_at", "current", "stale_reason"):
+            with self.subTest(assurance=key):
+                self.assertRegex(example, rf"(?m)^    assurance:\n(?:      .*\n)*?      {key}: ")
+        # Every reused post-merge item states its justification (AC-6).
+        items = re.findall(r"(?m)^          - id: .*\n(?:            .*\n)+", example)
+        reused = [item for item in items if "basis: reused" in item]
+        self.assertTrue(reused)
+        for item in reused:
+            self.assertIn("justification:", item)
+
+    def test_pr_record_carries_no_goal_completion_field(self) -> None:
+        pr_record = self.example().split("\nparent_acceptance:", 1)[0]
+        self.assertNotIn("goal_completion", pr_record)
+
+    def test_ci_runs_spelling_matches_the_profile(self) -> None:
+        # The lead aligned P1's spelling with the approved example: one
+        # `definition_ref` key holding a `{ref, rev}` map everywhere.
+        for path in SKILL.rglob("*.md"):
+            with self.subTest(path=path.name):
+                self.assertNotIn("definition_rev", path.read_text(encoding="utf-8"))
+
+    def test_report_back_keeps_seven_sections_and_adapters_unchanged(self) -> None:
+        # AC-4: the new material sits inside Outputs and Evidence.
+        contract = " ".join(self.read("backends/contract.md").split())
+        self.assertIn(
+            "**`observe`** verifies the reply carries all seven required sections by name: "
+            "Outputs; Commands + exit codes; Deviations; Quality-gate self-assessment; "
+            "Acceptance criteria; Evidence; Scope / ownership.",
+            contract,
+        )
+        report_back = self.read("agents/report-back.md")
+        self.assertEqual(
+            re.findall(r"(?m)^\d+\. \*\*(.+?)\*\*", report_back.split("## Required sections", 1)[1].split("\n## ", 1)[0]),
+            list(_validator_module().REPORT_BACK_SECTIONS),
+        )
+
+    def test_validator_fails_when_evidence_pins_are_removed(self) -> None:
+        cases = (
+            ("templates/DEV_STATE_TEMPLATE.md", "**The PR record carries no goal-completion field.**"),
+            ("templates/DEV_STATE_TEMPLATE.md", "**Criteria edited after approval mark the affected outcomes `inconclusive`.**"),
+            ("backends/contract.md", "**A local heavy run is serial and one per host.**"),
+            ("backends/contract.md", "**Obsolete-run cancellation applies to tests only.**"),
+            ("agents/report-back.md", "or writes `Test changes: none`."),
+            ("phases/phase4.md", "□ Test changes against intent"),
+            ("phases/phase4.md", "A reuse without a stated basis is `inconclusive` at the merge sha."),
+            ("agents/worker-new.md", "a **Test changes and why** section"),
+            ("agents/worker-fix.md", "a **Test changes and why** section"),
+            ("templates/PROJECT_CONTEXT_TEMPLATE.md", "## Acceptance Checks (optional)"),
+        )
+        for relative, old in cases:
+            with self.subTest(file=relative, sentence=old):
+                errors = self.mutated(relative, old, "MUTATION: sentence removed")
+                self.assertTrue(any(old in error for error in errors), errors)
+
+    def test_validator_fails_on_example_drift(self) -> None:
+        template = "templates/DEV_STATE_TEMPLATE.md"
+        cases = (
+            (
+                "flow map",
+                "    policy_ref:\n      ref: PROJECT_CONTEXT.md#verification-gate\n      rev: 3c1e9a0\n",
+                "    policy_ref: {ref: PROJECT_CONTEXT.md, rev: 3c1e9a0}\n",
+                "flow syntax",
+            ),
+            ("flow list", "    limitations: []\n", "    limitations: [none]\n", "flow syntax"),
+            ("anchor", "        executor: ci\n", "        executor: *ci\n", "anchor syntax"),
+            ("tag", "      where: worker dev server\n", "      where: !str worker\n", "tag syntax"),
+            ("odd indent", "    target_branch: main\n", "     target_branch: main\n", "odd indentation"),
+            (
+                "profile version",
+                "    profile_version: completion-evidence-v1\n    scope: pr_assurance\n",
+                "    profile_version: completion-evidence-v2\n    scope: pr_assurance\n",
+                "profile_version completion-evidence-v1",
+            ),
+            (
+                "goal completion on the PR record",
+                "    host_load_at_launch: null\n",
+                "    host_load_at_launch: null\n    goal_completion_ref: null\n",
+                "no goal-completion field",
+            ),
+        )
+        for label, old, new, expected in cases:
+            with self.subTest(case=label):
+                errors = self.mutated(template, old, new)
+                self.assertTrue(any(expected in error for error in errors), errors)
+
+    def test_validator_fails_when_report_back_gains_a_section(self) -> None:
+        errors = self.mutated(
+            "agents/report-back.md",
+            "7. **Scope / ownership**",
+            "7. **Scope / ownership** — x\n8. **Demonstration**",
+        )
+        self.assertTrue(any("exactly the seven required sections" in error for error in errors), errors)
 
 
 if __name__ == "__main__":

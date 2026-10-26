@@ -724,6 +724,134 @@ def check_required_reviewer_policy(policy_text: str) -> list[str]:
     return errors
 
 
+# Issue #155: evidence fields at the shared profile `completion-evidence-v1`
+# and the honest resource policy. The pins keep the policy sentences in place;
+# the structural checks keep the template's worked example block-style (the
+# ledger reader only flow-checks top-level values), keep the profile version
+# unchanged, keep goal completion off the PR record, and keep the report-back
+# transport at exactly seven sections.
+EVIDENCE_PROFILE = "completion-evidence-v1"
+EVIDENCE_HEADING = "## Evidence record schema (Issue #155)"
+EVIDENCE_PROFILE_PINS = {
+    "templates/DEV_STATE_TEMPLATE.md": (
+        EVIDENCE_HEADING,
+        "The evidence fields are additive under `schema_version: 2`.",
+        "This template does not change that profile's meanings or its version",
+        "**Criteria edited after approval mark the affected outcomes `inconclusive`.**",
+        "**A reuse without a stated basis or justification is `inconclusive` at the merge sha**",
+        "**The PR record carries no goal-completion field.**",
+        "No `verified` boolean existed in this ledger before `assurance`, so it replaces none.",
+        "**Parent acceptance is a separate record.**",
+        "`definition_ref` (`ref`, the workflow file and job, and `rev`, its blob revision",
+    ),
+    "backends/contract.md": (
+        "## Resource policy",
+        "**no hard local guarantee is claimed.**",
+        "**CI is the default executor for full suites.**",
+        "**A local heavy run is serial and one per host.**",
+        "Launch it under `nice -n 10` and a `timeout`, with the test runner's worker cap set",
+        "**A local heavy run is recorded.**",
+        "**Obsolete-run cancellation applies to tests only.**",
+    ),
+    "agents/report-back.md": (
+        "or writes `Test changes: none`.",
+        "or `Demonstration: unverified` when nothing was demonstrated.",
+        "the transport contract stays exactly these seven sections",
+    ),
+    "phases/phase4.md": (
+        "□ Test changes against intent",
+        "on a mismatch every affected criterion outcome is `inconclusive`",
+        "A reuse without a stated basis is `inconclusive` at the merge sha.",
+        "Reuse never replaces the full required gate rerun in step 1 when the trees differ.",
+    ),
+    "agents/worker-new.md": ("a **Test changes and why** section",),
+    "agents/worker-fix.md": ("a **Test changes and why** section",),
+    "templates/PROJECT_CONTEXT_TEMPLATE.md": ("## Acceptance Checks (optional)",),
+}
+REPORT_BACK_SECTIONS = (
+    "Outputs",
+    "Commands + exit codes",
+    "Deviations",
+    "Quality-gate self-assessment",
+    "Acceptance criteria",
+    "Evidence",
+    "Scope / ownership",
+)
+
+
+def _block_yaml_violation(line: str) -> str | None:
+    """Return why one example line is outside the ledger's YAML subset, or None."""
+    indent = len(line) - len(line.lstrip(" "))
+    if indent % 2:
+        return "odd indentation"
+    body = line.strip()
+    if body.startswith("- "):
+        body = body[2:].strip()
+    key, sep, value = body.partition(": ")
+    value = (value if sep else body).strip()
+    if not value or value[0] in "\"'":
+        return None
+    value = value.split(" #", 1)[0].strip()
+    if value[0] in "{[" and value not in ("{}", "[]"):
+        return "flow syntax"
+    if value[0] in "&*":
+        return "anchor syntax"
+    if value[0] == "!":
+        return "tag syntax"
+    return None
+
+
+def check_evidence_profile(skill_dir: Path, errors: list[str]) -> None:
+    for relative, tokens in EVIDENCE_PROFILE_PINS.items():
+        target = skill_dir / relative
+        if not target.is_file():
+            continue
+        target_text = " ".join(target.read_text(encoding="utf-8").split())
+        for token in tokens:
+            if " ".join(token.split()) not in target_text:
+                fail(errors, f"{relative} missing required evidence policy: {token}")
+
+    template = skill_dir / "templates" / "DEV_STATE_TEMPLATE.md"
+    if template.is_file():
+        section = markdown_section(template.read_text(encoding="utf-8"), EVIDENCE_HEADING)
+        blocks = re.findall(r"^```yaml\n(.*?)^```", section or "", re.M | re.S)
+        if len(blocks) != 1:
+            fail(errors, "DEV_STATE_TEMPLATE.md evidence record schema needs one worked yaml example")
+        for block in blocks:
+            for number, line in enumerate(block.splitlines(), start=1):
+                if not line.strip() or line.strip().startswith("#"):
+                    continue
+                problem = _block_yaml_violation(line)
+                if problem:
+                    fail(
+                        errors,
+                        f"DEV_STATE_TEMPLATE.md evidence example line {number}: {problem} "
+                        "(the ledger is block-style YAML)",
+                    )
+            versions = re.findall(r"^\s*(?:- )?profile_version:\s*(\S+)", block, re.M)
+            if not versions or any(version != EVIDENCE_PROFILE for version in versions):
+                fail(
+                    errors,
+                    f"DEV_STATE_TEMPLATE.md evidence example must use profile_version {EVIDENCE_PROFILE}",
+                )
+            pr_record = block.split("\nparent_acceptance:", 1)[0]
+            if "goal_completion" in pr_record:
+                fail(errors, "DEV_STATE_TEMPLATE.md PR record must carry no goal-completion field")
+
+    report_back = skill_dir / "agents" / "report-back.md"
+    if report_back.is_file():
+        section = markdown_section(
+            report_back.read_text(encoding="utf-8"), "## Required sections (all lanes)"
+        )
+        names = tuple(re.findall(r"^\d+\. \*\*(.+?)\*\*", section or "", re.M))
+        if names != REPORT_BACK_SECTIONS:
+            fail(
+                errors,
+                "agents/report-back.md must keep exactly the seven required sections: "
+                + "; ".join(REPORT_BACK_SECTIONS),
+            )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1779,6 +1907,7 @@ def main() -> int:
     check_bounded_remediation(skill_dir, errors)
     errors.extend(check_risk_tiers(skill_dir))
     errors.extend(check_t1_lane_set(skill_dir))
+    check_evidence_profile(skill_dir, errors)
 
     state_template = skill_dir / "templates" / "DEV_STATE_TEMPLATE.md"
     if state_template.is_file():

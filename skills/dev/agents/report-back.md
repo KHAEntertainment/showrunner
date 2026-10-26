@@ -28,7 +28,9 @@ silence.
 ## Required sections (all lanes)
 
 1. **Outputs** — files changed/created, PR URL, artifact + readout paths, or a
-   finding list.
+   finding list. A lane that changed tests also names its test changes and
+   why (changed assertions, skips, fixtures and mocks, each with its reason),
+   or writes `Test changes: none`.
 2. **Commands + exit codes** — every verification/gate command run, with its
    exit code.
 3. **Deviations** — anything outside the assignment or assigned ownership,
@@ -41,12 +43,19 @@ silence.
 5. **Acceptance criteria** — each criterion restated as
    `[trigger] → [behavior]`, marked ✓/✗ with a one-line result.
 6. **Evidence** — the commit `headRefOid` (or local `HEAD`) the lane ran
-   against, plus clean-worktree evidence for read-only lanes.
+   against, plus clean-worktree evidence for read-only lanes. An
+   implementation lane adds its demonstration: what was shown, where (the
+   environment), the revision, and how, or `Demonstration: unverified` when
+   nothing was demonstrated. A lane that ran a local heavy run declares it
+   here with the command, its wrapper, and the host load at launch, per the
+   resource policy in `${CLAUDE_SKILL_DIR}/backends/contract.md`.
 7. **Scope / ownership** — confirm no file outside assigned ownership was
    modified; list any exception and its reason.
 
 A report-back with a missing section is flagged, not back-filled; never invent
-evidence.
+evidence. The demonstration, test-changes and heavy-run material lives inside
+Outputs and Evidence; it adds no section, so the transport contract stays
+exactly these seven sections and existing adapters accept the reply unchanged.
 
 ## Evidence discipline
 

@@ -107,6 +107,16 @@ gate. Omit this section to fall back to the language defaults in
 - **Dependency scan**: [command] (mandatory — Python `pip-audit` / Node `npm audit`)
 - **Tests**: [command]
 
+## Acceptance Checks (optional)
+
+List the project's acceptance checks: the checks that exercise a delivered
+behavior end to end rather than a gate command. Each entry becomes a `checks`
+entry on the PR record in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`,
+so name its id, its definition and the executor that runs it once. Omit this
+section when the project declares none.
+
+- **[id, e.g. `acceptance:e2e-verify`]**: definition [command or script, e.g. `ops/e2e.sh verify`] · executor [`ci` / `qa` / `worker`] · environment [e.g. `preview-vps`] · real or mocked [`real` / `mocked`, with what is mocked]
+
 ---
 
 ## .gitignore Guidance at Init
