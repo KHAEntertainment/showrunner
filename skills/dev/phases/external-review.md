@@ -1,6 +1,6 @@
 # External Review Oversight Gate
 
-Use trusted third-party review as an independent signal. It supplements the internal QA, specialist lanes, and Tech Lead review; it never replaces them.
+Use trusted third-party review as an independent signal. It supplements the internal QA, specialist lanes, and Tech Lead review; it never replaces them, except that for a T1 PR one qualified external review is the independent review (see **Qualified review for T1** below). Provider review is never runtime acceptance: it does not satisfy an acceptance check.
 
 ## Default Policy
 
@@ -52,7 +52,36 @@ When the inspector surfaces a review-like bot or check app that is not trusted, 
 
 A login already listed under `Pending reviewer decisions` is **not re-asked**. The lead proceeds without trusting or ignoring the bot; the inspector continues to surface it as evidence, and the decision is revisited only when the user raises it or when the login changes.
 
-If Mode is `off`, record that external review was disabled by repository policy and treat the gate as `not_applicable` without running the inspector. Internal QA and review still run.
+If Mode is `off`, record that external review was disabled by repository policy and treat the gate as `not_applicable` without running the inspector. No qualified external source exists then, so the internal reviewer performs the T1 review role and QA runs by its tier.
+
+## Qualified review for T1
+
+For a T1 PR (Risk Tiers in `${CLAUDE_SKILL_DIR}/phases/phase3.5.md`) the review lane is **one qualified independent review**. T2 and T3 keep the internal reviewer lane in addition to this gate; nothing here changes them.
+
+A review source is **qualified** for a PR only when all of these hold at the current head:
+
+1. A separate evaluator from the author and from every fixer.
+2. Access to the Issue criteria and the relevant delta.
+3. Stated coverage of the changed files.
+4. A trusted identity (a trusted, mapped reviewer from the policy above).
+5. Completion established at the current head by evidence the inspector can read: a submitted review object, a head-bound review thread, or the Kilo head-bound summary rule in **Kilo summary evidence**.
+6. Retrievable findings.
+7. Bounded handling of a missing, stale or rate-limited response, using the existing deadlines and the rate-limit breakpoint in this file.
+
+CI is not a review, and a status check alone never qualifies a source. Family difference alone is not independence: the substitute rule below requires a fresh identity, not just another family label. An `ignored` source is never qualified. Provider review is never runtime acceptance: it does not satisfy a declared acceptance check, so a T1 PR with one still needs the QA lane.
+
+The lead decides the review lane from the provider's state at the final rating (or at the deadline or breakpoint). It never dispatches the internal reviewer speculatively while a qualified source is still within its wait.
+
+| Provider state at the current head | Internal reviewer | Gate and record |
+|---|---|---|
+| Qualified and complete at head, every active finding triaged | Not dispatched | The qualified review is the T1 review. Record `internal_review_status: not_dispatched`, the qualifying source in `completed_reviewers`, and the governing requirement in `expected_reviewers`. The gate follows the inspector. |
+| Rate-limited past the breakpoint | Dispatched as the substitute under **Rate-limit breakpoint** | A substitution record in `external_review_substitutions` and a PR comment: a completed review, never a bypass. |
+| Unqualified for another reason (summary-only result, unmapped identity, stale head, unknown or unavailable) | May perform the review role | A required provider stays `pending` or `incomplete`, never `clear`. This path does not extend the substitution rule to these states; the existing deadline choices still govern merge. |
+| No source configured or detected, Mode `off`, or the only source is ignored | Performs the review role | The gate is `not_applicable`; the internal reviewer is the T1 review. |
+
+When more than one source appears in `Required reviewers`, the policy is valid and each source is tracked to completion at the current head (the inspector already treats every required reviewer as an expected seat). Every required source gates, so a qualified review from one source never fills another source's seat, and a substitute never fills a required seat. The record names the governing requirement: the `Required reviewers` entries that gated the PR, each with its completion head.
+
+`Ignored reviewers` removes a source from completion tracking only. A credible material defect reported by an ignored or non-required source is still triaged by the lead like any finding (`blocking`, `advisory` or `false_positive` with rationale), and a `blocking` one is fixed before merge; the inspector's gate state is not the only route by which a real defect is found.
 
 ## Start Observation in Phase 3.5
 
