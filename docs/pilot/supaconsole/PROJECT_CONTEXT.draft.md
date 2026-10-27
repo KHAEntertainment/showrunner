@@ -27,9 +27,9 @@
 The commands of the CI `build` job (`.github/workflows/ci.yml`), in CI order after
 `npm ci`. Replaces the language defaults in the Dev skill's `phases/phase4.md`.
 
-- **Lint**: `npm run lint` (runs `eslint`)
-- **Type check**: `npx tsc --noEmit`
 - **Static analysis**: `npx prisma generate` (generates the Prisma client that the type check and tests need)
+- **Type check**: `npx tsc --noEmit`
+- **Lint**: `npm run lint` (runs `eslint`)
 - **Dependency scan**: `n/a` — CI does not run one today. Recorded as `n/a` deliberately; reinstate `npm audit` only if the owner adds it to CI.
 - **Tests**: `npm test` (runs `vitest run`)
 
