@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "github": {
+    "host": "github.com",
+    "account": "KHAEntertainment",
+    "pushRepository": "KHAEntertainment/SupaConsole",
+    "pullRequestRepository": "KHAEntertainment/SupaConsole",
+    "pushRemote": "origin"
+  }
+}

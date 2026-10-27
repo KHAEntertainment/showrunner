@@ -1,0 +1,74 @@
+# CodeRabbit `.coderabbit.yaml` fragment (template, not installed).
+#
+# A reviewed-diff candidate for a repository whose reviewer of record is
+# CodeRabbit. The Skill does not install it and nothing reads this file as
+# configuration. A repository adopts it by a reviewed PR that adds a
+# `.coderabbit.yaml` at its root. Source: v2.1.3 provider strategy §4, verified
+# 2026-10-19.
+#
+# Activation limits (provider strategy §5):
+# - Without `inheritance: true`, only the highest-priority configuration source
+#   applies, and repository YAML outranks the repository UI. Committing any
+#   YAML therefore REPLACES the UI configuration instead of adding to it. Read
+#   the effective organization, UI and inheritance configuration first, and
+#   carry over every UI setting the repository still wants. This fragment's
+#   `request_changes_workflow: false` is one such setting: if the effective
+#   configuration has it on, committing the fragment turns it off.
+# - A CodeRabbit comment's "Configuration used: ..." line identifies the
+#   configuration source that applied (for example Organization UI, Repository
+#   UI or Repository YAML). It does not show which policy content loaded.
+#   Verify the enabled setting where it is accessible; otherwise record the
+#   limitation.
+# - `reviews.auto_review.enabled` defaults to true. It is stated below so the
+#   file never silently depends on the default.
+# - `path_instructions` entries are minimatch globs with no documented "most
+#   specific wins" rule. Assume every matching entry applies and write
+#   overlapping entries accordingly. Colocated tests need their own glob.
+# - `assess_linked_issues` reads the Issue title and body only, not comments.
+#   Linear and Jira integrations are off by default on public repositories and
+#   are not required.
+# - `ignore_usernames` skips PRs by exact author login. Dev workers push as the
+#   owner's account today; add a bot or worker login only if a lane ever
+#   pushes as a bot, and record the PR author login on the first PR.
+# - Never add `ignore_title_keywords` that would skip Dev-authored PRs.
+# - Completion under the inspector is a separate question from this file: a
+#   submitted review object or a head-bound review thread completes; the
+#   green "CodeRabbit" status and a skip or walkthrough comment do not.
+#
+# Per-repository adaptation: add one `path_instructions` entry per behavior
+# path the repository's own PROJECT_CONTEXT.md names (for SupaConsole, the T2
+# paths `prisma/**` and `src/app/api/auth/**`), mirroring that single list.
+
+# Merge fragment. Decide `inheritance` after reading the effective org/UI
+# configuration; absent, this file REPLACES the repository UI settings.
+reviews:
+  profile: "chill"
+  auto_review:
+    enabled: true            # state it explicitly; the default re-enables review
+    drafts: false
+    # ignore_usernames: []   # add bot/worker logins only if lanes push as bots
+  request_changes_workflow: false
+  assess_linked_issues: true
+  high_level_summary: true
+  high_level_summary_instructions: |
+    Describe the PR objective and the behavior actually changed. Separate
+    assurance, tooling and maintenance changes. State which linked
+    acceptance criteria are addressed and which lack evidence. Approval or
+    passing checks do not establish parent-feature completion.
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Prioritize material correctness, security, data integrity and
+        regressions within the assigned scope. Explain blockers with
+        concrete failure evidence or credible reasoning tied to the
+        acceptance criteria. Optional coverage, style and unrelated cleanup
+        are advisory. Do not duplicate reliable CI findings unless
+        enforcement is defective. Static review does not establish executed
+        functionality.
+    - path: "tests/**"
+      instructions: |
+        Judge assertions, expected values, skips, fixtures and mocks against
+        approved behavior. Flag tests that conceal material defects. Unit
+        isolation is legitimate; mocked dependencies do not prove real
+        integration. Missing coverage blocks only for required checks or
+        explained material risk. Prefer focused regression evidence.
