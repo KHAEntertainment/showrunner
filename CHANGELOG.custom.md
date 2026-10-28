@@ -8,9 +8,9 @@ build metadata in `skills/dev/SKILL.md` (`2.0.0+upstream.3e87db0`). Entries belo
 `v2.0.0` predate that scheme: they use `custom-vX.Y.Z-upstream.SHA` headings and
 record upstream SHAs as plain text in their `### Upstream` blocks.
 
-## Unreleased (v2.1.3)
+## v2.1.3 — 2026-10-27
 
-### Changed (verification SOP, v2.1.3 P1–P6)
+### Changed (verification SOP, v2.1.3 P1–P7)
 
 The progress-first verification plan: less repeated checking by role, the same
 protections where risk is high. Planned in the v2.1.3 Dev/Showrunner
@@ -60,6 +60,14 @@ architecture investigation; each package is one PR and reverts on its own.
   note}`. `contract.md` gains a resource policy for heavy local runs. All
   fields are additive; old ledgers stay valid. The report-back stays seven
   sections.
+- SupaConsole pilot setup and provider templates, documentation only
+  ([#159](https://github.com/KHAEntertainment/showrunner/issues/159), PR #160).
+  `docs/templates/` holds the reconciled Kilo `REVIEW.md` fragment and
+  CodeRabbit YAML fragment, each with its activation limits.
+  `docs/pilot/supaconsole/` holds a `PROJECT_CONTEXT.md` draft, a `.dev.json`
+  example and the owner's setup checklist. Nothing is installed by the Skill
+  and nothing was changed on SupaConsole or any provider. The pilot launch
+  needs its own owner approval.
 - `UPSTREAM.md` records how upstream is tracked after leaving the GitHub fork
   network (PR #148): the `upstream` remote, a releases-only watch, and a new
   Port log.
