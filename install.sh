@@ -10,9 +10,9 @@ VALIDATOR="$SCRIPT_DIR/scripts/validate_skill.py"
 # When SCRIPT_DIR is itself the root of a git checkout that tracks
 # skills/dev, stage from committed content instead of the working tree so
 # untracked/ignored files and uncommitted edits never ship. A release
-# tarball (or the Homebrew libexec copy, ADR-007) has no .git, so it falls
-# back to the working-tree copy unchanged. This is decided by a filesystem
-# check, not by whether the git binary happens to be usable: whether
+# tarball has no .git, so it falls back to the working-tree copy
+# unchanged. This is decided by a filesystem check, not by whether the git
+# binary happens to be usable: whether
 # SCRIPT_DIR *looks like* a git checkout (a .git entry — directory or, for
 # a linked worktree, the "gitdir: ..." file — is present) and whether it
 # can actually be *validated* as one are kept separate on purpose. A

@@ -132,27 +132,6 @@ Issue-to-PR intent does not activate the Skill.
 > same reload the update steps above require. After a manual install, restart
 > Claude Code before checking invocation behavior.
 
-## Homebrew
-
-If you prefer Homebrew, install via the [KHAEntertainment tap](https://github.com/KHAEntertainment/homebrew-tap):
-
-```bash
-brew tap KHAEntertainment/tap
-brew install khaentertainment/tap/dev-skill   # places the payload; installs nothing yet
-dev-skill-install --dry-run                   # preview: changes nothing
-dev-skill-install                             # installs into ~/.claude/skills/dev
-```
-
-`brew install` only places the files; `dev-skill-install` runs the bundled
-`install.sh`, which does the actual install (see [Live installation](#live-installation))
-into `~/.claude/skills/dev`.
-
-The Homebrew formula and the plugin marketplace install the same payload but
-follow independent release cadences. The formula may lag by one release while
-`url`/`sha256` are bumped — see [`RELEASING.md`](RELEASING.md#homebrew-formula).
-Check `brew info dev-skill` for the version it carries. `brew test dev-skill`
-currently fails on the v2.1.1 formula (#70).
-
 ## Manual installation
 
 The plugin above is the recommended path. Install manually when evaluating a change

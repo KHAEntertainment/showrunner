@@ -200,7 +200,3 @@ facts after release (recorded 2026-09-29, #72):
 - CI installs a pinned `@anthropic-ai/claude-code@2.1.251` to run strict manifest
   validation. The pin needs periodic review: too old and it stops matching the
   format the runtime actually enforces. (recorded 2026-08-31)
-- The Homebrew formula's `brew test` fails at v2.1.1 (`homebrew-tap@7acd583`):
-  wrong `detect_execution_backend.py` path in the assertion, plus an
-  undiagnosed timeout. `brew install` works. Tracked as #70. (recorded
-  2026-09-29)
