@@ -1,6 +1,10 @@
 <h1 align="center">
-  <img alt="Showrunner" src="https://ascii.rest/banner/Showrunner.dark.svg?color=e88e45,6697d6&font=tall&shadow=rounded&fill=block&size=l">
+  <a href="https://ascii.rest/banner/"><img alt="Showrunner" src="https://ascii.rest/banner/Showrunner.svg?color=f2c007,747676&amp;font=tall&amp;shadow=heavy&amp;fill=block&amp;size=l"></a>
 </h1>
+
+<p align="center">
+  <a href="docs/badges.md"><img alt="Built with Showrunner" src="https://svg.khaentertainment.com/badge.svg?style=for-the-badge&amp;anim=both"></a>
+</p>
 
 **Showrunner plans the work, hands it out to your coding agents, checks every pull request, and merges what passes.**
 
@@ -146,8 +150,9 @@ Details on each are in [Execution backends](docs/backends.md).
 - [Guarantees](docs/guarantees.md): the rules every run follows
 - [Architecture decisions](docs/architecture.md) and [dogfooding lessons](docs/dogfooding.md)
 - [Changelog](CHANGELOG.custom.md) and [upstream maintenance](UPSTREAM.md)
+- [Badges](docs/badges.md) — put a "Built with Showrunner" badge on your own project
 
-## Credits
+## Credits and Thanks
 
 Showrunner is a maintained English fork of [`hnaymyh123-henry/claude-dev-skill`](https://github.com/hnaymyh123-henry/claude-dev-skill), which built the workflow at its core. Thank you to everyone in that lineage, and to:
 
@@ -157,6 +162,7 @@ Showrunner is a maintained English fork of [`hnaymyh123-henry/claude-dev-skill`]
 - **NanoNets** for [Graft](https://github.com/trailhq/Graft) and its code-graph queries
 - **Dietrich Gebert** for [Ponytail](https://github.com/dietrichgebert/ponytail), whose reuse-first ladder shapes how our workers write code
 - **ayghri** for [i-have-adhd](https://github.com/ayghri/i-have-adhd), whose brevity rules our end-of-turn replies are written to fit
+- **[Shields.io](https://shields.io)** for the badge vocabulary everyone now reads at a glance: the flat and for-the-badge shapes, the label/message split, and the [endpoint schema](https://shields.io/badges/endpoint-badge) our usage counter speaks. The badges above are drawn by our own code, but the conventions are theirs.
 
 ## License
 
