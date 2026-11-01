@@ -8,7 +8,7 @@ build metadata in `skills/dev/SKILL.md` (`2.0.0+upstream.3e87db0`). Entries belo
 `v2.0.0` predate that scheme: they use `custom-vX.Y.Z-upstream.SHA` headings and
 record upstream SHAs as plain text in their `### Upstream` blocks.
 
-## v2.1.3 — 2026-10-27
+## v2.1.3 — 2026-11-01
 
 ### Changed (verification SOP, v2.1.3 P1–P7)
 
