@@ -122,7 +122,7 @@ claude plugin update dev-skill@kha-marketplace
 
 Installed it from the old `khaentertainment-dev-skill` marketplace? See [migrating](docs/install.md#migrating-from-dev-skillkhaentertainment-dev-skill).
 
-Prefer Homebrew, a manual install, or Windows? See [Installation](docs/install.md).
+Prefer a manual install or Windows? See [Installation](docs/install.md).
 
 ## Pick your setup
 

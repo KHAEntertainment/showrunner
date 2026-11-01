@@ -55,6 +55,7 @@ here are packaging and release decisions, recorded below.
 
 ## ADR-007 — Homebrew ships from a personal tap, built from source
 
+- **Status**: superseded by [ADR-018](#adr-018--retire-the-homebrew-distribution-channel), 2026-11-01.
 - **Decision**: A future `KHAEntertainment/homebrew-tap` will carry a source formula with `depends_on "rtk"` and `depends_on "python@3.13"`. No cask, no prebuilt binary.
 - **Decision time**: 2026-08-30 (deferred to a follow-up round)
 - **Background**: RTK is already in homebrew-core, so the dependency resolves automatically and brew users never hit the missing-RTK abort. A cask of an unsigned prebuilt binary would be quarantined by macOS Gatekeeper, requiring either a fragile `xattr` workaround or paid notarization.
@@ -151,4 +152,11 @@ here are packaging and release decisions, recorded below.
 - **Decision time**: 2026-10-19
 - **Context**: Node is required when the panel starts, not at install. This ADR-005 scope note follows the form of ADR-011.
 - **Decision**: Node ≥18 is preflighted when the panel starts, never at install. No `depends_on "node"` in the Homebrew formula.
-- **Consequence**: No install-time Node dependency in any installer or package manifest. Homebrew material is on hold (see ADR-007).
+- **Consequence**: No install-time Node dependency in any installer or package manifest. The Homebrew channel is retired (ADR-018).
+
+## ADR-018 — Retire the Homebrew distribution channel
+
+- **Decision time**: 2026-11-01
+- **Context**: Homebrew was carried as a personal-tap channel under ADR-007, but the formula in `KHAEntertainment/homebrew-tap` has been stuck at v2.1.1 (`homebrew-tap@7acd583`) while v2.1.2 and v2.1.3 shipped, and `brew test` fails on it (#70). Keeping the channel means fixing that failure and bumping the formula's `url` and `sha256` in a second repository on every release — per-release work for a path the plugin already covers (#167).
+- **Decision**: Retire Homebrew as a distribution channel. The central marketplace plugin and the manual installers (`install.sh`, `install.ps1`) are the supported install paths. The plain `vX.Y.Z` tag scheme (ADR-004) is unchanged.
+- **Consequence**: ADR-007 is superseded. Issues #70 (the failing `brew test`) and #67 (the `RELEASING.md` Homebrew step) close as not planned. The `KHAEntertainment/homebrew-tap` repository also carries the active `ofa` formula and is not changed by this decision.

@@ -35,8 +35,10 @@ separately, over the network, by `scripts/check_central_catalog.py` (step 6).
 
 Plain `vX.Y.Z`, starting at `v2.0.0` (ADR-004). Note that `claude plugin tag`
 generates a *different* form — `dev-skill--v2.0.0` — which this project does not
-use, because a plain `vX.Y.Z` tag also serves the Homebrew formula's source
-tarball URL (`refs/tags/vX.Y.Z.tar.gz`, ADR-007). One tag serves both channels.
+use: the central catalog entry pins the release by its `source.ref`, and that
+`ref` is the plain `vX.Y.Z` tag (ADR-003, ADR-014). Step 6 passes only when the
+catalog's `ref` equals the tag, so a `dev-skill--vX.Y.Z` tag would never match
+what the catalog pins.
 
 `claude plugin tag --dry-run .` is still useful as a *validation* step: it
 checks `plugin.json` (name and version) and refuses a dirty tree. Ignore the
@@ -174,9 +176,9 @@ tag name it proposes; do not let it create the tag.
 Publication spans two repositories in a fixed order: tag (steps 3 and 4), then
 central pin (step 5), then verification (steps 6 and 7). From the tag push until
 step 7 passes, marketplace distribution of the release is **incomplete**: do not
-announce the release, and do not bump the Homebrew formula. An incomplete
-release is safe for users, because the central entry pins an immutable tag and
-keeps serving the previous release until the pin moves.
+announce the release. An incomplete release is safe for users, because the
+central entry pins an immutable tag and keeps serving the previous release
+until the pin moves.
 
 | State | What users get | Recovery |
 |---|---|---|
@@ -189,45 +191,6 @@ keeps serving the previous release until the pin moves.
 Old release tags stay immutable. Rolling back always means repointing the central
 `ref` at an earlier tag, never retagging.
 
-## Homebrew formula
-
-The formula lives in [`KHAEntertainment/homebrew-tap`](https://github.com/KHAEntertainment/homebrew-tap)
-at `Formula/dev-skill.rb`. The marketplace plugin and the Homebrew formula are
-independent distribution channels — they ship the same payload but follow
-different update cadences. The formula's `url` and `sha256` must be bumped per
-release; until bumped, the formula serves the previous release.
-
-### Bumping the formula
-
-After `docs/RELEASING.md` step 7 (marketplace install verification) succeeds:
-
-```bash
-# 1. Compute the new tarball sha256
-curl -sL https://github.com/KHAEntertainment/showrunner/archive/refs/tags/vX.Y.Z.tar.gz \
-  | shasum -a 256 | awk '{print $1}'
-
-# 2. Update the formula in KHAEntertainment/homebrew-tap
-git clone https://github.com/KHAEntertainment/homebrew-tap.git /tmp/homebrew-tap-bump
-cd /tmp/homebrew-tap-bump
-# Edit Formula/dev-skill.rb:
-#   - url: bump vX.Y.Z in the refs/tags/vX.Y.Z.tar.gz URL
-#   - sha256: paste the value from step 1
-git commit -am "dev-skill X.Y.Z"
-git push origin main
-
-# 3. Verify the install
-brew update
-brew install --build-from-source khaentertainment/tap/dev-skill
-brew test dev-skill
-```
-
-### Tag immutability
-
-The formula pins a tag, not a commit SHA, so a moved tag silently changes what
-existing users receive. Treat a pushed release tag as immutable. Formula
-defects are fixed in the tap; payload defects wait for the next version. See
-ADR-007 for the original tap design.
-
 ## What CI enforces for you
 
 `.github/workflows/ci.yml` runs the full Verification Gate on every pull request
@@ -235,7 +198,7 @@ and every push to `main`, so most of step 2 is checked automatically. In
 particular the packaging job extracts `git archive HEAD` and runs
 `scripts/validate_skill.py` against the **extracted archive**, not just the
 working tree — so a broken `export-ignore` rule that would ship a defective
-source tarball fails CI rather than surfacing later as a broken `brew install`.
+source tarball fails CI rather than surfacing later as a broken source tarball.
 
 What CI cannot do is steps 5 to 7. The tag does not exist when CI runs and the
 central catalog lives in another repository, so verifying the central entry and
