@@ -3,8 +3,7 @@
 </h1>
 
 <p align="center">
-  <img alt="Built with Showrunner" src="https://svg.khaentertainment.com/badge.svg?style=for-the-badge&amp;anim=both">
-  <img alt="Projects using Showrunner" src="https://svg.khaentertainment.com/count.svg?style=for-the-badge&amp;anim=both">
+  <a href="docs/badges.md"><img alt="Built with Showrunner" src="https://svg.khaentertainment.com/badge.svg?style=for-the-badge&amp;anim=both"></a>
 </p>
 
 **Showrunner plans the work, hands it out to your coding agents, checks every pull request, and merges what passes.**
@@ -151,6 +150,7 @@ Details on each are in [Execution backends](docs/backends.md).
 - [Guarantees](docs/guarantees.md): the rules every run follows
 - [Architecture decisions](docs/architecture.md) and [dogfooding lessons](docs/dogfooding.md)
 - [Changelog](CHANGELOG.custom.md) and [upstream maintenance](UPSTREAM.md)
+- [Badges](docs/badges.md) — put a "Built with Showrunner" badge on your own project
 
 ## Credits and Thanks
 
