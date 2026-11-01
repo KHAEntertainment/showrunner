@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img alt="Showrunner" src="https://ascii.rest/banner/Showrunner.dark.svg?color=e88e45,6697d6&font=tall&shadow=rounded&fill=block&size=l">
+  <a href="https://ascii.rest/banner/"><img alt="Showrunner" src="https://ascii.rest/banner/Showrunner.svg?color=f2c007,747676&amp;font=tall&amp;shadow=heavy&amp;fill=block&amp;size=l"></a>
 </h1>
 
 <p align="center">
