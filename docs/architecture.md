@@ -55,7 +55,8 @@ here are packaging and release decisions, recorded below.
 
 ## ADR-007 — Homebrew ships from a personal tap, built from source
 
-- **Status**: superseded by [ADR-018](#adr-018--retire-the-homebrew-distribution-channel), 2026-11-01.
+**Status: superseded by [ADR-018](#adr-018--retire-the-homebrew-distribution-channel), 2026-11-01.**
+
 - **Decision**: A future `KHAEntertainment/homebrew-tap` will carry a source formula with `depends_on "rtk"` and `depends_on "python@3.13"`. No cask, no prebuilt binary.
 - **Decision time**: 2026-08-30 (deferred to a follow-up round)
 - **Background**: RTK is already in homebrew-core, so the dependency resolves automatically and brew users never hit the missing-RTK abort. A cask of an unsigned prebuilt binary would be quarantined by macOS Gatekeeper, requiring either a fragile `xattr` workaround or paid notarization.

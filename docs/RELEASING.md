@@ -198,7 +198,7 @@ and every push to `main`, so most of step 2 is checked automatically. In
 particular the packaging job extracts `git archive HEAD` and runs
 `scripts/validate_skill.py` against the **extracted archive**, not just the
 working tree — so a broken `export-ignore` rule that would ship a defective
-source tarball fails CI rather than surfacing later as a broken source tarball.
+source tarball fails CI rather than surfacing later as a broken install.
 
 What CI cannot do is steps 5 to 7. The tag does not exist when CI runs and the
 central catalog lives in another repository, so verifying the central entry and
