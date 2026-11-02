@@ -206,6 +206,8 @@ def check(text: str) -> tuple[list[Finding], dict]:
     for lineno, line, in_code, fence in split_lines(text):
         if fence:
             kind, info = fence
+            prev_text = ""
+            prev_lineno = 0
             if kind == "open":
                 lang = info.split()[0].lower() if info else ""
                 if not lang:
@@ -317,6 +319,9 @@ def check(text: str) -> tuple[list[Finding], dict]:
         if raw_line:
             prev_text = raw_line
             prev_lineno = lineno
+        else:
+            prev_text = ""
+            prev_lineno = 0
 
     # Em dashes: rare is fine, a habit is a tell.
     em_total = sum(n for _, n in em_dash_lines)

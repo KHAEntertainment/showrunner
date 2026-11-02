@@ -204,6 +204,30 @@ class StructureRegressionTests(unittest.TestCase):
             any(f.rule == "multiple_h1" and f.severity == "hard" for f in findings)
         )
 
+    def test_setext_underline_after_blank_is_not_h1(self) -> None:
+        content = (
+            "# demo\n\n"
+            "Notes\n\n"
+            "===\n\n"
+            "```bash\necho demo\n```\n"
+        )
+        code, findings, stats = run_check(content)
+        self.assertEqual(0, code)
+        self.assertEqual(1, stats["h1_count"])
+        self.assertFalse(any(f.rule == "multiple_h1" for f in findings))
+
+    def test_setext_underline_after_fence_is_not_h1(self) -> None:
+        content = (
+            "# demo\n\n"
+            "Notes\n"
+            "```bash\necho demo\n```\n"
+            "===\n"
+        )
+        code, findings, stats = run_check(content)
+        self.assertEqual(0, code)
+        self.assertEqual(1, stats["h1_count"])
+        self.assertFalse(any(f.rule == "multiple_h1" for f in findings))
+
     def test_front_matter_and_table_separator_are_not_h1(self) -> None:
         content = (
             "---\n"

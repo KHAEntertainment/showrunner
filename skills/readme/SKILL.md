@@ -15,7 +15,7 @@ Everything else lives in secondary docs that the README links to.
 This skill can run on its own, outside a larger workflow. It edits files only
 when the user asks it to write or rewrite; otherwise it returns a draft for the
 user to review. When it edits a tracked README or docs file, put those edits on
-a dedicated docs-only branch and open them as a pull request, never a direct
+a dedicated docs-only worktree and open them as a pull request, never a direct
 push to the default branch. Follow the host repository's own contribution rules
 where it has them. Review-only mode writes nothing.
 
