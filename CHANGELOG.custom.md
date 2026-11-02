@@ -48,8 +48,8 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
   `docs/badges.md`, and a Credits and Thanks section (PR #162), plus the
   projects-using counter (PR #165).
 - `docs/badges.md` no longer says the badge registers a project. Adding the
-  badge does not by itself add a project to the adoption count (#176 tracks
-  how projects get enrolled).
+  badge does not by itself add a project to the adoption count; the badge
+  host's owner registers projects (#176).
 
 ### Fixed
 
