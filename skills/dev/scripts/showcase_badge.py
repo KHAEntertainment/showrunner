@@ -114,7 +114,9 @@ def build_block(slug: str, private_id: str | None = None) -> str:
 
     A private badge embeds `?p=<id>` on both the image and the link so the repo
     name is not recoverable from a click's referrer; a public badge embeds
-    `?project=<slug>` on the image only and links `/go`.
+    `?project=<slug>` on both the image and the link, so a click names the
+    project it came from. The slug is quoted once, with `/` left literal, so
+    it reads as `owner/repo` on both URLs.
     """
     if private_id is not None:
         image = f"https://{HOST}{BADGE_IMAGE_PATH}?{BADGE_QUERY}&p={private_id}"
@@ -122,7 +124,7 @@ def build_block(slug: str, private_id: str | None = None) -> str:
     else:
         encoded = urllib.parse.quote(slug, safe="/")
         image = f"https://{HOST}{BADGE_IMAGE_PATH}?{BADGE_QUERY}&project={encoded}"
-        link = f"https://{HOST}{GO_PATH}"
+        link = f"https://{HOST}{GO_PATH}?project={encoded}"
     return f"[![Built with Showrunner]({image})]({link})"
 
 
