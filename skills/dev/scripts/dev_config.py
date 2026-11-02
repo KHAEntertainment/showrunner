@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 CONFIG_FILENAME = ".dev.json"
@@ -44,8 +45,23 @@ REQUIRED_GITHUB_FIELDS = (
     "pullRequestRepository",
     "pushRemote",
 )
-ALLOWED_TOP_LEVEL_FIELDS = frozenset({"version", "github"})
+ALLOWED_TOP_LEVEL_FIELDS = frozenset({"version", "github", "showcase"})
 ALLOWED_GITHUB_FIELDS = frozenset(REQUIRED_GITHUB_FIELDS)
+
+# The opt-in "Built with Showrunner" badge decision. `showcase` is optional, so
+# an existing config without it keeps validating and SUPPORTED_VERSION stays 1.
+# `badge` means "the badge has landed on the default branch" (true) or "the user
+# declined / removed it" (false); an absent key means "never decided yet".
+# `badgeApproved` remembers a public "yes" while the docs PR is still open, so a
+# later run resumes without re-asking. `registerApproved` records consent to
+# register a private project and is written before the network call;
+# `registered`/`privateId` are written only on success. `showBadge` remembers
+# "also show the badge" across a failed call. `privateId` is a lowercase hex
+# hash (not a secret) returned by registration.
+ALLOWED_SHOWCASE_FIELDS = frozenset(
+    {"badge", "registered", "registerApproved", "privateId", "showBadge", "badgeApproved", "decidedAt"}
+)
+PRIVATE_ID_PATTERN = re.compile(r"[0-9a-f]{8,128}\Z")
 
 # Substrings that mark a field name as secret-shaped. `.dev.json` records
 # intent, never a token/password/key -- reject the field outright rather than
@@ -122,6 +138,52 @@ def validate_remote_name(value: object, *, label: str = "github.pushRemote") -> 
     if value.strip() != value or not REMOTE_NAME_PATTERN.match(value):
         raise ConfigError("invalid_field", f"{label} must be a plain git remote name")
     return value
+
+
+def validate_showcase(value: object) -> dict[str, object]:
+    """Validate an optional `showcase` block. Raises `ConfigError` on any defect.
+
+    Field names are checked for the secret-shaped substrings *before* the
+    unknown-field check, so a secret-shaped name reports `secret_field_rejected`
+    rather than `unknown_field` (the acceptance criterion requires that code).
+    """
+    if not isinstance(value, dict):
+        raise ConfigError("invalid_field", "showcase must be an object")
+
+    for field in value:
+        if _looks_like_secret_field(field):
+            raise ConfigError(
+                "secret_field_rejected",
+                f"showcase.{field} looks like a secret field and is not allowed",
+            )
+
+    unknown = sorted(set(value) - ALLOWED_SHOWCASE_FIELDS)
+    if unknown:
+        raise ConfigError("unknown_field", f"unknown showcase field(s): {unknown}")
+
+    result: dict[str, object] = {}
+    for field in ("badge", "registered", "registerApproved", "showBadge", "badgeApproved"):
+        if field in value:
+            raw = value[field]
+            if not isinstance(raw, bool):
+                raise ConfigError("invalid_field", f"showcase.{field} must be a boolean")
+            result[field] = raw
+
+    if "privateId" in value:
+        raw = value["privateId"]
+        if not isinstance(raw, str) or not PRIVATE_ID_PATTERN.fullmatch(raw):
+            raise ConfigError(
+                "invalid_field", "showcase.privateId must be a lowercase hex id"
+            )
+        result["privateId"] = raw
+
+    if "decidedAt" in value:
+        raw = value["decidedAt"]
+        if not isinstance(raw, str) or not raw.strip():
+            raise ConfigError("invalid_field", "showcase.decidedAt must be a non-empty string")
+        result["decidedAt"] = raw
+
+    return result
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -203,7 +265,10 @@ def parse_config(raw_text: str) -> dict[str, object]:
         "pushRemote": validate_remote_name(github["pushRemote"]),
     }
 
-    return {"version": version, "github": validated_github}
+    result: dict[str, object] = {"version": version, "github": validated_github}
+    if "showcase" in payload:
+        result["showcase"] = validate_showcase(payload["showcase"])
+    return result
 
 
 def build_config(
@@ -326,6 +391,60 @@ def create_config(path: Path, data: dict[str, object]) -> None:
         ) from exc
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
+
+
+def create_config_atomic(path: Path, data: dict[str, object]) -> None:
+    """Atomically publish the *first* version of *path* via a complete temp file.
+
+    Unlike `create_config` (which writes the final name directly), this writes
+    the whole document to a temp file in the same directory first, then links
+    it into place with no-overwrite semantics (`os.link` fails if *path* already
+    exists). A crash mid-write leaves the temp file, never a partial *path*, and
+    the `already_exists` guarantee is preserved. The caller must already have
+    validated *data* with `parse_config`.
+    """
+    text = json.dumps(data, indent=2, sort_keys=False) + "\n"
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), prefix=".dev.json.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        try:
+            os.link(tmp_path, str(path))
+        except FileExistsError as exc:
+            raise ConfigError(
+                "already_exists", f"{path} already exists; refusing to overwrite"
+            ) from exc
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def write_config_atomically(path: Path, data: dict[str, object]) -> None:
+    """Atomically replace *path* with the already-validated *data* document.
+
+    Unlike `create_config` (which refuses to overwrite), this writes to a
+    temporary file in the same directory and `os.replace`s it into place, so a
+    crash or a concurrent reader never observes a truncated file. The caller
+    must already have validated *data* with `parse_config`.
+    """
+    text = json.dumps(data, indent=2, sort_keys=False) + "\n"
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), prefix=".dev.json.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def nonsecret_summary(config: dict[str, object]) -> dict[str, object]:

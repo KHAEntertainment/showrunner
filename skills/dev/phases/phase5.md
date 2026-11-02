@@ -29,7 +29,86 @@ Under `Post-Merge Verification`, list the post-merge verification records from `
 
 Update the current-status section of `PROJECT_CONTEXT.md` and the completed list in `docs/feature-log.md`. After repository initialization, make these tracked documentation changes in a docs-only worktree and PR; never push directly to main.
 
-## Step 2 — Focused Debt Sweep
+## Step 2 — Showcase badge (opt-in, once)
+
+Run once, after the iteration's PRs have merged to the default branch. Offer the
+opt-in "Built with Showrunner" badge. The script owns the decision, the badge
+block, and the registration call;
+never hand-roll the URL. The README on the default branch is the source of truth
+for "is the badge there"; `.dev.json` only remembers a no, a public "yes" while
+the docs PR is open, or a private-registration outcome, and only in the primary
+checkout.
+
+```bash
+rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" decide \
+  --repo-dir "<worktree>" --base <iteration-earliest-lane-base_oid> --visibility <public|private>
+```
+
+`--base` is the earliest lane `base_oid` for this iteration from `.agent/dev-state.md`.
+`--visibility` is `public` or `private`; anything else is treated as undetermined (private).
+
+Act on the printed `action`:
+
+- `noop` — nothing to do; the printed `detail` is the one line of output. No prompt, no badge.
+  A `no_readme` reason means no README on the default branch; nothing happens this run. Phase 5
+  runs after the iteration's PRs merge, so a README still sitting on an unmerged branch is
+  picked up by a later run.
+- `hand_removal` — the badge was removed by hand; record it with `apply --consent decline`.
+- `prompt_public` — ask the user once using the printed `prompt`. On **yes**, run
+  `apply --consent approve` and place the printed `block` through the `skills/readme`
+  showcase slot (block plus consent `granted`) on the `docs/showcase-badge` branch of a
+  docs-only worktree, as a PR. On **no or a non-answer**, run `apply --consent decline`.
+- `resume` — a public "yes" was recorded but the badge has not landed. Place the printed `block`
+  through the `skills/readme` showcase slot (block plus consent `granted`) on the
+  `docs/showcase-badge` branch. Reuse an open PR if one exists:
+  `rtk gh pr list --head docs/showcase-badge --state open --repo <repository>`; otherwise open a
+  new docs PR. No prompt.
+- `prompt_private` — ask the user once. Map the answer: `register` → `apply --consent register`,
+  `register+show` → `apply --consent register --visible`, `no` or a non-answer → `apply --consent decline`.
+- `registered_not_displayed` — the private project is registered and the user asked to show the
+  badge, but it has not landed. Place the printed `?p=` `block` through the `skills/readme`
+  showcase slot (block plus consent `granted`) on the `docs/showcase-badge` branch of a docs-only
+  worktree, reuse an open PR (`rtk gh pr list --head docs/showcase-badge --state open --repo <repository>`)
+  if one exists, otherwise open a new docs PR, then `landed` after merge. No prompt and no second registration.
+- `retry_register` — a prior registration failed; retry without re-asking: `apply --consent register`.
+- `default_on` — greenfield default. Place the printed `block` through the `skills/readme`
+  showcase slot (block plus consent `granted`) on the `docs/showcase-badge` branch of a docs-only
+  worktree, as a PR; the printed `detail` says the badge is included and that removing it is
+  deleting the one line. If the user opts out before merge, remove the block from the PR and run `apply --consent decline`.
+
+Record consent or registration with:
+
+```bash
+rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" apply \
+  --repo-dir "<worktree>" --consent <decline|register|landed|approve> [--visible] [--visibility <public|private>]
+```
+
+- `decline` — remembers no and clears any pending consent (`badgeApproved`, `registerApproved`,
+  `showBadge`); never asked again.
+- `approve` — remembers a public "yes" while the docs PR is still open, so a later run resumes
+  without re-asking.
+- `register` — writes consent, then registers the private project; a failed call records
+  nothing and the next run retries without re-asking. `--visible` also asks for the `?p=` badge.
+  `--visibility public` is a NO_OP with no network and no write.
+- `landed` — writes `badge: true` (and clears `badgeApproved`/`showBadge`) only after the docs
+  PR has merged to the default branch. Run it after the docs PR merges on every path:
+  `default_on`, `prompt_public` yes, `resume`, and the private paths. (`decide` records
+  `badge: true` on its own when the badge is already on the default branch.)
+
+Act on the printed `apply` output:
+
+- `registered` **with** a `block` — place the block through the `skills/readme` showcase slot
+  with consent `granted`, on a docs-only worktree and PR, then `landed` after merge.
+- `registered` **without** a `block` — registration is finished; nothing else to place.
+- `registered_pending` — registration failed; placement stays pending for the next run.
+
+The badge is always one line to remove. Adding it does not by itself register the project or
+add it to any adoption count. For a private repo the repository name is sent once over HTTPS to
+the badge host, which stores only a keyed hash of it and never stores or logs the name;
+`?project=` is never written into a private README, and the registration token lives only in
+`SHOWRUNNER_REGISTER_TOKEN` (sent as an `Authorization: Bearer` header, never in a URL).
+
+## Step 3 — Focused Debt Sweep
 
 Limit the scan to directories changed in this iteration and their immediate callers/dependencies. Do not run an unbounded whole-repository sweep.
 
@@ -61,7 +140,7 @@ Register them in `docs/feature-log.md` using:
 
 Do not delete untested implementation outside the iteration scope.
 
-## Step 3 — Report
+## Step 4 — Report
 
 ```
 ## Technical-Debt Sweep — [Iteration]
@@ -72,7 +151,7 @@ Do not delete untested implementation outside the iteration scope.
 ### Skipped and why
 ```
 
-## Step 4 — Cleanup and Standby
+## Step 5 — Cleanup and Standby
 
 Ask every delegated agent to shut down gracefully through the selected adapter. Verify stopped state, archive only when appropriate, and let only the lead perform backend/team cleanup. Never treat agent stop/archive as permission to delete a worktree. Clear or archive the active execution section of `.agent/dev-state.md` only after verified cleanup.
 
