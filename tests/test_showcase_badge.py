@@ -40,6 +40,7 @@ VALID_DOC = {
 SLUG = "KHAEntertainment/claude-dev-skill"
 TOKEN = "supersecret-token-value-123"
 HEX_ID = "a" * 64
+ORIGIN_URL = "https://github.com/KHAEntertainment/claude-dev-skill.git"
 
 
 def _git(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -90,7 +91,26 @@ class DecideTableTests(unittest.TestCase):
         self.assertEqual("idempotent", decision["reason"])
 
     def test_unlanded_badge_does_not_read_as_hand_removal(self) -> None:
-        decision = _decide(showcase={}, host_present=True)
+        # A public "yes" recorded while the docs PR is open, with the badge not
+        # yet landed, must resume -- not be mistaken for hand removal.
+        decision = _decide(showcase={"badgeApproved": True}, host_present=False)
+        self.assertEqual("resume", decision["action"])
+        self.assertNotEqual("hand_removal", decision["action"])
+
+    def test_badge_approved_resumes_with_block_and_no_prompt(self) -> None:
+        decision = _decide(
+            showcase={"badgeApproved": True}, host_present=False, visibility="public"
+        )
+        self.assertEqual("resume", decision["action"])
+        self.assertIn("&project=", decision["block"])
+        self.assertNotIn("prompt", decision)
+        self.assertTrue(decision["unplaced"])
+
+    def test_badge_approved_is_ignored_when_host_already_present(self) -> None:
+        decision = _decide(
+            showcase={"badgeApproved": True}, host_present=True, visibility="public"
+        )
+        self.assertEqual("noop", decision["action"])
         self.assertEqual("idempotent", decision["reason"])
 
     def test_public_greenfield_defaults_on(self) -> None:
@@ -131,6 +151,16 @@ class DecideTableTests(unittest.TestCase):
         self.assertEqual("noop", decision["action"])
         self.assertEqual("already_registered", decision["reason"])
 
+    def test_registered_but_not_displayed_returns_p_block(self) -> None:
+        decision = _decide(
+            visibility="private", token_present=True,
+            showcase={"registered": True, "privateId": "abcdef1234567890", "showBadge": True},
+        )
+        self.assertEqual("registered_not_displayed", decision["action"])
+        self.assertIn("?p=abcdef1234567890", decision["block"])
+        self.assertNotIn("prompt", decision)
+        self.assertTrue(decision["unplaced"])
+
     def test_pending_registration_retries_without_prompt(self) -> None:
         decision = _decide(
             visibility="private", token_present=True,
@@ -165,6 +195,13 @@ class PromptWordingTests(unittest.TestCase):
         self.assertNotIn("never leaves", MODULE.PROMPT_PRIVATE)
         self.assertIn("sent once", MODULE.PROMPT_PRIVATE)
         self.assertIn("?project=", MODULE.PROMPT_PRIVATE)
+
+    def test_public_prompt_does_not_claim_registration_or_counting(self) -> None:
+        lowered = MODULE.PROMPT_PUBLIC.lower()
+        self.assertNotIn("regist", lowered)
+        self.assertNotIn("count", lowered)
+        self.assertIn("links back", MODULE.PROMPT_PUBLIC)
+        self.assertIn("deleting the one line", MODULE.PROMPT_PUBLIC)
 
 
 class BuildBlockTests(unittest.TestCase):
@@ -264,6 +301,13 @@ class RegisterTests(unittest.TestCase):
             MODULE.register(TOKEN, SLUG, opener=opener)
         self.assertNotIn(TOKEN, str(caught.exception))
 
+    def test_exception_text_containing_token_is_not_emitted(self) -> None:
+        opener = _TokenLeakingError(TOKEN)
+        with self.assertRaises(MODULE.RegistrationError) as caught:
+            MODULE.register(TOKEN, SLUG, opener=opener)
+        self.assertNotIn(TOKEN, str(caught.exception))
+        self.assertEqual("registration failed (network error)", str(caught.exception))
+
     def test_incomplete_read_is_a_fixed_failure(self) -> None:
         opener = _IncompleteReadError()
         with self.assertRaises(MODULE.RegistrationError) as caught:
@@ -271,10 +315,33 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual("registration failed (network error)", str(caught.exception))
 
     def test_redirect_is_refused(self) -> None:
-        opener = _Redirect()
-        with self.assertRaises(MODULE.RegistrationError) as caught:
-            MODULE.register(TOKEN, SLUG, opener=opener)
-        self.assertNotIn(TOKEN, str(caught.exception))
+        import http.server
+        import threading
+
+        seen: list[str] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                seen.append(self.path)
+                self.send_response(302)
+                self.send_header("Location", "https://evil.example/")
+                self.end_headers()
+
+            def log_message(self, *args) -> None:
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            opener = MODULE._build_opener()
+            with self.assertRaises(MODULE.RegistrationError):
+                opener.open(f"http://127.0.0.1:{server.server_address[1]}/", timeout=5)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+        self.assertEqual(1, len(seen))
 
 
 class _HttpError:
@@ -289,17 +356,19 @@ class _UrlError:
         raise urllib.error.URLError(url)
 
 
+class _TokenLeakingError:
+    def __init__(self, token: str):
+        self._token = token
+
+    def open(self, request, timeout=None):
+        raise urllib.error.URLError(f"server rejected {self._token} in the URL")
+
+
 class _IncompleteReadError:
     def open(self, request, timeout=None):
         import http.client
 
         raise http.client.IncompleteRead(partial=b"ok", expected=100)
-
-
-class _Redirect:
-    def open(self, request, timeout=None):
-        url = request.full_url if hasattr(request, "full_url") else request.get_full_url()
-        raise urllib.error.HTTPError(url, 302, "found", {"Location": "https://evil.example/"}, None)
 
 
 class GitHelperTests(unittest.TestCase):
@@ -313,16 +382,15 @@ class GitHelperTests(unittest.TestCase):
         _git("commit", "-q", "-m", "initial", cwd=root)
         return root
 
-    def _remote_clone(self) -> tuple[Path, Path, str]:
+    def _remote_checkout(self) -> tuple[Path, Path]:
+        """A checkout whose `origin` is a live non-bare repo we can still mutate."""
         origin = self._init_repo()
         (origin / "README.md").write_text("remote readme\n", encoding="utf-8")
         _git("add", "README.md", cwd=origin)
         _git("commit", "-q", "-m", "readme", cwd=origin)
-        bare = Path(tempfile.mkdtemp())
-        _git("clone", "--bare", "-q", str(origin), str(bare), cwd=origin)
         checkout = Path(tempfile.mkdtemp())
-        _git("clone", "-q", str(bare), str(checkout), cwd=origin)
-        return checkout, bare, "remote readme\n"
+        _git("clone", "-q", str(origin), str(checkout), cwd=origin)
+        return checkout, origin
 
     def test_primary_checkout_root_from_linked_worktree(self) -> None:
         root = self._init_repo()
@@ -355,13 +423,59 @@ class GitHelperTests(unittest.TestCase):
         self.assertIsNone(MODULE.primary_checkout_root(bare))
 
     def test_readme_now_returns_fetched_readme(self) -> None:
-        checkout, _, expected = self._remote_clone()
-        self.assertEqual(expected, MODULE.readme_now(checkout, "origin"))
+        checkout, origin = self._remote_checkout()
+        (origin / "README.md").write_text("post-clone readme\n", encoding="utf-8")
+        _git("add", "README.md", cwd=origin)
+        _git("commit", "-q", "-m", "post-clone", cwd=origin)
+        self.assertEqual("post-clone readme\n", MODULE.readme_now(checkout, "origin"))
 
     def test_readme_now_returns_none_when_fetch_fails(self) -> None:
-        checkout, bare, _ = self._remote_clone()
-        shutil.rmtree(bare)  # break the remote so the next fetch fails
+        checkout, origin = self._remote_checkout()
+        shutil.rmtree(origin)
         self.assertIsNone(MODULE.readme_now(checkout, "origin"))
+
+    def test_readme_now_reads_live_default_branch_after_change(self) -> None:
+        origin = self._init_repo()
+        old_default = _git("symbolic-ref", "--short", "HEAD", cwd=origin).stdout.strip()
+        checkout = Path(tempfile.mkdtemp())
+        _git("clone", "-q", str(origin), str(checkout), cwd=origin)
+        # Change the default branch on the origin *after* cloning.
+        _git("checkout", "-q", "-b", "renamed", cwd=origin)
+        (origin / "README.md").write_text("renamed readme\n", encoding="utf-8")
+        _git("add", "README.md", cwd=origin)
+        _git("commit", "-q", "-m", "rename", cwd=origin)
+        _git("symbolic-ref", "HEAD", "refs/heads/renamed", cwd=origin)
+        self.assertEqual("renamed readme\n", MODULE.readme_now(checkout, "origin"))
+        # The old default branch is retained locally.
+        retained = _git(
+            "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{old_default}",
+            cwd=checkout, check=False,
+        )
+        self.assertEqual(0, retained.returncode)
+
+    def test_readme_selection_prefers_exact_names_and_blobs(self) -> None:
+        root = self._init_repo()  # already has README.md "hello\n"
+        (root / "README.en.md").write_text("english\n", encoding="utf-8")
+        (root / "README").write_text("bare\n", encoding="utf-8")
+        (root / "README-assets").mkdir()
+        (root / "README-assets" / "logo.svg").write_text("<svg/>\n", encoding="utf-8")
+        _git("add", "-A", cwd=root)
+        _git("commit", "-q", "-m", "extra readmes", cwd=root)
+        self.assertEqual("README.md", MODULE.readme_path_at_ref(root, "HEAD"))
+        self.assertEqual("hello\n", MODULE.readme_content_at_ref(root, "HEAD"))
+
+    def test_readme_present_requires_supported_blob(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        _git("init", "-q", cwd=root)
+        _git("config", "user.email", "test@example.com", cwd=root)
+        _git("config", "user.name", "Test", cwd=root)
+        (root / "README.en.md").write_text("english\n", encoding="utf-8")
+        (root / "README-assets").mkdir()
+        (root / "README-assets" / "x.txt").write_text("x\n", encoding="utf-8")
+        _git("add", "-A", cwd=root)
+        _git("commit", "-q", "-m", "no supported readme", cwd=root)
+        head = _git("rev-parse", "HEAD", cwd=root).stdout.strip()
+        self.assertFalse(MODULE.readme_present_at_commit(root, head))
 
 
 class ForkShapeTests(unittest.TestCase):
@@ -400,9 +514,20 @@ class ApplyIntegrationTests(unittest.TestCase):
         (root / "README.md").write_text("hello\n", encoding="utf-8")
         _git("add", "README.md", cwd=root)
         _git("commit", "-q", "-m", "initial", cwd=root)
+        _git("remote", "add", "origin", ORIGIN_URL, cwd=root)
         lane = root / "lane"
         _git("worktree", "add", "-q", str(lane), "-b", "feat/lane", cwd=root)
         (lane / ".dev.json").write_text(json.dumps(VALID_DOC), encoding="utf-8")
+        return root, lane
+
+    def _setup_with_tracked_primary_showcase(self) -> tuple[Path, Path]:
+        root, lane = self._setup()
+        (root / ".dev.json").write_text(
+            json.dumps({**VALID_DOC, "showcase": {"registerApproved": True, "decidedAt": "2026-11-01"}}),
+            encoding="utf-8",
+        )
+        _git("add", ".dev.json", cwd=root)
+        _git("commit", "-q", "-m", "tracked config", cwd=root)
         return root, lane
 
     def test_apply_register_writes_primary_and_preserves_github(self) -> None:
@@ -467,6 +592,77 @@ class ApplyIntegrationTests(unittest.TestCase):
         self.assertFalse(primary_cfg["showcase"]["registerApproved"])
         self.assertFalse(primary_cfg["showcase"]["showBadge"])
 
+    def test_apply_approve_then_landed_clears_badge_approved(self) -> None:
+        root, lane = self._setup()
+        code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "approve"])
+        self.assertEqual(0, code)
+        cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertTrue(cfg["showcase"]["badgeApproved"])
+
+        code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "landed"])
+        self.assertEqual(0, code)
+        cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertTrue(cfg["showcase"]["badge"])
+        self.assertFalse(cfg["showcase"]["badgeApproved"])
+
+    def test_apply_decline_clears_badge_approved(self) -> None:
+        root, lane = self._setup()
+        (root / ".dev.json").write_text(
+            json.dumps({**VALID_DOC, "showcase": {"badgeApproved": True, "decidedAt": "2026-11-01"}}),
+            encoding="utf-8",
+        )
+        code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "decline"])
+        self.assertEqual(0, code)
+        cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertFalse(cfg["showcase"]["badge"])
+        self.assertFalse(cfg["showcase"]["badgeApproved"])
+
+    def test_apply_register_visible_returns_block_and_no_second_registration(self) -> None:
+        root, lane = self._setup()
+        old_env = os.environ.get(MODULE.TOKEN_ENV)
+        os.environ[MODULE.TOKEN_ENV] = TOKEN
+        try:
+            with mock.patch.object(MODULE, "register", return_value="abcdef1234567890"):
+                code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "register", "--visible"])
+
+            self.assertEqual(0, code)
+            cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+            self.assertEqual("abcdef1234567890", cfg["showcase"]["privateId"])
+            self.assertTrue(cfg["showcase"]["showBadge"])
+
+            # A second run must not re-register; it returns the block with no call.
+            with mock.patch.object(MODULE, "register") as fake_register2:
+                buf = io.StringIO()
+                with mock.patch("sys.stdout", buf):
+                    MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "register", "--visible"])
+                fake_register2.assert_not_called()
+            out = json.loads(buf.getvalue())
+            self.assertTrue(out.get("already"))
+            self.assertIn("?p=abcdef1234567890", out["block"])
+        finally:
+            if old_env is None:
+                os.environ.pop(MODULE.TOKEN_ENV, None)
+            else:
+                os.environ[MODULE.TOKEN_ENV] = old_env
+
+    def test_apply_landed_clears_show_badge(self) -> None:
+        root, lane = self._setup()
+        (root / ".dev.json").write_text(
+            json.dumps({
+                **VALID_DOC,
+                "showcase": {
+                    "registered": True, "privateId": "abcdef1234567890",
+                    "showBadge": True, "decidedAt": "2026-11-01",
+                },
+            }),
+            encoding="utf-8",
+        )
+        code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "landed"])
+        self.assertEqual(0, code)
+        cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertTrue(cfg["showcase"]["badge"])
+        self.assertFalse(cfg["showcase"]["showBadge"])
+
     def test_apply_register_does_not_recall_when_private_id_present(self) -> None:
         root, lane = self._setup()
         old_env = os.environ.get(MODULE.TOKEN_ENV)
@@ -501,6 +697,69 @@ class ApplyIntegrationTests(unittest.TestCase):
                 os.environ[MODULE.TOKEN_ENV] = old_env
         self.assertEqual(before, (lane / ".dev.json").read_text(encoding="utf-8"))
 
+    def test_tracked_primary_config_is_noop_not_retry_register(self) -> None:
+        root, lane = self._setup_with_tracked_primary_showcase()
+        old_env = os.environ.get(MODULE.TOKEN_ENV)
+        os.environ[MODULE.TOKEN_ENV] = TOKEN
+        try:
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                code = MODULE.main(["decide", "--repo-dir", str(lane), "--visibility", "private"])
+        finally:
+            if old_env is None:
+                os.environ.pop(MODULE.TOKEN_ENV, None)
+            else:
+                os.environ[MODULE.TOKEN_ENV] = old_env
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("noop", out["action"])
+        self.assertEqual("fail_closed", out["reason"])
+
+    def test_tracked_primary_config_blocks_apply_register(self) -> None:
+        root, lane = self._setup_with_tracked_primary_showcase()
+        old_env = os.environ.get(MODULE.TOKEN_ENV)
+        os.environ[MODULE.TOKEN_ENV] = TOKEN
+        try:
+            with mock.patch.object(MODULE, "register") as fake_register:
+                code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "register"])
+                fake_register.assert_not_called()
+        finally:
+            if old_env is None:
+                os.environ.pop(MODULE.TOKEN_ENV, None)
+            else:
+                os.environ[MODULE.TOKEN_ENV] = old_env
+        self.assertEqual(0, code)
+        primary_cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertTrue(primary_cfg["showcase"]["registerApproved"])
+        self.assertNotIn("privateId", primary_cfg["showcase"])
+
+    def test_fetch_identity_mismatch_is_noop(self) -> None:
+        root, lane = self._setup()
+        _git("remote", "set-url", "origin", "https://github.com/other/upstream.git", cwd=root)
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            code = MODULE.main(["decide", "--repo-dir", str(lane), "--visibility", "public"])
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("noop", out["action"])
+        self.assertEqual("fail_closed", out["reason"])
+
+
+class AtomicCreateTests(unittest.TestCase):
+    def test_failed_atomic_create_leaves_no_partial_file(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        path = root / ".dev.json"
+
+        def failing_link(src: str, dst: str, *args, **kwargs) -> None:
+            raise OSError("boom")
+
+        with mock.patch.object(dev_config.os, "link", side_effect=failing_link):
+            with self.assertRaises(OSError):
+                dev_config.create_config_atomic(path, VALID_DOC)
+
+        self.assertFalse(path.exists())
+        self.assertEqual([], list(root.iterdir()))
+
 
 class ShowcaseConfigSchemaTests(unittest.TestCase):
     def _with_showcase(self, block):
@@ -513,6 +772,16 @@ class ShowcaseConfigSchemaTests(unittest.TestCase):
         doc = self._with_showcase(block)
         parsed = dev_config.parse_config(json.dumps(doc))
         self.assertEqual(block, parsed["showcase"])
+
+    def test_badge_approved_field_round_trips(self) -> None:
+        doc = self._with_showcase({"badgeApproved": True, "decidedAt": "2026-11-01"})
+        parsed = dev_config.parse_config(json.dumps(doc))
+        self.assertTrue(parsed["showcase"]["badgeApproved"])
+
+    def test_badge_approved_must_be_boolean(self) -> None:
+        doc = self._with_showcase({"badgeApproved": "yes"})
+        with self.assertRaises(dev_config.ConfigError):
+            dev_config.parse_config(json.dumps(doc))
 
     def test_missing_showcase_still_validates(self) -> None:
         parsed = dev_config.parse_config(json.dumps(VALID_DOC))

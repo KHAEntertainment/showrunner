@@ -4,7 +4,8 @@
 Phase 5 calls this script, never hand-rolls the badge URL or the decision. The
 README on the default branch is the source of truth for "is the badge there";
 `.dev.json` (in the primary checkout, never a lane worktree copy) only remembers
-a *no* (or a registration outcome) so the user is asked at most once.
+a *no*, a public "yes" while the docs PR is open, or a private-registration
+outcome, so the user is asked at most once.
 
 Decision logic is a pure function (`decide`) so it is unit-testable without any
 network or `gh`. Registration uses `urllib` in-process against the fixed host
@@ -19,6 +20,10 @@ for a private or undetermined repo).
 
 The token is read only from the `SHOWRUNNER_REGISTER_TOKEN` environment
 variable. If it is absent, the private path stays off.
+
+The primary `.dev.json` must be a local, untracked file before any showcase
+state is read from it or written to it, and the configured remote's fetch URL
+must resolve to `github.pushRepository` before anything is fetched.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import dev_config  # noqa: E402  (same-directory schema/persistence module)
+import resolve_repository  # noqa: E402  (read-only remote-identity helpers)
 
 
 HOST = "svg.khaentertainment.com"
@@ -53,11 +59,16 @@ GIT_FETCH_TIMEOUT = 60
 READ_LIMIT = 4096
 PRIVATE_ID_PATTERN = re.compile(r"[0-9a-f]{8,128}\Z")
 
+# Exact, supported README filenames, in selection priority. A root entry that
+# is not one of these (e.g. `README-assets/`, `README.en.md`) is never chosen,
+# and only a blob (not a symlink or a submodule) qualifies.
+README_NAMES = ("README.md", "README.rst", "README.txt", "README")
+
 PROMPT_PUBLIC = (
     'Add a "Built with Showrunner" badge to this README? It is a single animated '
-    "badge that links back to Showrunner and registers this project so its adoption "
-    "is counted. If you add it and later change your mind, removing it is just "
-    "deleting the one line. (Answer yes to add it, or no to leave it out.)"
+    "badge that links back to Showrunner. If you add it and later change your "
+    "mind, removing it is just deleting the one line. (Answer yes to add it, or "
+    "no to leave it out.)"
 )
 
 PROMPT_PRIVATE = (
@@ -76,6 +87,9 @@ DETAILS = {
     "token_missing": "SHOWRUNNER_REGISTER_TOKEN is not set, so private registration is off",
     "already_registered": "this private project is already registered",
     "fail_closed": "the repository state is uncertain, so no badge, prompt, or network call",
+    "provenance_unavailable": "the primary .dev.json is tracked, invalid, or its provenance is unknown",
+    "fetch_identity_mismatch": "the configured fetch remote does not resolve to pushRepository",
+    "no_readme": "no README on the default branch (or the fetch failed)",
 }
 
 
@@ -213,42 +227,46 @@ def primary_checkout_root(start: Path) -> Path | None:
     return root
 
 
-def readme_present_at_commit(root: Path, oid: str) -> bool | None:
-    """Whether a root `README*` exists at *oid*. None on any error (fail closed)."""
-    if not oid:
-        return None
-    listing = _git(["ls-tree", "--name-only", oid], root)
+def _readme_blob_name_from_ls_tree(output: str) -> str | None:
+    """The supported README name from `ls-tree` output, in priority order, or None.
+
+    Only a blob at the tree root qualifies; a directory like `README-assets/` or
+    a non-supported name like `README.en.md` is skipped.
+    """
+    by_name: dict[str, tuple[str, str]] = {}
+    for line in output.splitlines():
+        meta, _, name = line.partition("\t")
+        parts = meta.split()
+        if len(parts) >= 2 and name:
+            by_name[name] = (parts[0], parts[1])
+    for candidate in README_NAMES:
+        entry = by_name.get(candidate)
+        if entry is not None and entry[1] == "blob" and entry[0].startswith("100"):
+            return candidate
+    return None
+
+
+def readme_path_at_ref(root: Path, ref: str) -> str | None:
+    """The root README blob path at *ref* by exact supported name, or None."""
+    listing = _git(["ls-tree", ref], root)
     if listing is None or listing.returncode != 0:
         return None
-    for line in listing.stdout.splitlines():
-        name = line.strip()
-        if "/" not in name and name.lower().startswith("readme"):
-            return True
-    return False
+    return _readme_blob_name_from_ls_tree(listing.stdout)
 
 
-def default_branch_ref(root: Path, remote: str) -> str | None:
-    """Resolve `refs/remotes/<remote>/HEAD` to a concrete remote-tracking ref."""
-    symbolic = _git(["symbolic-ref", f"refs/remotes/{remote}/HEAD"], root)
-    if symbolic is None or symbolic.returncode != 0:
+def readme_present_at_commit(root: Path, oid: str) -> bool | None:
+    """Whether a supported root README blob exists at *oid*. None on error."""
+    if not oid:
         return None
-    ref = symbolic.stdout.strip()
-    if not ref.startswith("refs/remotes/"):
+    listing = _git(["ls-tree", oid], root)
+    if listing is None or listing.returncode != 0:
         return None
-    return ref
+    return _readme_blob_name_from_ls_tree(listing.stdout) is not None
 
 
 def readme_content_at_ref(root: Path, ref: str) -> str | None:
-    """The root README blob at *ref*, or None if absent/unreadable."""
-    listing = _git(["ls-tree", "--name-only", ref], root)
-    if listing is None or listing.returncode != 0:
-        return None
-    readme_path = None
-    for line in listing.stdout.splitlines():
-        name = line.strip()
-        if "/" not in name and name.lower().startswith("readme"):
-            readme_path = name
-            break
+    """The root README blob content at *ref*, or None if absent/unreadable."""
+    readme_path = readme_path_at_ref(root, ref)
     if readme_path is None:
         return None
     shown = _git(["show", f"{ref}:{readme_path}"], root)
@@ -257,17 +275,45 @@ def readme_content_at_ref(root: Path, ref: str) -> str | None:
     return shown.stdout
 
 
+def live_default_branch(root: Path, remote: str) -> str | None:
+    """The remote's default branch name via `ls-remote --symref`, or None.
+
+    Reads the *live* remote HEAD rather than a possibly-stale cached
+    `refs/remotes/<remote>/HEAD`.
+    """
+    probe = _git(
+        ["ls-remote", "--symref", remote, "HEAD"], root, timeout=GIT_FETCH_TIMEOUT
+    )
+    if probe is None or probe.returncode != 0:
+        return None
+    for line in probe.stdout.splitlines():
+        if line.startswith("ref: "):
+            target, _, name = line[len("ref: "):].partition("\t")
+            if name == "HEAD" and target.startswith("refs/heads/"):
+                branch = target[len("refs/heads/"):]
+                if branch:
+                    return branch
+    return None
+
+
 def readme_now(root: Path, remote: str) -> str | None:
     """The README on the fetched default branch, or None on any failure.
 
-    A failed fetch (nonzero exit) returns None, never a stale ref: the caller
-    then reports NO_OP with no write.
+    The default branch is resolved live with `ls-remote --symref`, fetched
+    explicitly, and read from the just-fetched remote-tracking ref -- never from
+    a stale cached ref. A failed fetch (nonzero exit) returns None, so the
+    caller reports NO_OP with no write.
     """
-    fetched = _git(["fetch", remote], root, timeout=GIT_FETCH_TIMEOUT)
-    if fetched is None or fetched.returncode != 0:
+    branch = live_default_branch(root, remote)
+    if branch is None:
         return None
-    ref = default_branch_ref(root, remote)
-    if ref is None:
+    ref = f"refs/remotes/{remote}/{branch}"
+    fetched = _git(
+        ["fetch", remote, f"refs/heads/{branch}:{ref}"],
+        root,
+        timeout=GIT_FETCH_TIMEOUT,
+    )
+    if fetched is None or fetched.returncode != 0:
         return None
     return readme_content_at_ref(root, ref)
 
@@ -297,7 +343,8 @@ def decide(
     """The full decision table. Order matters; see the phase text and tests.
 
     Precedence: readme-skill missing, recorded decline, hand removal, idempotent
-    host match, pending-registration retry, already-registered, then the
+    host match, public `badgeApproved` resume, private registered-but-not-yet-
+    displayed, pending-registration retry, already-registered, then the
     visibility branches. The private `privateId` row (registered but no badge
     wanted) never collides with hand removal, which only fires on `badge is True`.
     """
@@ -318,6 +365,8 @@ def decide(
     register_approved = state.get("registerApproved", False)
     registered = state.get("registered", False)
     private_id = state.get("privateId")
+    show_badge = state.get("showBadge", False)
+    badge_approved = state.get("badgeApproved", False)
 
     if badge is False and not register_approved:
         result.update(action="noop", reason="declined", detail=DETAILS["declined"])
@@ -331,6 +380,21 @@ def decide(
         result.update(action="noop", reason="idempotent", detail=DETAILS["idempotent"])
         return result
 
+    if badge_approved and visibility == "public":
+        result.update(action="resume", block=build_block(slug), unplaced=True)
+        return result
+
+    if private_id is not None and badge is not True:
+        if show_badge:
+            result.update(
+                action="registered_not_displayed",
+                block=build_block(slug, private_id),
+                unplaced=True,
+            )
+            return result
+        result.update(action="noop", reason="already_registered", detail=DETAILS["already_registered"])
+        return result
+
     if register_approved and not registered and private_id is None:
         if visibility != "public" and token_present:
             result.update(action="retry_register")
@@ -339,10 +403,6 @@ def decide(
             result.update(action="noop", reason="token_missing", detail=DETAILS["token_missing"])
             return result
         result.update(action="noop", reason="fail_closed", detail=DETAILS["fail_closed"])
-        return result
-
-    if private_id is not None and badge is not True:
-        result.update(action="noop", reason="already_registered", detail=DETAILS["already_registered"])
         return result
 
     if visibility != "public":
@@ -383,33 +443,46 @@ def _read_config(path: Path) -> dict | None:
     return dev_config.parse_config(path.read_text(encoding="utf-8"))
 
 
-def write_showcase(primary_root: Path, lane_config: dict, showcase_block: dict) -> None:
-    """Merge *showcase_block* into the primary checkout's `.dev.json`.
+def primary_showcase(primary_root: Path) -> tuple[bool, dict]:
+    """`(ok, showcase)` for the primary checkout's `.dev.json`.
 
-    Creates the primary file from the lane's validated config when it does not
-    yet exist (preserving its `github` content and the exclude behavior), then
-    re-validates and atomically replaces it. Raises on any validation failure.
+    `ok` is False when the primary config is tracked, invalid, or its Git
+    provenance is unknown -- the caller must then NO_OP with no write and no
+    network. `showcase` is the parsed `showcase` block (empty when missing).
     """
-    config_path = primary_root / dev_config.CONFIG_FILENAME
-    existing = _read_config(config_path)
-    if existing is None:
-        try:
-            dev_config.create_config(config_path, lane_config)
-        except dev_config.ConfigError as exc:
-            if exc.code != "already_exists":
-                raise
-            existing = _read_config(config_path)
-            if existing is None:
-                raise
-        else:
-            existing = lane_config
-        dev_config.ensure_excluded(primary_root)
+    path = primary_root / dev_config.CONFIG_FILENAME
+    try:
+        status = dev_config.resolve_status(path)
+    except dev_config.ConfigError:
+        return False, {}
+    st = status["status"]
+    if st == "missing":
+        return True, {}
+    if st in ("valid", "not_ignored"):
+        config = status.get("config") or {}
+        return True, config.get("showcase") or {}
+    return False, {}
 
-    merged = dict(existing)
-    merged["showcase"] = showcase_block
-    dev_config.write_config_atomically(
-        config_path, dev_config.parse_config(json.dumps(merged))
-    )
+
+def fetch_identity_matches(root: Path, remote: str, push_repository: str) -> bool:
+    """Whether the configured remote's fetch URL resolves to *push_repository*.
+
+    `origin` can fetch upstream while pushing to a fork even when the config's
+    `pushRepository` and `pullRequestRepository` agree, so the fetch URL -- the
+    source the badge README is read from -- must match the configured project.
+    A missing, unparseable, or mismatched fetch URL is a mismatch.
+    """
+    completed = _git(["remote", "get-url", "--all", remote], root)
+    if completed is None or completed.returncode != 0:
+        return False
+    urls = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    if not urls:
+        return False
+    try:
+        identity = resolve_repository.normalize_remote(urls[0])
+    except resolve_repository.RepositoryError:
+        return False
+    return resolve_repository.same_repository(identity, push_repository)
 
 
 def _print(payload: dict) -> None:
@@ -418,6 +491,39 @@ def _print(payload: dict) -> None:
 
 def _fork_shape(lane: dict) -> bool:
     return lane["github"]["pushRepository"] != lane["github"]["pullRequestRepository"]
+
+
+def write_showcase(primary_root: Path, lane_config: dict, showcase_block: dict) -> None:
+    """Merge *showcase_block* into the primary checkout's `.dev.json`.
+
+    Creates the primary file from the lane's validated config when it does not
+    yet exist, publishing the first version through a complete temp file with
+    no-overwrite semantics (preserving its `github` content and the exclude
+    behavior), then re-validates and atomically replaces it on later writes.
+    Raises on any validation failure.
+    """
+    config_path = primary_root / dev_config.CONFIG_FILENAME
+    existing = _read_config(config_path)
+    if existing is None:
+        merged = dict(lane_config)
+        merged["showcase"] = showcase_block
+        validated = dev_config.parse_config(json.dumps(merged))
+        dev_config.ensure_excluded(primary_root)
+        try:
+            dev_config.create_config_atomic(config_path, validated)
+            return
+        except dev_config.ConfigError as exc:
+            if exc.code != "already_exists":
+                raise
+            existing = _read_config(config_path)
+            if existing is None:
+                raise
+
+    merged = dict(existing)
+    merged["showcase"] = showcase_block
+    dev_config.write_config_atomically(
+        config_path, dev_config.parse_config(json.dumps(merged))
+    )
 
 
 def decide_cmd(args: argparse.Namespace) -> int:
@@ -440,15 +546,21 @@ def decide_cmd(args: argparse.Namespace) -> int:
         _print({"action": "noop", "reason": "fail_closed", "detail": "cannot resolve primary checkout"})
         return 0
 
-    primary_config = _read_config(primary / dev_config.CONFIG_FILENAME)
-    showcase = (primary_config or {}).get("showcase") or {}
-    token_present = bool(os.environ.get(TOKEN_ENV))
+    ok, showcase = primary_showcase(primary)
+    if not ok:
+        _print({"action": "noop", "reason": "fail_closed", "detail": DETAILS["provenance_unavailable"]})
+        return 0
 
     remote = lane["github"]["pushRemote"]
-    readme_text = readme_now(primary, remote)
+    if not fetch_identity_matches(primary, remote, slug):
+        _print({"action": "noop", "reason": "fail_closed", "detail": DETAILS["fetch_identity_mismatch"]})
+        return 0
 
+    token_present = bool(os.environ.get(TOKEN_ENV))
+
+    readme_text = readme_now(primary, remote)
     if readme_text is None:
-        _print({"action": "noop", "reason": "no_readme", "detail": "no README on the default branch (or the fetch failed)"})
+        _print({"action": "noop", "reason": "no_readme", "detail": DETAILS["no_readme"]})
         return 0
 
     host_present = HOST_MARKER in readme_text
@@ -485,8 +597,16 @@ def apply_cmd(args: argparse.Namespace) -> int:
         _print({"status": "noop", "reason": "fail_closed", "detail": "cannot resolve primary checkout"})
         return 0
 
-    primary_config = _read_config(primary / dev_config.CONFIG_FILENAME)
-    existing_showcase = (primary_config or {}).get("showcase") or {}
+    ok, existing_showcase = primary_showcase(primary)
+    if not ok:
+        _print({"status": "noop", "reason": "fail_closed", "detail": DETAILS["provenance_unavailable"]})
+        return 0
+
+    slug = lane["github"]["pushRepository"]
+    remote = lane["github"]["pushRemote"]
+    if not fetch_identity_matches(primary, remote, slug):
+        _print({"status": "noop", "reason": "fail_closed", "detail": DETAILS["fetch_identity_mismatch"]})
+        return 0
 
     if args.consent == "decline":
         block = {
@@ -494,6 +614,7 @@ def apply_cmd(args: argparse.Namespace) -> int:
             "badge": False,
             "registerApproved": False,
             "showBadge": False,
+            "badgeApproved": False,
             "decidedAt": _today(),
         }
         write_showcase(primary, lane, block)
@@ -501,9 +622,21 @@ def apply_cmd(args: argparse.Namespace) -> int:
         return 0
 
     if args.consent == "landed":
-        block = {**existing_showcase, "badge": True, "decidedAt": _today()}
+        block = {
+            **existing_showcase,
+            "badge": True,
+            "showBadge": False,
+            "badgeApproved": False,
+            "decidedAt": _today(),
+        }
         write_showcase(primary, lane, block)
         _print({"status": "landed"})
+        return 0
+
+    if args.consent == "approve":
+        block = {**existing_showcase, "badgeApproved": True, "decidedAt": _today()}
+        write_showcase(primary, lane, block)
+        _print({"status": "approved"})
         return 0
 
     # register
@@ -513,7 +646,6 @@ def apply_cmd(args: argparse.Namespace) -> int:
         return 0
 
     show_badge = bool(args.visible) or bool(existing_showcase.get("showBadge"))
-    slug = lane["github"]["pushRepository"]
 
     if existing_showcase.get("privateId"):
         out = {"status": "registered", "registered": True, "already": True}
@@ -563,7 +695,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     apply_p = sub.add_parser("apply", help="record a decision / register a private project")
     apply_p.add_argument("--repo-dir", required=True, type=Path)
-    apply_p.add_argument("--consent", choices=["decline", "register", "landed"], required=True)
+    apply_p.add_argument("--consent", choices=["decline", "register", "landed", "approve"], required=True)
     apply_p.add_argument("--visible", action="store_true", help="also show the badge in a private repo")
 
     return parser.parse_args(argv)

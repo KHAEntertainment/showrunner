@@ -10,10 +10,9 @@ served from `svg.khaentertainment.com`, is animated, and links back to
 [![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=orbit)](https://svg.khaentertainment.com/go)
 ```
 
-There is no placeholder to fill in. The link records that your project uses
-Showrunner — it works out which repo the click came from and redirects here.
-Prefer to be explicit, or want to register without waiting for a click? Add
-`?project=owner/repo` to either URL.
+There is no placeholder to fill in. The badge and its link work straight away:
+the link redirects to the Showrunner repository. Adding the badge does not by
+itself add a project to the adoption count.
 
 Removing the badge is just deleting the line. Nothing else changes.
 

@@ -34,8 +34,9 @@ Update the current-status section of `PROJECT_CONTEXT.md` and the completed list
 Run once, after Step 1's docs update. Offer the opt-in "Built with Showrunner"
 badge. The script owns the decision, the badge block, and the registration call;
 never hand-roll the URL. The README on the default branch is the source of truth
-for "is the badge there"; `.dev.json` only remembers a no (or a registration
-outcome), and only in the primary checkout.
+for "is the badge there"; `.dev.json` only remembers a no, a public "yes" while
+the docs PR is open, or a private-registration outcome, and only in the primary
+checkout.
 
 ```bash
 rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" decide \
@@ -49,11 +50,19 @@ Act on the printed `action`:
 
 - `noop` — nothing to do; the printed `detail` is the one line of output. No prompt, no badge.
 - `hand_removal` — the badge was removed by hand; record it with `apply --consent decline`.
-- `prompt_public` — ask the user once using the printed `prompt`. On **yes**, place the
-  printed `block` through the `skills/readme` showcase slot (block plus consent `granted`)
-  on a docs-only worktree, as a PR. On **no or a non-answer**, run `apply --consent decline`.
+- `prompt_public` — ask the user once using the printed `prompt`. On **yes**, run
+  `apply --consent approve` and place the printed `block` through the `skills/readme`
+  showcase slot (block plus consent `granted`) on a docs-only worktree, as a PR. On
+  **no or a non-answer**, run `apply --consent decline`.
+- `resume` — a public "yes" was recorded but the badge has not landed; reuse the open docs
+  PR if there is one, otherwise place the printed `block` through the `skills/readme`
+  showcase slot as a new docs PR. No prompt.
 - `prompt_private` — ask the user once. Map the answer: `register` → `apply --consent register`,
-  `register+show` → `apply --consent register --visible`, `no` → `apply --consent decline`.
+  `register+show` → `apply --consent register --visible`, `no` or a non-answer → `apply --consent decline`.
+- `registered_not_displayed` — the private project is registered and the user asked to show
+  the badge, but it has not landed. Place the printed `?p=` `block` through the `skills/readme`
+  showcase slot (block plus consent `granted`) on a docs-only worktree and PR, then `landed`
+  after merge. No prompt and no second registration.
 - `retry_register` — a prior registration failed; retry without re-asking: `apply --consent register`.
 - `default_on` — greenfield default. Place the printed `block` through the `skills/readme`
   showcase slot (block plus consent `granted`) on a docs-only worktree, as a PR, and say in the
@@ -64,18 +73,23 @@ Record consent or registration with:
 
 ```bash
 rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" apply \
-  --repo-dir "<worktree>" --consent <decline|register|landed> [--visible]
+  --repo-dir "<worktree>" --consent <decline|register|landed|approve> [--visible]
 ```
 
-- `decline` — remembers no and clears any pending registration consent; never asked again.
+- `decline` — remembers no and clears any pending consent (`badgeApproved`, `registerApproved`,
+  `showBadge`); never asked again.
+- `approve` — remembers a public "yes" while the docs PR is still open, so a later run resumes
+  without re-asking.
 - `register` — writes consent, then registers the private project; a failed call records
-  nothing and the next run retries without re-asking. `--visible` also places the `?p=` badge.
-- `landed` — writes `badge: true` only after the docs PR has merged to the default branch.
+  nothing and the next run retries without re-asking. `--visible` also asks for the `?p=` badge.
+- `landed` — writes `badge: true` (and clears `badgeApproved`/`showBadge`) only after the docs
+  PR has merged to the default branch.
 
-The badge is always one line to remove. For a private repo the repository name is sent once
-over HTTPS to the badge host, which stores only a keyed hash of it and never stores or logs
-the name; `?project=` is never written into a private README, and the registration token lives
-only in `SHOWRUNNER_REGISTER_TOKEN` (sent as an `Authorization: Bearer` header, never in a URL).
+The badge is always one line to remove. Adding it does not by itself register the project or
+add it to any adoption count. For a private repo the repository name is sent once over HTTPS to
+the badge host, which stores only a keyed hash of it and never stores or logs the name;
+`?project=` is never written into a private README, and the registration token lives only in
+`SHOWRUNNER_REGISTER_TOKEN` (sent as an `Authorization: Bearer` header, never in a URL).
 
 ## Step 3 — Focused Debt Sweep
 

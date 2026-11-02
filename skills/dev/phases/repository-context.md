@@ -37,6 +37,7 @@ without it still validates and `SUPPORTED_VERSION` stays 1:
   "github": { "...": "..." },
   "showcase": {
     "badge": true,
+    "badgeApproved": false,
     "registered": true,
     "registerApproved": true,
     "showBadge": false,
@@ -48,6 +49,8 @@ without it still validates and `SUPPORTED_VERSION` stays 1:
 
 - `badge` — `true` once the badge has landed on the default branch, `false` when
   the user declined or removed it; an absent key means never decided.
+- `badgeApproved` — a public "yes" recorded while the docs PR is still open; cleared
+  by `landed` (which sets `badge: true`) or `decline`.
 - `registered` / `registerApproved` / `privateId` — the private-registration
   outcome. `registerApproved` is written before the network call; `registered`
   and `privateId` (a lowercase hex hash, not a secret) are written only on

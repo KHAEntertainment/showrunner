@@ -52,12 +52,14 @@ ALLOWED_GITHUB_FIELDS = frozenset(REQUIRED_GITHUB_FIELDS)
 # an existing config without it keeps validating and SUPPORTED_VERSION stays 1.
 # `badge` means "the badge has landed on the default branch" (true) or "the user
 # declined / removed it" (false); an absent key means "never decided yet".
-# `registerApproved` records consent to register a private project and is
-# written before the network call; `registered`/`privateId` are written only on
-# success. `showBadge` remembers "also show the badge" across a failed call.
-# `privateId` is a lowercase hex hash (not a secret) returned by registration.
+# `badgeApproved` remembers a public "yes" while the docs PR is still open, so a
+# later run resumes without re-asking. `registerApproved` records consent to
+# register a private project and is written before the network call;
+# `registered`/`privateId` are written only on success. `showBadge` remembers
+# "also show the badge" across a failed call. `privateId` is a lowercase hex
+# hash (not a secret) returned by registration.
 ALLOWED_SHOWCASE_FIELDS = frozenset(
-    {"badge", "registered", "registerApproved", "privateId", "showBadge", "decidedAt"}
+    {"badge", "registered", "registerApproved", "privateId", "showBadge", "badgeApproved", "decidedAt"}
 )
 PRIVATE_ID_PATTERN = re.compile(r"[0-9a-f]{8,128}\Z")
 
@@ -160,7 +162,7 @@ def validate_showcase(value: object) -> dict[str, object]:
         raise ConfigError("unknown_field", f"unknown showcase field(s): {unknown}")
 
     result: dict[str, object] = {}
-    for field in ("badge", "registered", "registerApproved", "showBadge"):
+    for field in ("badge", "registered", "registerApproved", "showBadge", "badgeApproved"):
         if field in value:
             raw = value[field]
             if not isinstance(raw, bool):
@@ -389,6 +391,36 @@ def create_config(path: Path, data: dict[str, object]) -> None:
         ) from exc
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(text)
+
+
+def create_config_atomic(path: Path, data: dict[str, object]) -> None:
+    """Atomically publish the *first* version of *path* via a complete temp file.
+
+    Unlike `create_config` (which writes the final name directly), this writes
+    the whole document to a temp file in the same directory first, then links
+    it into place with no-overwrite semantics (`os.link` fails if *path* already
+    exists). A crash mid-write leaves the temp file, never a partial *path*, and
+    the `already_exists` guarantee is preserved. The caller must already have
+    validated *data* with `parse_config`.
+    """
+    text = json.dumps(data, indent=2, sort_keys=False) + "\n"
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), prefix=".dev.json.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        try:
+            os.link(tmp_path, str(path))
+        except FileExistsError as exc:
+            raise ConfigError(
+                "already_exists", f"{path} already exists; refusing to overwrite"
+            ) from exc
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def write_config_atomically(path: Path, data: dict[str, object]) -> None:
