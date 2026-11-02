@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -850,6 +851,86 @@ def check_evidence_profile(skill_dir: Path, errors: list[str]) -> None:
                 "agents/report-back.md must keep exactly the seven required sections: "
                 + "; ".join(REPORT_BACK_SECTIONS),
             )
+
+
+# Issue #163: the README skill is a sibling of /dev. Unlike the dev skill, it
+# is not validated by --skill-dir (which stays pinned to skills/dev); it is
+# discovered through the `skills` array in .claude-plugin/plugin.json, so that
+# deleting the directory while it is still listed still fails, and a stray
+# skills/* directory that is not listed is an error too. The dev skill keeps
+# every one of its own checks above; this block only adds coverage for the
+# listed skills that --skill-dir does not already validate.
+README_SKILL_REQUIRED = (
+    "SKILL.md",
+    "assets/README-template.md",
+    "references/anti-slop.md",
+    "scripts/readme_check.py",
+)
+
+
+def check_listed_skills(repo_root: Path, errors: list[str]) -> None:
+    plugin_json = repo_root / ".claude-plugin" / "plugin.json"
+    if not plugin_json.is_file():
+        # A fixture or archive without the plugin manifest has nothing to
+        # discover; the dev skill is still validated by --skill-dir.
+        return
+    try:
+        data = json.loads(plugin_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(errors, f"cannot parse .claude-plugin/plugin.json: {exc}")
+        return
+
+    listed = data.get("skills")
+    if not isinstance(listed, list):
+        fail(errors, ".claude-plugin/plugin.json `skills` is not a list")
+        return
+
+    dev_dir = (repo_root / "skills" / "dev").resolve()
+    listed_dirs = {
+        (repo_root / entry).resolve()
+        for entry in listed
+        if isinstance(entry, str)
+    }
+
+    skills_root = repo_root / "skills"
+    if skills_root.is_dir():
+        for child in sorted(p for p in skills_root.iterdir() if p.is_dir()):
+            if child.resolve() not in listed_dirs:
+                fail(
+                    errors,
+                    f"skills/{child.name}/ exists but is not listed in "
+                    ".claude-plugin/plugin.json",
+                )
+
+    for entry in listed:
+        if not isinstance(entry, str):
+            fail(errors, f".claude-plugin/plugin.json skills entry is not a string: {entry!r}")
+            continue
+        skill_dir = (repo_root / entry).resolve()
+        if skill_dir == dev_dir:
+            continue  # validated by the --skill-dir checks above
+        if not skill_dir.is_dir():
+            fail(errors, f"listed skill is missing: {entry}")
+            continue
+        entry_file = skill_dir / "SKILL.md"
+        if not entry_file.is_file():
+            fail(errors, f"{entry} is missing SKILL.md")
+            continue
+        text = entry_file.read_text(encoding="utf-8")
+        frontmatter_text, frontmatter_errors = extract_frontmatter(text)
+        errors.extend(frontmatter_errors)
+        parsed = (
+            parse_frontmatter_block(frontmatter_text, errors)
+            if frontmatter_text is not None
+            else {}
+        )
+        for field in ("name", "description"):
+            if not parsed.get(field, "").strip():
+                fail(errors, f"{entry} SKILL.md frontmatter missing or empty: {field}")
+        if skill_dir.name == "readme":
+            for relative in README_SKILL_REQUIRED:
+                if not (skill_dir / relative).is_file():
+                    fail(errors, f"skills/readme missing required file: {relative}")
 
 
 def main() -> int:
@@ -1914,6 +1995,14 @@ def main() -> int:
         state_text = state_template.read_text(encoding="utf-8")
         if not state_text.startswith("---\n") or "\n---\n" not in state_text[4:]:
             fail(errors, "DEV_STATE_TEMPLATE.md must contain YAML frontmatter")
+
+    # Only when validating the source or archive root's own skill tree: an
+    # install stages the dev payload elsewhere and passes `--skill-dir` at
+    # that staged copy, so the sibling skills under `repo_root/skills/` are the
+    # SOURCE checkout's, not the payload's, and an uncommitted deletion there
+    # must not block installing a valid staged payload.
+    if validating_source_tree:
+        check_listed_skills(repo_root, errors)
 
     if errors:
         for error in errors:
