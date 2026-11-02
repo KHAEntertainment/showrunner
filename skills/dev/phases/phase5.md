@@ -49,31 +49,36 @@ rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" decide \
 Act on the printed `action`:
 
 - `noop` — nothing to do; the printed `detail` is the one line of output. No prompt, no badge.
+- `no_readme` — no README on the default branch; nothing happens this run. Phase 5 runs after the
+  iteration's PRs merge, so a README still sitting on an unmerged branch is picked up by a later run.
 - `hand_removal` — the badge was removed by hand; record it with `apply --consent decline`.
 - `prompt_public` — ask the user once using the printed `prompt`. On **yes**, run
   `apply --consent approve` and place the printed `block` through the `skills/readme`
-  showcase slot (block plus consent `granted`) on a docs-only worktree, as a PR. On
-  **no or a non-answer**, run `apply --consent decline`.
-- `resume` — a public "yes" was recorded but the badge has not landed; reuse the open docs
-  PR if there is one, otherwise place the printed `block` through the `skills/readme`
-  showcase slot as a new docs PR. No prompt.
+  showcase slot (block plus consent `granted`) on the `docs/showcase-badge` branch of a
+  docs-only worktree, as a PR. On **no or a non-answer**, run `apply --consent decline`.
+- `resume` — a public "yes" was recorded but the badge has not landed. Place the printed `block`
+  through the `skills/readme` showcase slot (block plus consent `granted`) on the
+  `docs/showcase-badge` branch. Reuse an open PR if one exists:
+  `rtk gh pr list --head docs/showcase-badge --state open --repo <repository>`; otherwise open a
+  new docs PR. No prompt.
 - `prompt_private` — ask the user once. Map the answer: `register` → `apply --consent register`,
   `register+show` → `apply --consent register --visible`, `no` or a non-answer → `apply --consent decline`.
-- `registered_not_displayed` — the private project is registered and the user asked to show
-  the badge, but it has not landed. Place the printed `?p=` `block` through the `skills/readme`
-  showcase slot (block plus consent `granted`) on a docs-only worktree and PR, then `landed`
-  after merge. No prompt and no second registration.
+- `registered_not_displayed` — the private project is registered and the user asked to show the
+  badge, but it has not landed. Place the printed `?p=` `block` through the `skills/readme`
+  showcase slot (block plus consent `granted`) on the `docs/showcase-badge` branch of a docs-only
+  worktree, reuse an open PR (`rtk gh pr list --head docs/showcase-badge --state open --repo <repository>`)
+  if one exists, otherwise open a new docs PR, then `landed` after merge. No prompt and no second registration.
 - `retry_register` — a prior registration failed; retry without re-asking: `apply --consent register`.
 - `default_on` — greenfield default. Place the printed `block` through the `skills/readme`
-  showcase slot (block plus consent `granted`) on a docs-only worktree, as a PR, and say in the
-  run output that the badge is included and that removing it is deleting the one line. If the
-  user opts out before merge, remove the block from the PR and run `apply --consent decline`.
+  showcase slot (block plus consent `granted`) on the `docs/showcase-badge` branch of a docs-only
+  worktree, as a PR; the printed `detail` says the badge is included and that removing it is
+  deleting the one line. If the user opts out before merge, remove the block from the PR and run `apply --consent decline`.
 
 Record consent or registration with:
 
 ```bash
 rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" apply \
-  --repo-dir "<worktree>" --consent <decline|register|landed|approve> [--visible]
+  --repo-dir "<worktree>" --consent <decline|register|landed|approve> [--visible] [--visibility <public|private>]
 ```
 
 - `decline` — remembers no and clears any pending consent (`badgeApproved`, `registerApproved`,
@@ -82,8 +87,18 @@ rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" apply \
   without re-asking.
 - `register` — writes consent, then registers the private project; a failed call records
   nothing and the next run retries without re-asking. `--visible` also asks for the `?p=` badge.
+  `--visibility public` is a NO_OP with no network and no write.
 - `landed` — writes `badge: true` (and clears `badgeApproved`/`showBadge`) only after the docs
-  PR has merged to the default branch.
+  PR has merged to the default branch. Run it after the docs PR merges on every path:
+  `default_on`, `prompt_public` yes, `resume`, and the private paths. (`decide` records
+  `badge: true` on its own when the badge is already on the default branch.)
+
+Act on the printed `apply` output:
+
+- `registered` **with** a `block` — place the block through the `skills/readme` showcase slot
+  with consent `granted`, on a docs-only worktree and PR, then `landed` after merge.
+- `registered` **without** a `block` — registration is finished; nothing else to place.
+- `registered_pending` — registration failed; placement stays pending for the next run.
 
 The badge is always one line to remove. Adding it does not by itself register the project or
 add it to any adoption count. For a private repo the repository name is sent once over HTTPS to

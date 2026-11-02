@@ -121,6 +121,11 @@ class DecideTableTests(unittest.TestCase):
         self.assertIn("svg.khaentertainment.com/badge.svg", decision["block"])
         self.assertIn("svg.khaentertainment.com/go", decision["block"])
 
+    def test_default_on_includes_removal_detail(self) -> None:
+        decision = _decide(visibility="public", greenfield=True, host_present=False)
+        self.assertEqual("default_on", decision["action"])
+        self.assertIn("deleting the one line", decision["detail"])
+
     def test_public_brownfield_prompts_and_includes_unplaced_block(self) -> None:
         decision = _decide(visibility="public", greenfield=False)
         self.assertEqual("prompt_public", decision["action"])
@@ -160,6 +165,14 @@ class DecideTableTests(unittest.TestCase):
         self.assertIn("?p=abcdef1234567890", decision["block"])
         self.assertNotIn("prompt", decision)
         self.assertTrue(decision["unplaced"])
+
+    def test_registered_not_displayed_without_token_is_noop(self) -> None:
+        decision = _decide(
+            visibility="private", token_present=False,
+            showcase={"registered": True, "privateId": "abcdef1234567890", "showBadge": True},
+        )
+        self.assertEqual("noop", decision["action"])
+        self.assertEqual("token_missing", decision["reason"])
 
     def test_pending_registration_retries_without_prompt(self) -> None:
         decision = _decide(
@@ -307,6 +320,18 @@ class RegisterTests(unittest.TestCase):
             MODULE.register(TOKEN, SLUG, opener=opener)
         self.assertNotIn(TOKEN, str(caught.exception))
         self.assertEqual("registration failed (network error)", str(caught.exception))
+
+    def test_sanitized_error_suppresses_cause_from_traceback(self) -> None:
+        import traceback
+
+        opener = _TokenLeakingError(TOKEN)
+        tb_text = ""
+        try:
+            MODULE.register(TOKEN, SLUG, opener=opener)
+        except MODULE.RegistrationError:
+            tb_text = traceback.format_exc()
+        self.assertIn("RegistrationError", tb_text)
+        self.assertNotIn(TOKEN, tb_text)
 
     def test_incomplete_read_is_a_fixed_failure(self) -> None:
         opener = _IncompleteReadError()
@@ -475,6 +500,34 @@ class GitHelperTests(unittest.TestCase):
         _git("add", "-A", cwd=root)
         _git("commit", "-q", "-m", "no supported readme", cwd=root)
         head = _git("rev-parse", "HEAD", cwd=root).stdout.strip()
+        self.assertFalse(MODULE.readme_present_at_commit(root, head))
+
+    def test_readme_present_at_commit_matches_case_insensitively(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        _git("init", "-q", cwd=root)
+        _git("config", "user.email", "test@example.com", cwd=root)
+        _git("config", "user.name", "Test", cwd=root)
+        (root / "readme.md").write_text("lowercase\n", encoding="utf-8")
+        _git("add", "readme.md", cwd=root)
+        _git("commit", "-q", "-m", "lowercase readme", cwd=root)
+        base = _git("rev-parse", "HEAD", cwd=root).stdout.strip()
+        self.assertTrue(MODULE.readme_present_at_commit(root, base))
+        _git("mv", "readme.md", "README.md", cwd=root)
+        _git("commit", "-q", "-m", "rename to canonical", cwd=root)
+        self.assertEqual("README.md", MODULE.readme_path_at_ref(root, "HEAD"))
+        self.assertTrue(MODULE.readme_present_at_commit(root, base))
+
+    def test_readme_selection_requires_blob_not_symlink(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        _git("init", "-q", cwd=root)
+        _git("config", "user.email", "test@example.com", cwd=root)
+        _git("config", "user.name", "Test", cwd=root)
+        (root / "target.txt").write_text("target\n", encoding="utf-8")
+        os.symlink("target.txt", root / "README.md")
+        _git("add", "target.txt", "README.md", cwd=root)
+        _git("commit", "-q", "-m", "symlink readme", cwd=root)
+        head = _git("rev-parse", "HEAD", cwd=root).stdout.strip()
+        self.assertIsNone(MODULE.readme_path_at_ref(root, "HEAD"))
         self.assertFalse(MODULE.readme_present_at_commit(root, head))
 
 
@@ -744,6 +797,82 @@ class ApplyIntegrationTests(unittest.TestCase):
         self.assertEqual("noop", out["action"])
         self.assertEqual("fail_closed", out["reason"])
 
+    def test_existing_unignored_primary_config_is_excluded_and_accepted(self) -> None:
+        root, lane = self._setup()
+        (root / ".dev.json").write_text(json.dumps(VALID_DOC), encoding="utf-8")
+        code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "decline"])
+        self.assertEqual(0, code)
+        cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertFalse(cfg["showcase"]["badge"])
+        self.assertTrue(dev_config.is_ignored(root, ".dev.json"))
+
+    def test_ensure_excluded_failure_blocks_register(self) -> None:
+        root, lane = self._setup()
+        old_env = os.environ.get(MODULE.TOKEN_ENV)
+        os.environ[MODULE.TOKEN_ENV] = TOKEN
+        try:
+            with mock.patch.object(dev_config, "ensure_excluded", return_value=False):
+                with mock.patch.object(MODULE, "register") as fake_register:
+                    code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "register"])
+                    fake_register.assert_not_called()
+        finally:
+            if old_env is None:
+                os.environ.pop(MODULE.TOKEN_ENV, None)
+            else:
+                os.environ[MODULE.TOKEN_ENV] = old_env
+        self.assertEqual(2, code)
+        self.assertFalse((root / ".dev.json").exists())
+
+    def test_apply_register_public_visibility_is_noop(self) -> None:
+        root, lane = self._setup()
+        old_env = os.environ.get(MODULE.TOKEN_ENV)
+        os.environ[MODULE.TOKEN_ENV] = TOKEN
+        try:
+            with mock.patch.object(MODULE, "register") as fake_register:
+                buf = io.StringIO()
+                with mock.patch("sys.stdout", buf):
+                    code = MODULE.main(
+                        ["apply", "--repo-dir", str(lane), "--consent", "register", "--visibility", "public"]
+                    )
+                fake_register.assert_not_called()
+        finally:
+            if old_env is None:
+                os.environ.pop(MODULE.TOKEN_ENV, None)
+            else:
+                os.environ[MODULE.TOKEN_ENV] = old_env
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("noop", out["status"])
+        self.assertEqual("unsupported_visibility", out["reason"])
+        self.assertFalse((root / ".dev.json").exists())
+
+    def test_landed_detection_records_badge_true_then_hand_removal(self) -> None:
+        root, lane = self._setup()
+        # First run: badge present on the default branch -> record badge: true.
+        with mock.patch.object(MODULE, "fetch_identity_matches", return_value=True), \
+             mock.patch.object(
+                 MODULE, "readme_now",
+                 return_value="built with https://svg.khaentertainment.com/badge.svg",
+             ):
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                code = MODULE.main(["decide", "--repo-dir", str(lane), "--visibility", "public"])
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("noop", out["action"])
+        self.assertEqual("landed", out["reason"])
+        cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertTrue(cfg["showcase"]["badge"])
+
+        # Second run: badge deleted (no marker) -> hand_removal.
+        with mock.patch.object(MODULE, "fetch_identity_matches", return_value=True), \
+             mock.patch.object(MODULE, "readme_now", return_value="no badge here"):
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                code = MODULE.main(["decide", "--repo-dir", str(lane), "--visibility", "public"])
+        out = json.loads(buf.getvalue())
+        self.assertEqual("hand_removal", out["action"])
+
 
 class AtomicCreateTests(unittest.TestCase):
     def test_failed_atomic_create_leaves_no_partial_file(self) -> None:
@@ -759,6 +888,15 @@ class AtomicCreateTests(unittest.TestCase):
 
         self.assertFalse(path.exists())
         self.assertEqual([], list(root.iterdir()))
+
+    def test_write_showcase_uses_create_config_atomic_not_create_config(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        with mock.patch.object(dev_config, "ensure_excluded", return_value=True), \
+             mock.patch.object(dev_config, "create_config_atomic") as atomic, \
+             mock.patch.object(dev_config, "create_config") as plain:
+            MODULE.write_showcase(root, VALID_DOC, {"badge": False, "decidedAt": "2026-11-01"})
+        atomic.assert_called_once()
+        plain.assert_not_called()
 
 
 class ShowcaseConfigSchemaTests(unittest.TestCase):

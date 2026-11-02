@@ -90,6 +90,9 @@ DETAILS = {
     "provenance_unavailable": "the primary .dev.json is tracked, invalid, or its provenance is unknown",
     "fetch_identity_mismatch": "the configured fetch remote does not resolve to pushRepository",
     "no_readme": "no README on the default branch (or the fetch failed)",
+    "landed": "the badge is present on the default branch; recorded badge: true",
+    "default_on": "the badge is included and removing it is deleting the one line",
+    "unsupported_visibility": "public repositories are not registered; nothing was written",
 }
 
 
@@ -230,8 +233,10 @@ def primary_checkout_root(start: Path) -> Path | None:
 def _readme_blob_name_from_ls_tree(output: str) -> str | None:
     """The supported README name from `ls-tree` output, in priority order, or None.
 
-    Only a blob at the tree root qualifies; a directory like `README-assets/` or
-    a non-supported name like `README.en.md` is skipped.
+    Matched case-insensitively against the canonical names, returning the actual
+    tracked path (e.g. `readme.md`). Only a blob at the tree root qualifies; a
+    directory like `README-assets/`, a symlink, or a non-supported name like
+    `README.en.md` is skipped.
     """
     by_name: dict[str, tuple[str, str]] = {}
     for line in output.splitlines():
@@ -239,10 +244,14 @@ def _readme_blob_name_from_ls_tree(output: str) -> str | None:
         parts = meta.split()
         if len(parts) >= 2 and name:
             by_name[name] = (parts[0], parts[1])
+    lowered = {name.lower(): name for name in by_name}
     for candidate in README_NAMES:
-        entry = by_name.get(candidate)
-        if entry is not None and entry[1] == "blob" and entry[0].startswith("100"):
-            return candidate
+        actual = lowered.get(candidate.lower())
+        if actual is None:
+            continue
+        mode, typ = by_name[actual]
+        if typ == "blob" and mode.startswith("100"):
+            return actual
     return None
 
 
@@ -386,6 +395,9 @@ def decide(
 
     if private_id is not None and badge is not True:
         if show_badge:
+            if not token_present:
+                result.update(action="noop", reason="token_missing", detail=DETAILS["token_missing"])
+                return result
             result.update(
                 action="registered_not_displayed",
                 block=build_block(slug, private_id),
@@ -417,6 +429,7 @@ def decide(
             action="default_on",
             consent="granted",
             block=build_block(slug),
+            detail=DETAILS["default_on"],
         )
         return result
 
@@ -448,7 +461,9 @@ def primary_showcase(primary_root: Path) -> tuple[bool, dict]:
 
     `ok` is False when the primary config is tracked, invalid, or its Git
     provenance is unknown -- the caller must then NO_OP with no write and no
-    network. `showcase` is the parsed `showcase` block (empty when missing).
+    network. A valid-but-not-yet-ignored config is accepted only after
+    `ensure_excluded` succeeds. `showcase` is the parsed `showcase` block (empty
+    when missing).
     """
     path = primary_root / dev_config.CONFIG_FILENAME
     try:
@@ -458,7 +473,12 @@ def primary_showcase(primary_root: Path) -> tuple[bool, dict]:
     st = status["status"]
     if st == "missing":
         return True, {}
-    if st in ("valid", "not_ignored"):
+    if st == "not_ignored":
+        if not dev_config.ensure_excluded(primary_root):
+            return False, {}
+        status = dev_config.resolve_status(path)
+        st = status["status"]
+    if st == "valid":
         config = status.get("config") or {}
         return True, config.get("showcase") or {}
     return False, {}
@@ -505,10 +525,14 @@ def write_showcase(primary_root: Path, lane_config: dict, showcase_block: dict) 
     config_path = primary_root / dev_config.CONFIG_FILENAME
     existing = _read_config(config_path)
     if existing is None:
+        if not dev_config.ensure_excluded(primary_root):
+            raise dev_config.ConfigError(
+                "git_provenance_unavailable",
+                "could not exclude .dev.json before creating it",
+            )
         merged = dict(lane_config)
         merged["showcase"] = showcase_block
         validated = dev_config.parse_config(json.dumps(merged))
-        dev_config.ensure_excluded(primary_root)
         try:
             dev_config.create_config_atomic(config_path, validated)
             return
@@ -568,6 +592,18 @@ def decide_cmd(args: argparse.Namespace) -> int:
     present_at_base = readme_present_at_commit(primary, args.base) if args.base else None
     greenfield = present_at_base is False
 
+    if host_present and showcase.get("badge") is not True:
+        landed_block = {
+            **showcase,
+            "badge": True,
+            "badgeApproved": False,
+            "showBadge": False,
+            "decidedAt": _today(),
+        }
+        write_showcase(primary, lane, landed_block)
+        _print({"action": "noop", "reason": "landed", "detail": DETAILS["landed"]})
+        return 0
+
     decision = decide(
         readme_skill_present=skill_present,
         showcase=showcase,
@@ -590,6 +626,10 @@ def apply_cmd(args: argparse.Namespace) -> int:
 
     if _fork_shape(lane):
         _print({"status": "noop", "reason": "fork_shape", "detail": "fork-shaped repositories are not supported in v2.1.4"})
+        return 0
+
+    if args.consent == "register" and normalize_visibility(args.visibility) == "public":
+        _print({"status": "noop", "reason": "unsupported_visibility", "detail": DETAILS["unsupported_visibility"]})
         return 0
 
     primary = primary_checkout_root(repo_dir)
@@ -697,6 +737,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     apply_p.add_argument("--repo-dir", required=True, type=Path)
     apply_p.add_argument("--consent", choices=["decline", "register", "landed", "approve"], required=True)
     apply_p.add_argument("--visible", action="store_true", help="also show the badge in a private repo")
+    apply_p.add_argument("--visibility", default=None, help="public or private; public blocks registration")
 
     return parser.parse_args(argv)
 
