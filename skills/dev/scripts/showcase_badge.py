@@ -8,8 +8,14 @@ a *no* (or a registration outcome) so the user is asked at most once.
 
 Decision logic is a pure function (`decide`) so it is unit-testable without any
 network or `gh`. Registration uses `urllib` in-process against the fixed host
-`svg.khaentertainment.com` over HTTPS, never follows a redirect, and never lets
-the token reach stdout, stderr, an exception, the ledger, or `.dev.json`.
+`svg.khaentertainment.com` over HTTPS, sends the token as an `Authorization:
+Bearer` header (never in the URL), never follows a redirect, and never lets the
+token reach stdout, stderr, an exception, the ledger, or `.dev.json`.
+
+For a private repo, the repository name is sent once over HTTPS to the badge
+host, which stores only a keyed hash of it (never the name itself) and returns
+an id; the name is never written into the README (`?project=` is never emitted
+for a private or undetermined repo).
 
 The token is read only from the `SHOWRUNNER_REGISTER_TOKEN` environment
 variable. If it is absent, the private path stays off.
@@ -19,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import http.client
 import json
 import os
 import re
@@ -42,6 +49,8 @@ BADGE_QUERY = "theme=midnight&anim=orbit"
 HOST_MARKER = "svg.khaentertainment.com"
 TOKEN_ENV = "SHOWRUNNER_REGISTER_TOKEN"
 GIT_TIMEOUT = 15
+GIT_FETCH_TIMEOUT = 60
+READ_LIMIT = 4096
 PRIVATE_ID_PATTERN = re.compile(r"[0-9a-f]{8,128}\Z")
 
 PROMPT_PUBLIC = (
@@ -53,10 +62,21 @@ PROMPT_PUBLIC = (
 
 PROMPT_PRIVATE = (
     "This repository is private. Showrunner can register the project in its adoption "
-    "count without sending the repo name anywhere, and the name never leaves this "
-    "machine. Register it? (If you also want the badge shown in the README, a "
-    '`?p=` badge keeps the name hidden there too.) Answer: register / register+show / no.'
+    "count. The repository name is sent once over HTTPS to the badge host, which "
+    "stores only a keyed hash of it, does not store or log the name, and returns an "
+    "id; nothing else sends it, and `?project=` is never written into the README. "
+    "Register it? (If you also want the badge shown in the README, a `?p=` badge "
+    "keeps the name hidden there too.) Answer: register / register+show / no."
 )
+
+DETAILS = {
+    "readme_skill_missing": "the Showrunner README skill is not installed, so there is no badge slot",
+    "declined": "the badge was declined or removed; it will not be offered again",
+    "idempotent": "the README already contains a Showrunner badge",
+    "token_missing": "SHOWRUNNER_REGISTER_TOKEN is not set, so private registration is off",
+    "already_registered": "this private project is already registered",
+    "fail_closed": "the repository state is uncertain, so no badge, prompt, or network call",
+}
 
 
 class RegistrationError(RuntimeError):
@@ -83,7 +103,7 @@ def build_block(slug: str, private_id: str | None = None) -> str:
         image = f"https://{HOST}{BADGE_IMAGE_PATH}?{BADGE_QUERY}&p={private_id}"
         link = f"https://{HOST}{GO_PATH}?p={private_id}"
     else:
-        encoded = urllib.parse.quote(slug, safe="")
+        encoded = urllib.parse.quote(slug, safe="/")
         image = f"https://{HOST}{BADGE_IMAGE_PATH}?{BADGE_QUERY}&project={encoded}"
         link = f"https://{HOST}{GO_PATH}"
     return f"[![Built with Showrunner]({image})]({link})"
@@ -101,33 +121,44 @@ def _build_opener() -> urllib.request.OpenerDirector:
 def register(token: str, slug: str, *, opener=None, timeout: float = 10.0) -> str:
     """Register a private project and return the validated id, or raise.
 
-    Never returns or raises anything carrying the token or the full request URL:
-    `HTTPError`/`URLError` text both embed the URL (and therefore the token), so
-    they are discarded in favour of a fixed message.
+    The token travels only as an `Authorization: Bearer` header; it never appears
+    in the request URL. Any transport failure raises `RegistrationError` with a
+    fixed message that carries neither the token nor the URL (`HTTPError` and
+    `URLError` text both embed the URL, so they are discarded).
     """
     if opener is None:
         opener = _build_opener()
-    encoded_slug = urllib.parse.quote(slug, safe="")
-    url = (
-        f"https://{HOST}{REGISTER_PATH}"
-        f"?private=1&token={urllib.parse.quote(token, safe='')}&project={encoded_slug}"
+    encoded_slug = urllib.parse.quote(slug, safe="/")
+    url = f"https://{HOST}{REGISTER_PATH}?private=1&project={encoded_slug}"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "showrunner-dev-skill",
+            "Authorization": f"Bearer {token}",
+        },
     )
-    request = urllib.request.Request(url, headers={"User-Agent": "showrunner-dev-skill"})
+
+    response = None
     try:
         response = opener.open(request, timeout=timeout)
+        body = response.read(READ_LIMIT)
     except RegistrationError:
         raise
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+    except (
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+        ValueError,
+    ):
         raise RegistrationError("registration failed (network error)") from None
-    try:
-        body = response.read()
-    except OSError:
-        raise RegistrationError("registration failed (read error)") from None
     finally:
-        try:
-            response.close()
-        except OSError:
-            pass
+        if response is not None:
+            try:
+                response.close()
+            except OSError:
+                pass
 
     text = body.decode("utf-8", "replace").strip()
     candidate: object = None
@@ -136,7 +167,7 @@ def register(token: str, slug: str, *, opener=None, timeout: float = 10.0) -> st
         if isinstance(payload, dict):
             candidate = payload.get("id")
     except ValueError:
-        pass
+        candidate = None
     if candidate is None:
         candidate = text if validate_id(text) else None
     if not isinstance(candidate, str) or not validate_id(candidate):
@@ -144,14 +175,16 @@ def register(token: str, slug: str, *, opener=None, timeout: float = 10.0) -> st
     return candidate
 
 
-def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str] | None:
+def _git(
+    args: list[str], cwd: Path, timeout: int = GIT_TIMEOUT
+) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(
             ["git", "-C", str(cwd), *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=GIT_TIMEOUT,
+            timeout=timeout,
             env={**os.environ, "LC_ALL": "C"},
         )
     except (OSError, subprocess.SubprocessError):
@@ -224,6 +257,21 @@ def readme_content_at_ref(root: Path, ref: str) -> str | None:
     return shown.stdout
 
 
+def readme_now(root: Path, remote: str) -> str | None:
+    """The README on the fetched default branch, or None on any failure.
+
+    A failed fetch (nonzero exit) returns None, never a stale ref: the caller
+    then reports NO_OP with no write.
+    """
+    fetched = _git(["fetch", remote], root, timeout=GIT_FETCH_TIMEOUT)
+    if fetched is None or fetched.returncode != 0:
+        return None
+    ref = default_branch_ref(root, remote)
+    if ref is None:
+        return None
+    return readme_content_at_ref(root, ref)
+
+
 def normalize_visibility(value: str | None) -> str:
     if value in ("public", "private"):
         return value
@@ -260,7 +308,9 @@ def decide(
     }
 
     if not readme_skill_present:
-        result.update(action="noop", reason="readme_skill_missing")
+        result.update(
+            action="noop", reason="readme_skill_missing", detail=DETAILS["readme_skill_missing"]
+        )
         return result
 
     state = showcase or {}
@@ -270,7 +320,7 @@ def decide(
     private_id = state.get("privateId")
 
     if badge is False and not register_approved:
-        result.update(action="noop", reason="declined")
+        result.update(action="noop", reason="declined", detail=DETAILS["declined"])
         return result
 
     if badge is True and not host_present:
@@ -278,7 +328,7 @@ def decide(
         return result
 
     if host_present:
-        result.update(action="noop", reason="idempotent")
+        result.update(action="noop", reason="idempotent", detail=DETAILS["idempotent"])
         return result
 
     if register_approved and not registered and private_id is None:
@@ -286,18 +336,18 @@ def decide(
             result.update(action="retry_register")
             return result
         if not token_present:
-            result.update(action="noop", reason="token_missing")
+            result.update(action="noop", reason="token_missing", detail=DETAILS["token_missing"])
             return result
-        result.update(action="noop", reason="fail_closed")
+        result.update(action="noop", reason="fail_closed", detail=DETAILS["fail_closed"])
         return result
 
     if private_id is not None and badge is not True:
-        result.update(action="noop", reason="already_registered")
+        result.update(action="noop", reason="already_registered", detail=DETAILS["already_registered"])
         return result
 
     if visibility != "public":
         if not token_present:
-            result.update(action="noop", reason="token_missing")
+            result.update(action="noop", reason="token_missing", detail=DETAILS["token_missing"])
             return result
         result.update(action="prompt_private", prompt=PROMPT_PRIVATE)
         return result
@@ -310,7 +360,9 @@ def decide(
         )
         return result
 
-    result.update(action="prompt_public", prompt=PROMPT_PUBLIC)
+    result.update(
+        action="prompt_public", prompt=PROMPT_PUBLIC, block=build_block(slug), unplaced=True
+    )
     return result
 
 
@@ -364,11 +416,19 @@ def _print(payload: dict) -> None:
     print(json.dumps(payload, sort_keys=True))
 
 
+def _fork_shape(lane: dict) -> bool:
+    return lane["github"]["pushRepository"] != lane["github"]["pullRequestRepository"]
+
+
 def decide_cmd(args: argparse.Namespace) -> int:
     repo_dir = Path(args.repo_dir).resolve()
     lane = load_lane_config(repo_dir)
     if lane is None:
         _print({"action": "noop", "reason": "fail_closed", "detail": "no valid .dev.json"})
+        return 0
+
+    if _fork_shape(lane):
+        _print({"action": "noop", "reason": "fork_shape", "detail": "fork-shaped repositories are not supported in v2.1.4"})
         return 0
 
     slug = lane["github"]["pushRepository"]
@@ -385,17 +445,13 @@ def decide_cmd(args: argparse.Namespace) -> int:
     token_present = bool(os.environ.get(TOKEN_ENV))
 
     remote = lane["github"]["pushRemote"]
-    readme_now: str | None = None
-    if _git(["fetch", remote], primary) is not None:
-        ref = default_branch_ref(primary, remote)
-        if ref is not None:
-            readme_now = readme_content_at_ref(primary, ref)
+    readme_text = readme_now(primary, remote)
 
-    if readme_now is None:
-        _print({"action": "noop", "reason": "no_readme", "detail": "no README on the default branch (or fetch failed)"})
+    if readme_text is None:
+        _print({"action": "noop", "reason": "no_readme", "detail": "no README on the default branch (or the fetch failed)"})
         return 0
 
-    host_present = HOST_MARKER in readme_now
+    host_present = HOST_MARKER in readme_text
 
     present_at_base = readme_present_at_commit(primary, args.base) if args.base else None
     greenfield = present_at_base is False
@@ -420,6 +476,10 @@ def apply_cmd(args: argparse.Namespace) -> int:
         _print({"status": "noop", "reason": "fail_closed", "detail": "no valid .dev.json"})
         return 0
 
+    if _fork_shape(lane):
+        _print({"status": "noop", "reason": "fork_shape", "detail": "fork-shaped repositories are not supported in v2.1.4"})
+        return 0
+
     primary = primary_checkout_root(repo_dir)
     if primary is None:
         _print({"status": "noop", "reason": "fail_closed", "detail": "cannot resolve primary checkout"})
@@ -429,7 +489,13 @@ def apply_cmd(args: argparse.Namespace) -> int:
     existing_showcase = (primary_config or {}).get("showcase") or {}
 
     if args.consent == "decline":
-        block = {**existing_showcase, "badge": False, "decidedAt": _today()}
+        block = {
+            **existing_showcase,
+            "badge": False,
+            "registerApproved": False,
+            "showBadge": False,
+            "decidedAt": _today(),
+        }
         write_showcase(primary, lane, block)
         _print({"status": "declined"})
         return 0
@@ -443,7 +509,7 @@ def apply_cmd(args: argparse.Namespace) -> int:
     # register
     token = os.environ.get(TOKEN_ENV)
     if not token:
-        _print({"status": "noop", "reason": "token_missing"})
+        _print({"status": "noop", "reason": "token_missing", "detail": DETAILS["token_missing"]})
         return 0
 
     show_badge = bool(args.visible) or bool(existing_showcase.get("showBadge"))

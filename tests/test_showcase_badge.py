@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,6 +39,7 @@ VALID_DOC = {
 
 SLUG = "KHAEntertainment/claude-dev-skill"
 TOKEN = "supersecret-token-value-123"
+HEX_ID = "a" * 64
 
 
 def _git(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -64,6 +67,7 @@ class DecideTableTests(unittest.TestCase):
         decision = _decide(readme_skill_present=False)
         self.assertEqual("noop", decision["action"])
         self.assertEqual("readme_skill_missing", decision["reason"])
+        self.assertIn("README skill", decision["detail"])
 
     def test_recorded_decline_is_noop(self) -> None:
         decision = _decide(showcase={"badge": False})
@@ -86,8 +90,6 @@ class DecideTableTests(unittest.TestCase):
         self.assertEqual("idempotent", decision["reason"])
 
     def test_unlanded_badge_does_not_read_as_hand_removal(self) -> None:
-        # Docs PR merged (host present) but `landed` not recorded (badge absent):
-        # not a hand removal, and not re-prompted.
         decision = _decide(showcase={}, host_present=True)
         self.assertEqual("idempotent", decision["reason"])
 
@@ -99,15 +101,18 @@ class DecideTableTests(unittest.TestCase):
         self.assertIn("svg.khaentertainment.com/badge.svg", decision["block"])
         self.assertIn("svg.khaentertainment.com/go", decision["block"])
 
-    def test_public_brownfield_prompts(self) -> None:
+    def test_public_brownfield_prompts_and_includes_unplaced_block(self) -> None:
         decision = _decide(visibility="public", greenfield=False)
         self.assertEqual("prompt_public", decision["action"])
         self.assertIn("Built with Showrunner", decision["prompt"])
+        self.assertIn("&project=", decision["block"])
+        self.assertTrue(decision["unplaced"])
 
     def test_private_no_token_is_noop(self) -> None:
         decision = _decide(visibility="private", token_present=False)
         self.assertEqual("noop", decision["action"])
         self.assertEqual("token_missing", decision["reason"])
+        self.assertIn("SHOWRUNNER_REGISTER_TOKEN", decision["detail"])
 
     def test_undetermined_visibility_treated_as_private(self) -> None:
         decision = _decide(visibility="undetermined", token_present=False)
@@ -142,13 +147,11 @@ class DecideTableTests(unittest.TestCase):
         self.assertEqual("token_missing", decision["reason"])
 
     def test_private_visible_badge_with_private_id_no_collision_with_hand_removal(self) -> None:
-        # badge landed + host present -> idempotent, not hand removal / already_registered
         decision = _decide(
             visibility="private", token_present=True, host_present=True,
             showcase={"registered": True, "privateId": "abcdef1234567890", "badge": True},
         )
         self.assertEqual("idempotent", decision["reason"])
-        # badge landed + host removed -> hand removal wins over already_registered
         decision = _decide(
             visibility="private", token_present=True, host_present=False,
             showcase={"registered": True, "privateId": "abcdef1234567890", "badge": True},
@@ -156,10 +159,18 @@ class DecideTableTests(unittest.TestCase):
         self.assertEqual("hand_removal", decision["action"])
 
 
+class PromptWordingTests(unittest.TestCase):
+    def test_private_prompt_does_not_claim_name_never_sent(self) -> None:
+        self.assertNotIn("never sent", MODULE.PROMPT_PRIVATE)
+        self.assertNotIn("never leaves", MODULE.PROMPT_PRIVATE)
+        self.assertIn("sent once", MODULE.PROMPT_PRIVATE)
+        self.assertIn("?project=", MODULE.PROMPT_PRIVATE)
+
+
 class BuildBlockTests(unittest.TestCase):
     def test_public_block_uses_project_and_go_link(self) -> None:
         block = MODULE.build_block(SLUG)
-        self.assertIn(f"project={SLUG.replace('/', '%2F')}", block)
+        self.assertIn(f"project={SLUG}", block)
         self.assertNotIn("?p=", block)
         self.assertIn("](https://svg.khaentertainment.com/go)", block)
 
@@ -183,8 +194,10 @@ class ValidateIdTests(unittest.TestCase):
 class _FakeResponse:
     def __init__(self, body: str):
         self._body = body.encode("utf-8")
+        self.read_args = None
 
-    def read(self) -> bytes:
+    def read(self, *args) -> bytes:
+        self.read_args = args
         return self._body
 
     def close(self) -> None:
@@ -195,23 +208,43 @@ class _FakeOpener:
     def __init__(self, response):
         self._response = response
         self.opened_url = None
+        self.auth_header = None
 
     def open(self, request, timeout=None):
         self.opened_url = request.full_url if hasattr(request, "full_url") else request.get_full_url()
+        self.auth_header = request.get_header("Authorization")
         return self._response
 
 
+def _real_response_body(status: str = "counted") -> str:
+    return json.dumps(
+        {"private": True, "counted": True, "status": status, "id": HEX_ID, "count": 3}
+    )
+
+
 class RegisterTests(unittest.TestCase):
-    def test_success_returns_hex_id(self) -> None:
-        opener = _FakeOpener(_FakeResponse('{"id": "abcdef1234567890", "count": 7}'))
-        self.assertEqual("abcdef1234567890", MODULE.register(TOKEN, SLUG, opener=opener))
-        self.assertIn(TOKEN, opener.opened_url)
+    def test_success_returns_hex_id_from_real_shape(self) -> None:
+        opener = _FakeOpener(_FakeResponse(_real_response_body("counted")))
+        self.assertEqual(HEX_ID, MODULE.register(TOKEN, SLUG, opener=opener))
         self.assertIn("svg.khaentertainment.com/register", opener.opened_url)
         self.assertIn("private=1", opener.opened_url)
 
+    def test_token_is_sent_in_header_not_url(self) -> None:
+        opener = _FakeOpener(_FakeResponse(_real_response_body()))
+        MODULE.register(TOKEN, SLUG, opener=opener)
+        self.assertNotIn(TOKEN, opener.opened_url)
+        self.assertNotIn("token=", opener.opened_url)
+        self.assertEqual(f"Bearer {TOKEN}", opener.auth_header)
+
+    def test_read_is_bounded(self) -> None:
+        response = _FakeResponse(_real_response_body())
+        opener = _FakeOpener(response)
+        MODULE.register(TOKEN, SLUG, opener=opener)
+        self.assertEqual((4096,), response.read_args)
+
     def test_plain_hex_body_is_accepted(self) -> None:
-        opener = _FakeOpener(_FakeResponse("abcdef1234567890"))
-        self.assertEqual("abcdef1234567890", MODULE.register(TOKEN, SLUG, opener=opener))
+        opener = _FakeOpener(_FakeResponse(HEX_ID))
+        self.assertEqual(HEX_ID, MODULE.register(TOKEN, SLUG, opener=opener))
 
     def test_malformed_id_stores_nothing(self) -> None:
         opener = _FakeOpener(_FakeResponse('{"id": "not-hex!!!"}'))
@@ -230,6 +263,12 @@ class RegisterTests(unittest.TestCase):
         with self.assertRaises(MODULE.RegistrationError) as caught:
             MODULE.register(TOKEN, SLUG, opener=opener)
         self.assertNotIn(TOKEN, str(caught.exception))
+
+    def test_incomplete_read_is_a_fixed_failure(self) -> None:
+        opener = _IncompleteReadError()
+        with self.assertRaises(MODULE.RegistrationError) as caught:
+            MODULE.register(TOKEN, SLUG, opener=opener)
+        self.assertEqual("registration failed (network error)", str(caught.exception))
 
     def test_redirect_is_refused(self) -> None:
         opener = _Redirect()
@@ -250,6 +289,13 @@ class _UrlError:
         raise urllib.error.URLError(url)
 
 
+class _IncompleteReadError:
+    def open(self, request, timeout=None):
+        import http.client
+
+        raise http.client.IncompleteRead(partial=b"ok", expected=100)
+
+
 class _Redirect:
     def open(self, request, timeout=None):
         url = request.full_url if hasattr(request, "full_url") else request.get_full_url()
@@ -266,6 +312,17 @@ class GitHelperTests(unittest.TestCase):
         _git("add", "README.md", cwd=root)
         _git("commit", "-q", "-m", "initial", cwd=root)
         return root
+
+    def _remote_clone(self) -> tuple[Path, Path, str]:
+        origin = self._init_repo()
+        (origin / "README.md").write_text("remote readme\n", encoding="utf-8")
+        _git("add", "README.md", cwd=origin)
+        _git("commit", "-q", "-m", "readme", cwd=origin)
+        bare = Path(tempfile.mkdtemp())
+        _git("clone", "--bare", "-q", str(origin), str(bare), cwd=origin)
+        checkout = Path(tempfile.mkdtemp())
+        _git("clone", "-q", str(bare), str(checkout), cwd=origin)
+        return checkout, bare, "remote readme\n"
 
     def test_primary_checkout_root_from_linked_worktree(self) -> None:
         root = self._init_repo()
@@ -295,10 +352,43 @@ class GitHelperTests(unittest.TestCase):
         root = self._init_repo()
         bare = Path(tempfile.mkdtemp())
         _git("clone", "--bare", "-q", str(root), str(bare), cwd=root)
-        try:
-            self.assertIsNone(MODULE.primary_checkout_root(bare))
-        finally:
-            pass
+        self.assertIsNone(MODULE.primary_checkout_root(bare))
+
+    def test_readme_now_returns_fetched_readme(self) -> None:
+        checkout, _, expected = self._remote_clone()
+        self.assertEqual(expected, MODULE.readme_now(checkout, "origin"))
+
+    def test_readme_now_returns_none_when_fetch_fails(self) -> None:
+        checkout, bare, _ = self._remote_clone()
+        shutil.rmtree(bare)  # break the remote so the next fetch fails
+        self.assertIsNone(MODULE.readme_now(checkout, "origin"))
+
+
+class ForkShapeTests(unittest.TestCase):
+    def test_decide_fork_shape_is_noop(self) -> None:
+        lane = Path(tempfile.mkdtemp())
+        doc = json.loads(json.dumps(VALID_DOC))
+        doc["github"]["pullRequestRepository"] = "other/upstream"
+        (lane / ".dev.json").write_text(json.dumps(doc), encoding="utf-8")
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            code = MODULE.main(["decide", "--repo-dir", str(lane), "--visibility", "public"])
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("noop", out["action"])
+        self.assertEqual("fork_shape", out["reason"])
+
+    def test_apply_fork_shape_is_noop(self) -> None:
+        lane = Path(tempfile.mkdtemp())
+        doc = json.loads(json.dumps(VALID_DOC))
+        doc["github"]["pullRequestRepository"] = "other/upstream"
+        (lane / ".dev.json").write_text(json.dumps(doc), encoding="utf-8")
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "decline"])
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("fork_shape", out["reason"])
 
 
 class ApplyIntegrationTests(unittest.TestCase):
@@ -364,11 +454,23 @@ class ApplyIntegrationTests(unittest.TestCase):
         primary_cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
         self.assertFalse(primary_cfg["showcase"]["badge"])
 
+    def test_apply_decline_clears_register_approved(self) -> None:
+        root, lane = self._setup()
+        (root / ".dev.json").write_text(
+            json.dumps({**VALID_DOC, "showcase": {"registerApproved": True, "showBadge": True, "decidedAt": "2026-11-01"}}),
+            encoding="utf-8",
+        )
+        code = MODULE.main(["apply", "--repo-dir", str(lane), "--consent", "decline"])
+        self.assertEqual(0, code)
+        primary_cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertFalse(primary_cfg["showcase"]["badge"])
+        self.assertFalse(primary_cfg["showcase"]["registerApproved"])
+        self.assertFalse(primary_cfg["showcase"]["showBadge"])
+
     def test_apply_register_does_not_recall_when_private_id_present(self) -> None:
         root, lane = self._setup()
         old_env = os.environ.get(MODULE.TOKEN_ENV)
         os.environ[MODULE.TOKEN_ENV] = TOKEN
-        # Pre-seed the primary with an existing privateId.
         (root / ".dev.json").write_text(
             json.dumps({**VALID_DOC, "showcase": {"privateId": "abcdef1234567890", "registerApproved": True, "registered": True}}),
             encoding="utf-8",
