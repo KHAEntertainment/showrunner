@@ -117,7 +117,10 @@ Removing the badge is just deleting the line. Nothing else changes.
 | `gold` | `0` removes the gold rim | on |
 | `label`, `message` | any text | Built with / Showrunner |
 | `color`, `labelColor`, `textColor`, `labelTextColor`, `logoColor` | any CSS colour | from `theme` |
-| `project` | `owner/repo` | read from the click |
+| `project` | `owner/repo` | none |
+
+`project` attributes a click to your project and keeps a registered project
+fresh. It cannot create one.
 
 ## Notes
 
