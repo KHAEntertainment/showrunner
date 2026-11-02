@@ -54,6 +54,10 @@ record upstream SHAs as plain text in their `### Upstream` blocks.
 ### Fixed
 
 - README: the v2.1.2 changelog link now uses the correct anchor (PR #170).
+- The public badge now names the project on its link as well as its image
+  ([#178](https://github.com/KHAEntertainment/showrunner/issues/178), PR #179).
+  A bare `/go` cannot say which repository a click came from. The
+  `docs/badges.md` snippets use `OWNER/REPO` to match.
 
 ### Upstream
 
