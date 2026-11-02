@@ -649,5 +649,120 @@ class SuppliedIdentityPinTests(unittest.TestCase):
         self.assertIn(route, completed.stderr)
 
 
+class ListedSkillsTests(unittest.TestCase):
+    """Issue #163: sibling skills are validated from plugin.json `skills`.
+
+    Unlike the dev skill (validated via `--skill-dir`), the README skill is
+    discovered through the manifest, so deleting it while it is still listed
+    fails, and a stray `skills/*` directory that is not listed is an error.
+    The check is skipped for an external `--skill-dir`, where the sibling dirs
+    under `repo_root/skills/` are the source checkout's, not the payload's.
+    """
+
+    PLUGIN_JSON = (
+        '{"name": "dev-skill", "version": "0.0.0", '
+        '"skills": ["./skills/dev", "./skills/readme"]}'
+    )
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+
+        shutil.copytree(SKILL, self.root / "skills" / "dev")
+        shutil.copytree(ROOT / "skills" / "readme", self.root / "skills" / "readme")
+        (self.root / "scripts").mkdir(parents=True)
+        shutil.copy(VALIDATOR, self.root / "scripts" / "validate_skill.py")
+        shutil.copy(PROJECT_CONTEXT, self.root / "PROJECT_CONTEXT.md")
+        (self.root / ".claude-plugin").mkdir(parents=True)
+        (self.root / ".claude-plugin" / "plugin.json").write_text(
+            self.PLUGIN_JSON, encoding="utf-8"
+        )
+
+        self.skill_dir = self.root / "skills" / "dev"
+        self.readme_dir = self.root / "skills" / "readme"
+
+    def run_validator(self, skill_dir: Path | None = None) -> subprocess.CompletedProcess[str]:
+        target = skill_dir if skill_dir is not None else self.skill_dir
+        return subprocess.run(
+            [
+                sys.executable,
+                str(self.root / "scripts" / "validate_skill.py"),
+                "--skill-dir",
+                str(target),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_clean_fixture_passes(self) -> None:
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_listed_skill_missing_fails(self) -> None:
+        shutil.rmtree(self.readme_dir)
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("listed skill is missing: ./skills/readme", completed.stderr)
+
+    def test_listed_skill_missing_frontmatter_field_fails(self) -> None:
+        entry = self.readme_dir / "SKILL.md"
+        text = entry.read_text(encoding="utf-8")
+        entry.write_text(
+            "\n".join(line for line in text.splitlines() if not line.startswith("name:")),
+            encoding="utf-8",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("frontmatter missing or empty: name", completed.stderr)
+
+    def test_listed_skill_required_file_missing_fails(self) -> None:
+        (self.readme_dir / "assets" / "README-template.md").unlink()
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn(
+            "skills/readme missing required file: assets/README-template.md",
+            completed.stderr,
+        )
+
+    def test_stray_unlisted_skill_directory_fails(self) -> None:
+        extra = self.root / "skills" / "extra"
+        extra.mkdir()
+        (extra / "SKILL.md").write_text(
+            "---\nname: extra\ndescription: x\n---\n", encoding="utf-8"
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("skills/extra/ exists but is not listed", completed.stderr)
+
+    def test_skills_not_a_list_fails(self) -> None:
+        (self.root / ".claude-plugin" / "plugin.json").write_text(
+            '{"name": "dev-skill", "version": "0.0.0", "skills": "not-a-list"}',
+            encoding="utf-8",
+        )
+        completed = self.run_validator()
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("`skills` is not a list", completed.stderr)
+
+    def test_external_skill_dir_skips_source_sibling_check(self) -> None:
+        """An install stages the dev payload elsewhere; a broken source sibling
+        (listed readme skill deleted) must not block validating that payload."""
+        shutil.rmtree(self.readme_dir)
+
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        staged = Path(outside.name) / "skills" / "dev"
+        shutil.copytree(SKILL, staged)
+        self.assertNotIn(
+            self.root,
+            staged.parents,
+            "fixture bug: staged copy must be outside repo_root",
+        )
+
+        completed = self.run_validator(skill_dir=staged)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

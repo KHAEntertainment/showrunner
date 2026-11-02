@@ -10,6 +10,15 @@ screen and leave. The job is to make that screen answer three questions in
 order: is this my problem, does this fix it, how do I try it right now.
 Everything else lives in secondary docs that the README links to.
 
+## Where the work goes
+
+This skill can run on its own, outside a larger workflow. It edits files only
+when the user asks it to write or rewrite; otherwise it returns a draft for the
+user to review. When it edits a tracked README or docs file, put those edits on
+a dedicated docs-only branch and open them as a pull request, never a direct
+push to the default branch. Follow the host repository's own contribution rules
+where it has them. Review-only mode writes nothing.
+
 ## Before writing
 
 Gather the material first. A polished README with thin content is worse than a
@@ -38,7 +47,8 @@ generic ones ("The problem" or "Why this exists" are fine, "Overview" is not).
    at most) a non-expert gets on first read. It says what happens for the user,
    not how it's built, and it matches the About line.
 2. **User story.** Two to four sentences of a concrete moment, in second
-   person. Specific beats general.
+   person (the neutral default; a found register wins, see Voice). Specific
+   beats general.
 3. **The problem.** What breaks today and why existing tools or habits don't
    cover it. Name the tools. Keep it to a short paragraph or a short list.
 4. **The solution.** What this does about it, stated as a mechanism in a few
@@ -49,15 +59,19 @@ generic ones ("The problem" or "Why this exists" are fine, "Overview" is not).
    steps or fewer and say how long it takes only if you know.
 6. **Next steps and links.** One short section pointing to secondary docs by
    name: reference guide, configuration, architecture, other install paths.
-   Link specific files.
+   Link specific files. If the repo has no secondary docs, omit this section
+   rather than inventing links.
 7. **Credits and license.** Name upstream projects and forks this builds on,
-   and the tools it depends on. One line for license.
+   and the tools it depends on. One line for license. If there is no upstream
+   project or third-party tool to credit, omit this section; if there is no
+   LICENSE file, do not invent a license.
 
 Optional sections, only when they earn their place: a short "Works with" list
 of integrations, "Coming next" blockquotes tied to real issues, a short FAQ for
 questions users actually ask.
 
-Read `assets/README-template.md` for a skeleton with placeholders.
+Read `${CLAUDE_SKILL_DIR}/assets/README-template.md` for a skeleton with
+placeholders.
 
 ## What moves out of the README
 
@@ -78,7 +92,8 @@ to read, keep cutting. When moving content, move it intact into a named file
 ## Voice
 
 Voice is derived, not fixed. Instead of encoding one register, match what the
-project already sounds like.
+project already sounds like. The found register wins; the neutral default below
+is only the fallback when there is nothing to match.
 
 1. Read the existing README, the `docs/`, and the last several commit messages.
 2. Note sentence length, person (first, second, or third), formality, and
@@ -91,31 +106,38 @@ person, plain words, short paragraphs, concrete over abstract.
 
 ## The showcase extension point
 
-This skill exposes one optional insertion slot a host workflow can fill with a
-badge block plus the consent state it already obtained. The skill only places
-and arranges; it never decides.
+This skill exposes one optional insertion slot a host workflow can fill. The
+skill only places and arranges; it never decides.
 
-- The slot sits directly after the hook. When a README already has badge rows,
-  the skill joins them into the block at that slot, grouped and ordered by the
-  arrangement guidance below.
-- A host workflow supplies two things: the block itself, and a consent state.
-  The block is placed only when both are supplied and consent is granted.
-- In every other case, place nothing and say nothing. The skill never decides
-  whether a badge should be there, never names a specific product, and never
-  asks for consent itself.
+A host workflow supplies two inputs:
+
+- **The block.** Literal Markdown or HTML for the badge rows, exactly as it
+  should appear.
+- **A consent state.** Its only placing value is `granted`.
+
+Place the block only when both inputs are present and the consent state is
+`granted`. Any other consent value, or a missing input, means the block is not
+placed. The slot sits directly after the hook. When a README already has badge
+rows, join them into the block at that slot, grouped and ordered by the
+arrangement guidance below. In every other case, place nothing and say nothing
+about the slot. The skill never decides whether a badge should be there, never
+names a specific product, and never asks for consent itself.
 
 ## Badges
 
-Badges are the author's call. There is no count limit. State the tradeoff once:
-badges compete with the hook for the first screen. Fix the arrangement, not the
-number. Group by category (build/quality, distribution, legal, community), keep
-a stable order, and keep the hook adjacent. Eight badges grouped on two
-centered lines read as a status board; eight in one ragged wrapped line read as
-clutter.
+Badges are the author's call. There is no count limit. This guidance applies
+when the user's README already has badges or the user asks about them; it never
+adds a badge on its own. State the tradeoff once: badges compete with the hook
+for the first screen. Fix the arrangement, not the number. Group by category
+(build/quality, distribution, legal, community), keep a stable order, and keep
+the hook adjacent. Eight badges grouped on two centered lines read as a status
+board; eight in one ragged wrapped line read as clutter. A README with no
+badges, and no showcase block supplied, gets no badge mention at all.
 
 ## Anti-AI writing rules
 
-Read `references/anti-slop.md` before the final pass. The highest-signal ones:
+Read `${CLAUDE_SKILL_DIR}/references/anti-slop.md` before the final pass. The
+highest-signal ones:
 
 - Em dashes are rare: one or two in a whole README at most, never two in a
   paragraph. Prefer a comma, period, colon, or parentheses.
@@ -147,11 +169,13 @@ inventing proof.
 
 ## Checks before handing it over
 
-1. Run `python3 scripts/readme_check.py README.md` from this skill's directory
-   (pass the target path). It flags em dashes, banned phrases, missing
-   code-fence languages, multiple H1s, the badge count, broken anchor links,
-   and how far down the first runnable command sits. Fix hard findings; judge
-   soft ones.
+1. Run the checker against the target README, naming its path explicitly — the
+   script lives in this skill's `scripts/` directory, so run
+   `python3 ${CLAUDE_SKILL_DIR}/scripts/readme_check.py README.md` from the
+   repo root, substituting `README.md` with the target's real path. It flags
+   em dashes, banned phrases, missing code-fence languages, multiple H1s, the
+   badge count, broken anchor links, and how far down the first runnable
+   command sits. Fix hard findings; judge soft ones.
 2. Read only the title-and-hook block and the first numbered step. Could a
    stranger say what the tool does and type the first command? If not, fix the
    top. Then read the whole thing as if aloud: anything that sounds written

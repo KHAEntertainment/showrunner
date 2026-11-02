@@ -162,5 +162,63 @@ class BadgeCountingTests(unittest.TestCase):
         self.assertEqual(0, CHECK.count_badges('<img src="docs/screenshot.png" />'))
 
 
+class StructureRegressionTests(unittest.TestCase):
+    def test_inline_code_heading_anchor_is_not_broken(self) -> None:
+        content = (
+            "# p\n\n"
+            "[Install](#install)\n\n"
+            "## `install`\n\n"
+            "```bash\npip install p\n```\n"
+        )
+        code, findings, _ = run_check(content)
+        self.assertEqual(0, code)
+        self.assertFalse(any(f.rule == "broken_anchor" for f in findings))
+
+    def test_nested_shorter_fence_does_not_close_early(self) -> None:
+        content = (
+            "# p\n\n"
+            "````bash\n"
+            "echo hi\n"
+            "```\n"
+            "inner example\n"
+            "```\n"
+            "````\n"
+        )
+        code, findings, _ = run_check(content)
+        self.assertEqual(0, code)
+        self.assertFalse(any(f.rule == "code_fence_no_language" for f in findings))
+
+    def test_two_setext_h1s_are_hard(self) -> None:
+        content = (
+            "Title One\n"
+            "=========\n\n"
+            "Body.\n\n"
+            "Title Two\n"
+            "=========\n\n"
+            "```bash\npip install p\n```\n"
+        )
+        code, findings, stats = run_check(content)
+        self.assertEqual(1, code)
+        self.assertEqual(2, stats["h1_count"])
+        self.assertTrue(
+            any(f.rule == "multiple_h1" and f.severity == "hard" for f in findings)
+        )
+
+    def test_front_matter_and_table_separator_are_not_h1(self) -> None:
+        content = (
+            "---\n"
+            "title: x\n"
+            "---\n\n"
+            "# real\n\n"
+            "| a | b |\n"
+            "| --- | --- |\n\n"
+            "```bash\npip install p\n```\n"
+        )
+        code, findings, stats = run_check(content)
+        self.assertEqual(0, code)
+        self.assertEqual(1, stats["h1_count"])
+        self.assertFalse(any(f.rule == "multiple_h1" for f in findings))
+
+
 if __name__ == "__main__":
     unittest.main()

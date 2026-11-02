@@ -1996,7 +1996,13 @@ def main() -> int:
         if not state_text.startswith("---\n") or "\n---\n" not in state_text[4:]:
             fail(errors, "DEV_STATE_TEMPLATE.md must contain YAML frontmatter")
 
-    check_listed_skills(repo_root, errors)
+    # Only when validating the source or archive root's own skill tree: an
+    # install stages the dev payload elsewhere and passes `--skill-dir` at
+    # that staged copy, so the sibling skills under `repo_root/skills/` are the
+    # SOURCE checkout's, not the payload's, and an uncommitted deletion there
+    # must not block installing a valid staged payload.
+    if validating_source_tree:
+        check_listed_skills(repo_root, errors)
 
     if errors:
         for error in errors:

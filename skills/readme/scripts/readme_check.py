@@ -85,17 +85,26 @@ def split_lines(text: str):
     """Yield (lineno, line, in_code, fence_info) with HTML comments removed."""
     text = re.sub(r"<!--.*?-->", lambda m: "\n" * m.group(0).count("\n"), text, flags=re.S)
     in_code = False
-    fence = ""
+    fence_char = ""
+    fence_len = 0
     for i, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
         m = re.match(r"^(```+|~~~+)(.*)$", stripped)
         if m:
+            run = m.group(1)
+            char = run[0]
+            length = len(run)
+            rest = m.group(2).strip()
             if not in_code:
                 in_code = True
-                fence = m.group(1)[:3]
-                yield i, line, False, ("open", m.group(2).strip())
+                fence_char = char
+                fence_len = length
+                yield i, line, False, ("open", rest)
                 continue
-            if stripped.startswith(fence):
+            # Close only on a run of the same character at least as long, with
+            # nothing after it, so a shorter backtick example inside a longer
+            # block does not close it early.
+            if char == fence_char and length >= fence_len and rest == "":
                 in_code = False
                 yield i, line, False, ("close", "")
                 continue
@@ -120,6 +129,20 @@ def is_title_case(heading: str) -> bool:
         return False
     capped = [w for w in content if w[0].isupper() and not w.isupper()]
     return len(capped) == len(content)
+
+
+def _is_setext_candidate(text: str) -> bool:
+    """True when a line of text can be the heading above a `===` underline."""
+    t = text.strip()
+    if not t:
+        return False
+    if re.match(r"^(#{1,6})\s", t):        # already an ATX heading
+        return False
+    if re.fullmatch(r"[-=*_]{3,}", t):     # horizontal rule or another underline
+        return False
+    if re.match(r"^<h[1-6][\s>]", t, re.I):  # HTML heading
+        return False
+    return True
 
 
 def _url_is_badge(url: str) -> bool:
@@ -177,6 +200,8 @@ def check(text: str) -> tuple[list[Finding], dict]:
     em_dash_lines: list[tuple[int, int]] = []
     anchors: list[tuple[int, str]] = []
     slugs: dict[str, int] = {}
+    prev_text = ""
+    prev_lineno = 0
 
     for lineno, line, in_code, fence in split_lines(text):
         if fence:
@@ -197,8 +222,19 @@ def check(text: str) -> tuple[list[Finding], dict]:
                     words_before_command = words_total
             continue
 
+        raw_line = line.strip()
         prose = strip_inline_code(line)
         stripped = prose.strip()
+
+        # Setext H1: an `===` underline beneath a non-blank text line.
+        if re.fullmatch(r"=+", raw_line) and _is_setext_candidate(prev_text):
+            base = github_slug(prev_text)
+            if base in slugs:
+                slugs[base] += 1
+                slugs[f"{base}-{slugs[base]}"] = 0
+            else:
+                slugs[base] = 0
+            h1_lines.append(prev_lineno)
 
         # Word count for prose only (skip image/badge-only lines).
         line_words = len(re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*",
@@ -215,11 +251,13 @@ def check(text: str) -> tuple[list[Finding], dict]:
             slugs.setdefault(explicit.lower(), 0)
 
         # HTML <h1> titles.
-        if re.match(r"^<h1[\s>]", stripped, re.I):
+        if re.match(r"^<h1[\s>]", raw_line, re.I):
             h1_lines.append(lineno)
 
-        # Headings.
-        hm = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        # Headings. Structure and slugs use the original heading text (inline
+        # code still contributes its characters to the anchor); prose checks
+        # below use the inline-code-stripped text.
+        hm = re.match(r"^(#{1,6})\s+(.*)$", raw_line)
         if hm:
             level, heading = len(hm.group(1)), hm.group(2).strip()
             base = github_slug(heading)
@@ -276,6 +314,9 @@ def check(text: str) -> tuple[list[Finding], dict]:
                 findings.append(Finding("soft", "scaffold_opener", lineno,
                                         f"Paragraph opens with a connective: {stripped.split()[0]!r}."))
         prev_blank = not stripped
+        if raw_line:
+            prev_text = raw_line
+            prev_lineno = lineno
 
     # Em dashes: rare is fine, a habit is a tell.
     em_total = sum(n for _, n in em_dash_lines)
