@@ -141,6 +141,10 @@ when the lead will run from Codex or OpenCode (see
 
 Run every command in this section from the root of a clone of this repository.
 
+> `install.sh` and `install.ps1` install only `skills/dev`. The `readme` skill
+> (`skills/readme/`) is not part of the manual install; it ships through the
+> plugin only, starting in v2.1.4.
+
 ### Running both at once
 
 The plugin and a manual install can coexist. Bare `/dev` then runs the manual
