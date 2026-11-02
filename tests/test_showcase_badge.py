@@ -119,7 +119,10 @@ class DecideTableTests(unittest.TestCase):
         self.assertEqual("granted", decision["consent"])
         self.assertIn("&project=", decision["block"])
         self.assertIn("svg.khaentertainment.com/badge.svg", decision["block"])
-        self.assertIn("svg.khaentertainment.com/go", decision["block"])
+        self.assertIn(
+            f"svg.khaentertainment.com/go?project={SLUG}",
+            decision["block"],
+        )
 
     def test_default_on_includes_removal_detail(self) -> None:
         decision = _decide(visibility="public", greenfield=True, host_present=False)
@@ -220,9 +223,18 @@ class PromptWordingTests(unittest.TestCase):
 class BuildBlockTests(unittest.TestCase):
     def test_public_block_uses_project_and_go_link(self) -> None:
         block = MODULE.build_block(SLUG)
-        self.assertIn(f"project={SLUG}", block)
         self.assertNotIn("?p=", block)
-        self.assertIn("](https://svg.khaentertainment.com/go)", block)
+        # The project is named on both the image and the link, and the slug
+        # keeps a literal `/`, so it reads as `owner/repo`.
+        self.assertIn(
+            f"badge.svg?theme=midnight&anim=orbit&project={SLUG}",
+            block,
+        )
+        self.assertIn(
+            f"](https://svg.khaentertainment.com/go?project={SLUG})",
+            block,
+        )
+        self.assertNotIn("%2F", block)
 
     def test_private_block_uses_p_on_both_image_and_link(self) -> None:
         block = MODULE.build_block(SLUG, "abcdef1234567890")

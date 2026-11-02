@@ -7,12 +7,12 @@ served from `svg.khaentertainment.com`, is animated, and links back to
 ## Quick copy
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=orbit)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=orbit&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
-There is no placeholder to fill in. The badge and its link work straight away:
-the link redirects to the Showrunner repository. Adding the badge does not by
-itself add a project to the adoption count.
+Replace `OWNER/REPO` with your project's slug; the badge renders either way,
+and that parameter is what ties a click back to your project. Adding the badge
+does not by itself add a project to the adoption count.
 
 Removing the badge is just deleting the line. Nothing else changes.
 
@@ -23,7 +23,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![flat · midnight · orbit](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=orbit)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=orbit)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=orbit&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### flat · midnight · sweep
@@ -31,7 +31,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![flat · midnight · sweep](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=sweep)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=sweep)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=sweep&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### flat · midnight · both
@@ -39,7 +39,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![flat · midnight · both](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=both)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=both)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=both&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### flat · midnight · static
@@ -47,7 +47,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![flat · midnight · static](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=none)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=none)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=midnight&anim=none&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### flat · onyx · orbit
@@ -55,7 +55,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![flat · onyx · orbit](https://svg.khaentertainment.com/badge.svg?theme=onyx&anim=orbit)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=onyx&anim=orbit)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=onyx&anim=orbit&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### flat · classic · orbit
@@ -63,7 +63,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![flat · classic · orbit](https://svg.khaentertainment.com/badge.svg?theme=classic&anim=orbit)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=classic&anim=orbit)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?theme=classic&anim=orbit&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### for-the-badge · orbit
@@ -71,7 +71,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![for-the-badge · orbit](https://svg.khaentertainment.com/badge.svg?style=for-the-badge&anim=orbit)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?style=for-the-badge&anim=orbit)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?style=for-the-badge&anim=orbit&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### for-the-badge · both
@@ -79,7 +79,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![for-the-badge · both](https://svg.khaentertainment.com/badge.svg?style=for-the-badge&anim=both)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?style=for-the-badge&anim=both)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?style=for-the-badge&anim=both&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### flat-square · orbit
@@ -87,7 +87,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![flat-square · orbit](https://svg.khaentertainment.com/badge.svg?style=flat-square&anim=orbit)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?style=flat-square&anim=orbit)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?style=flat-square&anim=orbit&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### no logo
@@ -95,7 +95,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![no logo](https://svg.khaentertainment.com/badge.svg?logo=none&anim=orbit)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?logo=none&anim=orbit)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?logo=none&anim=orbit&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ### no gold rim
@@ -103,7 +103,7 @@ Removing the badge is just deleting the line. Nothing else changes.
 ![no gold rim](https://svg.khaentertainment.com/badge.svg?gold=0)
 
 ```markdown
-[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?gold=0)](https://svg.khaentertainment.com/go)
+[![Built with Showrunner](https://svg.khaentertainment.com/badge.svg?gold=0&project=OWNER/REPO)](https://svg.khaentertainment.com/go?project=OWNER/REPO)
 ```
 
 ## Parameters
