@@ -29,7 +29,49 @@ Under `Post-Merge Verification`, list the post-merge verification records from `
 
 Update the current-status section of `PROJECT_CONTEXT.md` and the completed list in `docs/feature-log.md`. After repository initialization, make these tracked documentation changes in a docs-only worktree and PR; never push directly to main.
 
-## Step 2 — Focused Debt Sweep
+## Step 2 — Showcase badge (opt-in, once)
+
+Run once, after Step 1's docs update. Offer the opt-in "Built with Showrunner"
+badge. The script owns the decision, the badge block, and the registration call;
+never hand-roll the URL. The README on the default branch is the source of truth
+for "is the badge there"; `.dev.json` only remembers a no (or a registration
+outcome), and only in the primary checkout.
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" decide \
+  --repo-dir "<worktree>" --base <iteration-earliest-lane-base_oid> --visibility <public|private>
+```
+
+`--base` is the earliest lane `base_oid` for this iteration from `.agent/dev-state.md`.
+`--visibility` is `public` or `private`; anything else is treated as undetermined (private).
+
+Act on the printed `action`:
+
+- `noop` — nothing to do; the `reason` is the one line of output. No prompt, no badge.
+- `hand_removal` — the badge was removed by hand; record it with `apply --consent decline`.
+- `prompt_public` / `prompt_private` — ask the user once using the printed `prompt`
+  (brownfield is not default-yes). A non-answer means no.
+- `retry_register` — a prior registration failed; retry without re-asking: `apply --consent register`.
+- `default_on` — greenfield default: place the printed `block` through the `skills/readme`
+  showcase slot (block plus consent `granted`) on a docs-only worktree, as a PR.
+
+Record consent or registration with:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" apply \
+  --repo-dir "<worktree>" --consent <decline|register|landed> [--visible]
+```
+
+- `decline` — remembers no; never asked again.
+- `register` — writes consent, then registers the private project; a failed call records
+  nothing and the next run retries without re-asking. `--visible` also places the `?p=` badge.
+- `landed` — writes `badge: true` only after the docs PR has merged to the default branch.
+
+The badge is always one line to remove. On a private repo the name never leaves the
+machine: `?project=` is never written, and the registration token lives only in
+`SHOWRUNNER_REGISTER_TOKEN`.
+
+## Step 3 — Focused Debt Sweep
 
 Limit the scan to directories changed in this iteration and their immediate callers/dependencies. Do not run an unbounded whole-repository sweep.
 
@@ -61,7 +103,7 @@ Register them in `docs/feature-log.md` using:
 
 Do not delete untested implementation outside the iteration scope.
 
-## Step 3 — Report
+## Step 4 — Report
 
 ```
 ## Technical-Debt Sweep — [Iteration]
@@ -72,7 +114,7 @@ Do not delete untested implementation outside the iteration scope.
 ### Skipped and why
 ```
 
-## Step 4 — Cleanup and Standby
+## Step 5 — Cleanup and Standby
 
 Ask every delegated agent to shut down gracefully through the selected adapter. Verify stopped state, archive only when appropriate, and let only the lead perform backend/team cleanup. Never treat agent stop/archive as permission to delete a worktree. Clear or archive the active execution section of `.agent/dev-state.md` only after verified cleanup.
 

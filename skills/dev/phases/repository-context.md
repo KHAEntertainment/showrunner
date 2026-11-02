@@ -26,6 +26,35 @@ authorize a write.
 }
 ```
 
+The optional `showcase` block records the opt-in "Built with Showrunner" badge
+decision (`skills/dev/scripts/showcase_badge.py` owns reading and writing it;
+`dev_config.py` owns its validation). It is optional, so an existing config
+without it still validates and `SUPPORTED_VERSION` stays 1:
+
+```json
+{
+  "version": 1,
+  "github": { "...": "..." },
+  "showcase": {
+    "badge": true,
+    "registered": true,
+    "registerApproved": true,
+    "showBadge": false,
+    "privateId": "9f2c1a3b4c5d6e7f",
+    "decidedAt": "2026-11-01"
+  }
+}
+```
+
+- `badge` — `true` once the badge has landed on the default branch, `false` when
+  the user declined or removed it; an absent key means never decided.
+- `registered` / `registerApproved` / `privateId` — the private-registration
+  outcome. `registerApproved` is written before the network call; `registered`
+  and `privateId` (a lowercase hex hash, not a secret) are written only on
+  success. `showBadge` remembers "also show the badge" across a failed call.
+- `decidedAt` — an ISO date. The registration **token** is never stored here;
+  the secret-shaped-field check rejects any showcase field name it would match.
+
 ## First invocation (run before any GitHub mutation, Phase 0)
 
 1. Locate the worktree root (`git rev-parse --show-toplevel`, or the
