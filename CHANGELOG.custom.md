@@ -8,6 +8,57 @@ build metadata in `skills/dev/SKILL.md` (`2.0.0+upstream.3e87db0`). Entries belo
 `v2.0.0` predate that scheme: they use `custom-vX.Y.Z-upstream.SHA` headings and
 record upstream SHAs as plain text in their `### Upstream` blocks.
 
+## v2.1.4 — 2026-11-01
+
+### Added
+
+- A general-purpose README authoring skill at `skills/readme/`
+  ([#163](https://github.com/KHAEntertainment/showrunner/issues/163), PR #171).
+  It writes or reviews a README, derives the voice from the repository
+  instead of imposing one, and ships `readme_check.py`. It works on its own or
+  from a host workflow, and it exposes one optional slot for a host-supplied
+  block. It ships through the plugin only; `install.sh` and `install.ps1`
+  still install `skills/dev`. `scripts/validate_skill.py` now validates every
+  skill listed in `plugin.json`.
+- An opt-in "Built with Showrunner" badge, offered at Phase 5
+  ([#164](https://github.com/KHAEntertainment/showrunner/issues/164), PR #174).
+  A public project whose README was added during the iteration gets the badge
+  by default, in a docs PR, with a one-line way to remove it. A project with
+  an existing README is asked once, and a "no" is remembered. A badge removed
+  by hand is not added back. Decisions are kept in the primary checkout's
+  `.dev.json` under a new optional `showcase` block. Existing configs still
+  validate.
+- Private repositories are off unless `SHOWRUNNER_REGISTER_TOKEN` is set. With
+  it, Showrunner asks before registering. The repository name is sent once
+  over HTTPS to the badge host, which stores only a keyed hash, and a visible
+  badge uses an opaque id instead of the name. The token is sent in a header
+  and never written anywhere. The token does not ship with the plugin.
+
+### Removed
+
+- The Homebrew distribution channel
+  ([#167](https://github.com/KHAEntertainment/showrunner/issues/167), PR #168;
+  ADR-018, which supersedes ADR-007). Install through the central marketplace
+  plugin or the manual installers. `Formula/dev-skill.rb` was removed from
+  `KHAEntertainment/homebrew-tap`. #70 and #67 closed as not planned.
+
+### Changed
+
+- README: "Built with Showrunner" badge row, a badge catalog at
+  `docs/badges.md`, and a Credits and Thanks section (PR #162), plus the
+  projects-using counter (PR #165).
+- `docs/badges.md` no longer says the badge registers a project. Adding the
+  badge does not by itself add a project to the adoption count (#176 tracks
+  how projects get enrolled).
+
+### Fixed
+
+- README: the v2.1.2 changelog link now uses the correct anchor (PR #170).
+
+### Upstream
+
+Base unchanged: `2.1.0+upstream.3e87db0`; no new upstream source incorporated.
+
 ## v2.1.3 — 2026-11-01
 
 ### Changed (verification SOP, v2.1.3 P1–P7)
