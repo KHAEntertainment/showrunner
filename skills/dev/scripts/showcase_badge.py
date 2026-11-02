@@ -592,7 +592,7 @@ def decide_cmd(args: argparse.Namespace) -> int:
     present_at_base = readme_present_at_commit(primary, args.base) if args.base else None
     greenfield = present_at_base is False
 
-    if host_present and showcase.get("badge") is not True:
+    if skill_present and host_present and showcase.get("badge") is None:
         landed_block = {
             **showcase,
             "badge": True,

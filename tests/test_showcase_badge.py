@@ -873,6 +873,44 @@ class ApplyIntegrationTests(unittest.TestCase):
         out = json.loads(buf.getvalue())
         self.assertEqual("hand_removal", out["action"])
 
+    def test_landed_detection_skips_recorded_decline(self) -> None:
+        root, lane = self._setup()
+        (root / ".dev.json").write_text(
+            json.dumps({**VALID_DOC, "showcase": {"badge": False, "decidedAt": "2026-11-01"}}),
+            encoding="utf-8",
+        )
+        with mock.patch.object(MODULE, "fetch_identity_matches", return_value=True), \
+             mock.patch.object(
+                 MODULE, "readme_now",
+                 return_value="built with https://svg.khaentertainment.com/badge.svg",
+             ):
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                code = MODULE.main(["decide", "--repo-dir", str(lane), "--visibility", "public"])
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("noop", out["action"])
+        self.assertEqual("declined", out["reason"])
+        cfg = json.loads((root / ".dev.json").read_text(encoding="utf-8"))
+        self.assertFalse(cfg["showcase"]["badge"])
+
+    def test_landed_detection_skips_missing_readme_skill(self) -> None:
+        root, lane = self._setup()
+        with mock.patch.object(MODULE, "fetch_identity_matches", return_value=True), \
+             mock.patch.object(
+                 MODULE, "readme_now",
+                 return_value="built with https://svg.khaentertainment.com/badge.svg",
+             ), \
+             mock.patch.object(MODULE, "readme_skill_present", return_value=False):
+            buf = io.StringIO()
+            with mock.patch("sys.stdout", buf):
+                code = MODULE.main(["decide", "--repo-dir", str(lane), "--visibility", "public"])
+        self.assertEqual(0, code)
+        out = json.loads(buf.getvalue())
+        self.assertEqual("noop", out["action"])
+        self.assertEqual("readme_skill_missing", out["reason"])
+        self.assertFalse((root / ".dev.json").exists())
+
 
 class AtomicCreateTests(unittest.TestCase):
     def test_failed_atomic_create_leaves_no_partial_file(self) -> None:

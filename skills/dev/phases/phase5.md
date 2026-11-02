@@ -31,8 +31,9 @@ Update the current-status section of `PROJECT_CONTEXT.md` and the completed list
 
 ## Step 2 — Showcase badge (opt-in, once)
 
-Run once, after Step 1's docs update. Offer the opt-in "Built with Showrunner"
-badge. The script owns the decision, the badge block, and the registration call;
+Run once, after the iteration's PRs have merged to the default branch. Offer the
+opt-in "Built with Showrunner" badge. The script owns the decision, the badge
+block, and the registration call;
 never hand-roll the URL. The README on the default branch is the source of truth
 for "is the badge there"; `.dev.json` only remembers a no, a public "yes" while
 the docs PR is open, or a private-registration outcome, and only in the primary
@@ -49,8 +50,9 @@ rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/showcase_badge.py" decide \
 Act on the printed `action`:
 
 - `noop` — nothing to do; the printed `detail` is the one line of output. No prompt, no badge.
-- `no_readme` — no README on the default branch; nothing happens this run. Phase 5 runs after the
-  iteration's PRs merge, so a README still sitting on an unmerged branch is picked up by a later run.
+  A `no_readme` reason means no README on the default branch; nothing happens this run. Phase 5
+  runs after the iteration's PRs merge, so a README still sitting on an unmerged branch is
+  picked up by a later run.
 - `hand_removal` — the badge was removed by hand; record it with `apply --consent decline`.
 - `prompt_public` — ask the user once using the printed `prompt`. On **yes**, run
   `apply --consent approve` and place the printed `block` through the `skills/readme`
