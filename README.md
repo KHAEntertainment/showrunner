@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="docs/badges.md"><img alt="Built with Showrunner" src="https://svg.khaentertainment.com/badge.svg?style=for-the-badge&amp;anim=both&amp;project=KHAEntertainment/showrunner"></a>
-  <img alt="Projects using Showrunner" src="https://svg.khaentertainment.com/count.svg?style=for-the-badge&amp;anim=both">
+  <a href="https://showrunner.khaentertainment.com"><img alt="Projects using Showrunner" src="https://svg.khaentertainment.com/count.svg?style=for-the-badge&amp;anim=sweep"></a>
 </p>
 
 **Showrunner plans the work, hands it out to your coding agents, checks every pull request, and merges what passes.**
