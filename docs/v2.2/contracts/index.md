@@ -41,10 +41,10 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/common/malformed-input.json` | `5dc13b6342f902b9dc693a6e22e285a2a223c467e465a3ede46e197c9b42cdb4` |
 | `fixtures/common/required-field-missing.json` | `36e6cd9e4ac70879d85627f5249e6e076620cb085dff4d5eb6964aead367bc21` |
 | `fixtures/common/unsupported-major-version.json` | `71d3a7b79a381eb4d7f8f3420ac3788e46a708276d13330299d4d5e5477774fa` |
-| `fixtures/sc-1/accepted-structured-plan-ref.json` | `6232ad7961b9c74833af4fa43da1b64ef0da83e8c5441ce94c6793561e7811b9` |
-| `fixtures/sc-1/accepted-two-distinct-runs.json` | `49f00479ad9ef0a784315002316be3d15356c7969e7dedf4a70f62e9ac007a20` |
+| `fixtures/sc-1/accepted-structured-plan-ref.json` | `e212d3163d396e0bf77a928aff7ff589a61b000299c847405c3b4c972affd834` |
+| `fixtures/sc-1/accepted-two-distinct-runs.json` | `2850f13c5d9e498bf665f2a3e5fd7c45f44234d8b4a85e19be44449dd59d3a26` |
 | `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` | `10337809fc832a00e7bb89da52bcc2d65f2dadee8db7015b7193129aa2b2f197` |
-| `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `249d20b76ef90ae64d5ee6439714402bed9921077bc7b78a461a42d5058a417e` |
+| `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `a4602d4f6b5fb4f94a4d524ffc48989b6c0477527dac345fdb46ff30f615a521` |
 | `fixtures/sc-1/rejected-missing-managed-source.json` | `f199e6f7c1cc7d3f2e7519dd2830c238ee9c8143dbc94a3662f98dbe9a2d3abf` |
 | `fixtures/sc-2/accepted-continue-epoch-rotation.json` | `0616d15296c88dc7394a8c77985393c8a60763f9ecc889c78e84524042656021` |
 | `fixtures/sc-2/accepted-continue-latest-start-expiry.json` | `8c05043366ec54b347f4ba88de9691cef7e7ad7e490ed9da9e2eb5f6099b4936` |

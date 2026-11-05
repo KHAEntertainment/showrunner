@@ -24,7 +24,7 @@
           "model": "deepseek:deepseek-v4-pro"
         },
         "evidence": {
-          "reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "reference": "OWNER/synthetic-repo@0123456789abcdef0123456789abcdef01234567",
           "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         }
       },
