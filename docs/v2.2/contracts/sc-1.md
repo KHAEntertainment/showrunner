@@ -2,6 +2,8 @@
 
 **Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.540 (snapshot SHA-256 `fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd`). Owner-bound values from settled D1 (l.85) and D6.5 (l.142). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot (see `index.md`).
 
+L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
+
 **Contract.** `assignment-v1` — the identity/scope read projection for one assignment.
 
 **Semantic owner.** Dev planning owner (Dev planning + backend adapter).
@@ -65,8 +67,6 @@
 - `fixtures/sc-1/accepted-structured-plan-ref.json` (accept)
 - `fixtures/sc-1/rejected-machine-path-plan-ref.json` (reject)
 
-`accepted-two-distinct-runs.json` predates the structured `plan_ref` rule (D-SC1-1): its `plan_ref` is a bare path and its `source` is a machine-specific `~/.traycer/…` path. It is retained byte-identical as a known legacy fixture; the structured `plan_ref` shape is exercised by `accepted-structured-plan-ref.json`.
-
 **Counterpart acceptance.** `pending` per consumer (P1, P2, GV, panel (U1); I1 later). No compatibility inferred from silence (l.550).
 
-**Revision note.** Additive v1 revision, 2026-11-05, M2 L0b (defects D-SC1-1, D-SC5-1). Consumers listed unchanged.
+**Revision note.** v1 specification correction (pre-implementation; no consumer shipped; counterpart acceptance pending), 2026-11-05, M2 L0b (defects D-SC1-1, D-SC5-1). Consumers listed unchanged.

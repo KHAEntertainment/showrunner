@@ -18,8 +18,15 @@
       "source_revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "approved_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "approval": {
-        "authority": "synthetic-owner",
-        "evidence": "OWNER/synthetic-repo#42"
+        "authority": {
+          "agent_id": "synthetic-owner",
+          "harness": "opencode",
+          "model": "deepseek:deepseek-v4-pro"
+        },
+        "evidence": {
+          "reference": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
       },
       "producer": {
         "session": "synthetic-session-006",

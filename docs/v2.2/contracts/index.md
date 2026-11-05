@@ -4,6 +4,8 @@ This directory is the P0-02 delivery package for `KHAEntertainment/showrunner#18
 
 **Canonical source.** Showrunner v2.2 SDP, snapshot SHA-256 `fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd` (819 lines), retained at `~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md`. Issue #184's body cites the superseded snapshot `dae53a66…` (789 lines); this package binds the current snapshot `fee134d9…` per the admission ledger's re-pin note (ledger l.444).
 
+L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
+
 ## Global rules
 
 - **Representation rule** (SDP l.536): the named `*-v1` forms are concrete specification targets, not installed schemas or approved policy defaults. Preserve Dev `schema_version: 2` YAML profile and separate Foreman/board schemas. Version a projection without forcing every source to adopt the same serialization. Unsupported major versions, ambiguous identity, required missing fields, or malformed input yield explicit `invalid`/`unavailable` results. Additive optional fields require common-reader fixtures, not silent parser leniency. Never put operational policy values into examples and call them approved — all fixture values here are synthetic placeholders.
@@ -39,10 +41,10 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/common/malformed-input.json` | `5dc13b6342f902b9dc693a6e22e285a2a223c467e465a3ede46e197c9b42cdb4` |
 | `fixtures/common/required-field-missing.json` | `36e6cd9e4ac70879d85627f5249e6e076620cb085dff4d5eb6964aead367bc21` |
 | `fixtures/common/unsupported-major-version.json` | `71d3a7b79a381eb4d7f8f3420ac3788e46a708276d13330299d4d5e5477774fa` |
-| `fixtures/sc-1/accepted-structured-plan-ref.json` | `0e4ab000f23632145d8457dda91cb136677e5d3d55cf2095fcc663a50b22d4de` |
-| `fixtures/sc-1/accepted-two-distinct-runs.json` | `4d41af3b80572dc43388b47c7ed6431fa3dd0b54be6d3159a8925bc21f0af4c5` |
+| `fixtures/sc-1/accepted-structured-plan-ref.json` | `6232ad7961b9c74833af4fa43da1b64ef0da83e8c5441ce94c6793561e7811b9` |
+| `fixtures/sc-1/accepted-two-distinct-runs.json` | `49f00479ad9ef0a784315002316be3d15356c7969e7dedf4a70f62e9ac007a20` |
 | `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` | `10337809fc832a00e7bb89da52bcc2d65f2dadee8db7015b7193129aa2b2f197` |
-| `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `2dce53421ec27c5cd01b27a8ea322cd93298ca37b546d8c3a2a6373a7be5fe4b` |
+| `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `249d20b76ef90ae64d5ee6439714402bed9921077bc7b78a461a42d5058a417e` |
 | `fixtures/sc-1/rejected-missing-managed-source.json` | `f199e6f7c1cc7d3f2e7519dd2830c238ee9c8143dbc94a3662f98dbe9a2d3abf` |
 | `fixtures/sc-2/accepted-continue-epoch-rotation.json` | `0616d15296c88dc7394a8c77985393c8a60763f9ecc889c78e84524042656021` |
 | `fixtures/sc-2/accepted-continue-latest-start-expiry.json` | `8c05043366ec54b347f4ba88de9691cef7e7ad7e490ed9da9e2eb5f6099b4936` |

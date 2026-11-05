@@ -2,6 +2,8 @@
 
 **Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.544. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
+L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
+
 **Contracts.** `provider-request-v1` (a request to a provider/model/tool) and `provider-result-v1` (the result/error it returns).
 
 **Semantic owner.** Shared utility owner; the domain owns the verdict (l.544).
