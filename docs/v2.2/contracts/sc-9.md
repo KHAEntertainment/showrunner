@@ -22,7 +22,7 @@
 | `adapter` / `version` | record | 1 | required | adapter and version |
 | `note_revision` / `freshness` | record | 1 | required | note revision and freshness |
 | `authoritative_refs` | list | 1..* | required | authoritative references |
-| `coverage` / `degradation` | record | 0..1 | conditional | coverage and degradation |
+| `coverage` / `degradation` | record | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | coverage and degradation |
 | `event_accounting` | record | 1 | required | event-accounting result |
 | `admission_outcome` | enum | 1 | required | admission outcome |
 

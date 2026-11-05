@@ -25,14 +25,14 @@
 | `freshness` | time | 0..1 | conditional (null when `source` is explicitly `unknown`) | freshness timestamp — reported `unknown`, never satisfied, when it cannot be read or ordered |
 | `run` / `session` / `seat` | string | 1 | required | run, session, and seat identity |
 | `lifecycle` | enum | 1 | required | lifecycle state |
-| `predecessor` | reference | 0..1 | conditional | predecessor |
-| `successor` | reference | 0..1 | conditional | successor |
-| `epoch` | number | 0..1 | conditional | epoch |
-| `obligations` | list | 0..* | conditional | obligations |
-| `heartbeat` | time | 0..1 | conditional | heartbeat |
-| `report_verdict` | record | 0..1 | conditional | report verdict |
-| `verification` | record | 0..1 | conditional | verification |
-| `next_action` | string | 0..1 | conditional | next action |
+| `predecessor` | reference | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | predecessor |
+| `successor` | reference | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | successor |
+| `epoch` | number | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | epoch |
+| `obligations` | list | 0..* | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | obligations |
+| `heartbeat` | time | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | heartbeat |
+| `report_verdict` | record | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | report verdict |
+| `verification` | record | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | verification |
+| `next_action` | string | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | next action |
 
 **Accepted example.** Distinct concurrent runs; an explicit unknown source (l.546).
 

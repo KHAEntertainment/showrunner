@@ -23,7 +23,7 @@
 | `supported_interface` / `runtime` | record | 1 | required | supported interface and runtime |
 | `registration` | record | 1 | required | registration |
 | `load_proof` | per-session load proof | 1 | required | per-session load proof (not a global marker) |
-| `update_window` / `backup` / `rollback` | references | 0..* | conditional | update window, backup, and rollback refs |
+| `update_window` / `backup` / `rollback` | references | 0..* | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | update window, backup, and rollback refs |
 
 **Accepted example.** A compatible existing installation; a safe next-session adoption (l.547).
 

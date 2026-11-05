@@ -59,7 +59,7 @@ Normative fixture source: the [v2.1.3 cross-project reconciliation report §2](~
 | `mode` | enum (`standalone`) | 1 | required | standalone mode |
 | `criteria_ref` | `sha256:<digest>` | 1 | required | current approved revision |
 | `criteria_map` | list (old ID → new ID) | 0..* | conditional (on amendment) | amendment ID mapping |
-| `amendment` | `{from, to, changed, approved_by, recorded_by, at}` | 0..1 | conditional | authorized amendment |
+| `amendment` | `{from, to, changed, approved_by, recorded_by, at}` | 0..1 | conditional (on authorized amendment, DEV_STATE_TEMPLATE l.290) | authorized amendment |
 | `contributions` | list of `{pr, issue, criteria, assurance, integrated}` | 1..* | required | one entry per contributing PR |
 | `criteria` | list | 1..* | required | per-criterion outcomes |
 | `outcome` | enum | 1 | required | acceptance outcome |
@@ -103,7 +103,7 @@ Meanings from the SDP only; spelling is Dev's (l.432).
 | `outcome` | enum | 1 | required | outcome within its purpose's vocabulary |
 | `reason_codes` | list | 0..* | conditional (when not `verified`) | each naming affected Issues/PRs/criteria (l.436) |
 | `producer` | record | 1 | required | helper + Skill revision; invoker role/ID/harness; consumer context; `recorded_by: lead` (l.437) |
-| `supersedes` | lineage reference | 0..* | conditional | lineage chain per `(run_id, purpose)` (l.438) |
+| `supersedes` | lineage reference | 0..* | conditional (lineage chain per `(run_id, purpose)`, l.438) | lineage chain per `(run_id, purpose)` (l.438) |
 
 ## Accepted proof by evaluator type (D4.4 l.408–l.415)
 

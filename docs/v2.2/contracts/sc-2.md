@@ -26,15 +26,15 @@
 | `target` | qualified reference | 1 | required | operation target (repo / PR / Issue) |
 | `head` | reference | 1 | required | the head being operated on |
 | `grant_id` | string | 0..1 | conditional (granted operation) | grant identifier |
-| `grant_kind` | enum | 0..1 | conditional | grant kind |
-| `grant_holder` | agent id (string) | 0..1 | conditional | grant holder |
-| `grant_epoch` | number | 0..1 | conditional | grant epoch |
-| `grant_state` | enum | 0..1 | conditional | grant state |
-| `grant_start` | time | 0..1 | conditional | start time |
-| `grant_expiry` | time | 0..1 | conditional | expiry time |
-| `grant_finish` | time | 0..1 | conditional | finish time |
-| `pause_ref` | reference | 0..1 | conditional | pause reference |
-| `budget_ref` | reference | 0..1 | conditional | budget reference |
+| `grant_kind` | enum | 0..1 | conditional (where required, l.541) | grant kind |
+| `grant_holder` | agent id (string) | 0..1 | conditional (where required, l.541) | grant holder |
+| `grant_epoch` | number | 0..1 | conditional (where required, l.541) | grant epoch |
+| `grant_state` | enum | 0..1 | conditional (where required, l.541) | grant state |
+| `grant_start` | time | 0..1 | conditional (where required, l.541) | start time |
+| `grant_expiry` | time | 0..1 | conditional (where required, l.541) | expiry time |
+| `grant_finish` | time | 0..1 | conditional (where required, l.541) | finish time |
+| `pause_ref` | reference | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | pause reference |
+| `budget_ref` | reference | 0..1 | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | budget reference |
 | `result` | enum (`Begin` / `Continue`) | 1 | required | separate Begin/Continue results |
 
 **Accepted example.** A currently permitted exact operation after all quality gates; an already-begun safe completion (Continue) (l.541).

@@ -26,7 +26,7 @@
 | `usage` | string | 1 | required | bounded usage |
 | `retry` | number | 1 | required | retry bound |
 | `result` / `error_provenance` | record | 1 | required | result or error provenance |
-| `credentials` | reference | 0..* | conditional | credentials by reference only — never inline (l.544) |
+| `credentials` | reference | 0..* | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | credentials by reference only — never inline (l.544) |
 
 **Accepted example.** A scoped read-only finding, or a typed domain answer (l.544).
 
