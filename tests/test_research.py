@@ -68,7 +68,9 @@ class ResearchContentTests(unittest.TestCase):
         )
 
     def test_wayfinder_is_not_auto_run(self) -> None:
-        self.assertIn("never auto-run because installed", _read(RESEARCH))
+        text = _read(RESEARCH)
+        self.assertIn("are not default and never auto-run", text)
+        self.assertIn("never auto-run because installed", text)
 
     def test_c3_is_conditional_and_not_invoked(self) -> None:
         self.assertIn("is conditional and not invoked here", _read(RESEARCH))
@@ -126,11 +128,30 @@ class ResearchContentTests(unittest.TestCase):
         self.assertIn("`finding` only for an evidenced answer", text)
         self.assertIn("A locator fallback is recorded as `not_available`", text)
 
+    def test_usage_error_branch_is_documented(self) -> None:
+        text = _read(RESEARCH)
+        self.assertIn(
+            "parse stdout as JSON only when it is present and valid",
+            text,
+        )
+        self.assertIn("cause `usage_error`", text)
+
+    def test_proposed_pin_label(self) -> None:
+        self.assertIn("the owner confirms it before C2 is used", _read(RESEARCH))
+
+    def test_evidence_order_repository_and_primary_docs_first(self) -> None:
+        self.assertIn("Repository and primary documentation first", _read(RESEARCH))
+
+    def test_question_counts_never_become_the_user_script(self) -> None:
+        self.assertIn("templates never become the user script", _read(RESEARCH))
+
     def test_phase15_step2_points_at_research(self) -> None:
         text = _read(PHASE15)
         self.assertIn("${CLAUDE_SKILL_DIR}/research.md", text)
         self.assertIn("**C1** runs always", text)
         self.assertIn("**C2** is optional", text)
+        self.assertIn("A provider `needs_input` returns to the lead", text)
+        self.assertIn("never report the fallback as a completed research step", text)
 
     def test_refactoring_skips_the_research_step(self) -> None:
         self.assertIn(
@@ -153,11 +174,29 @@ class ResearchContentTests(unittest.TestCase):
         self.assertIn("`<path>/SKILL.md` as provider guidance", text)
         self.assertIn("Provenance is the pin plus the returned path and digest", text)
 
+    def test_c2_does_not_narrow_sources_to_the_provider(self) -> None:
+        text = _read(RESEARCHER)
+        self.assertIn("never to narrow the allowed source list to the provider directory", text)
+
+    def test_researcher_output_never_user_facing_questions(self) -> None:
+        self.assertIn("never user-facing questions", _read(RESEARCHER))
+
+    def test_researcher_references_report_back(self) -> None:
+        self.assertIn(
+            "${CLAUDE_SKILL_DIR}/agents/report-back.md",
+            _read(RESEARCHER),
+        )
+
+    def test_researcher_inputs_paragraph(self) -> None:
+        self.assertIn("You are given: the mode (C1 or C2)", _read(RESEARCHER))
+
     def test_template_has_a_research_section(self) -> None:
         text = _read(TEMPLATE)
         self.assertIn("## Research findings and provider provenance", text)
         self.assertIn("**locator**", text)
         self.assertIn("A locator fallback is recorded with no finding", text)
+        self.assertIn("provider name and pin", text)
+        self.assertIn("unresolved questions", text)
 
 
 class MutationTests(unittest.TestCase):
@@ -183,12 +222,26 @@ class MutationTests(unittest.TestCase):
         (RESEARCH, "Availability is its own field"),
         (RESEARCH, "`finding` only for an evidenced answer"),
         (RESEARCH, "A locator fallback is recorded as `not_available`"),
+        (RESEARCH, "parse stdout as JSON only when it is present and valid"),
+        (RESEARCH, "cause `usage_error`"),
+        (RESEARCH, "the owner confirms it before C2 is used"),
+        (RESEARCH, "Repository and primary documentation first"),
+        (RESEARCH, "templates never become the user script"),
+        (RESEARCH, "are not default and never auto-run"),
         (PHASE15, "The lite Phase 1.5 for Refactoring skips this step entirely."),
         (PHASE15, "**C1** runs always"),
         (PHASE15, "**C2** is optional"),
+        (PHASE15, "A provider `needs_input` returns to the lead"),
+        (PHASE15, "never report the fallback as a completed research step"),
         (RESEARCHER, "No writes, no installs, no network-mutating calls, no provider cost."),
         (RESEARCHER, "**C2 mode**"),
         (RESEARCHER, "`<path>/SKILL.md` as provider guidance"),
+        (RESEARCHER, "never to narrow the allowed source list to the provider directory"),
+        (RESEARCHER, "never user-facing questions"),
+        (RESEARCHER, "${CLAUDE_SKILL_DIR}/agents/report-back.md"),
+        (RESEARCHER, "You are given: the mode (C1 or C2)"),
+        (TEMPLATE, "provider name and pin"),
+        (TEMPLATE, "unresolved questions"),
     )
 
     def test_removing_each_key_sentence_is_detected(self) -> None:
@@ -280,6 +333,17 @@ class LocatorFixtureRunTests(unittest.TestCase):
         completed = self.locate(digest, agents, claude, repo, cache, missing)
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertIn('"status": "present"', completed.stdout)
+
+    def test_usage_error_leaves_stdout_empty(self) -> None:
+        """A --root that is not a directory is a usage error: exit 1, empty
+        stdout, plain stderr (no JSON)."""
+        not_a_dir = self.base / "not-a-directory"
+        not_a_dir.write_bytes(b"not a directory\n")
+
+        completed = self.locate("0" * 64, not_a_dir)
+        self.assertEqual(1, completed.returncode, completed.stdout)
+        self.assertEqual("", completed.stdout)
+        self.assertIn("--root is not a directory", completed.stderr)
 
 
 if __name__ == "__main__":

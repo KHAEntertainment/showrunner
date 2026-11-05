@@ -19,8 +19,9 @@ the lead, and never auto-run Wayfinder B1/B2 or invoke C3.
 ## Inputs
 
 You are given: the mode (C1 or C2), the research question(s), the scope, and the
-sources you are allowed to read. In C2 mode, the sources are the provider path
-returned by the locator.
+sources you are allowed to read. In both modes the allowed sources are the
+repository, primary documentation, and approved broader or community sources.
+In C2 mode you are additionally given the `provider_path` and the pin, path and digest, used only as provider guidance and provenance, never to narrow the allowed source list to the provider directory.
 
 ## Read-only rules
 

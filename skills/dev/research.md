@@ -57,8 +57,9 @@ rtk proxy python3 ${CLAUDE_SKILL_DIR}/scripts/locate_pinned_skill.py \
 
 Read the result by exit code and the JSON on stdout: exit 0 is `present` (JSON
 has `path` and `digest`); exit 2 is `not_available` or `drift` (JSON has a
-`cause`); exit 1 is a usage or operational error (JSON `status` `error` plus a
-`cause`) and is no verdict.
+`cause`); exit 1 is no verdict.
+On exit 1, parse stdout as JSON only when it is present and valid: an operational error carries `status` `error` plus a `cause`; a usage failure (no `--root`, or a `--root` that is not a directory) leaves stdout empty with plain text on stderr.
+A usage failure is recorded as locator `error` with cause `usage_error`, the stderr line kept, and no finding.
 
 On `present`: dispatch the researcher in C2 mode with the returned `path`.
 
