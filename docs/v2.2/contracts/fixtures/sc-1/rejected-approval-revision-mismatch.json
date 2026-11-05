@@ -1,0 +1,49 @@
+{
+  "sc": "SC-1",
+  "version": "assignment-v1",
+  "kind": "rejected",
+  "name": "rejected-approval-revision-mismatch",
+  "input": {
+    "project": "OWNER/synthetic-repo",
+    "repo": "OWNER/synthetic-repo",
+    "run": "synthetic-run-005",
+    "mode": "standalone",
+    "lead": {
+      "agent_id": "synthetic-agent-005",
+      "harness": "opencode",
+      "model": "deepseek:deepseek-v4-pro"
+    },
+    "plan_ref": {
+      "origin": "docs/plans/2099-01-01-synthetic-plan.md",
+      "source_revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "approved_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "approval": {
+        "authority": {
+          "agent_id": "synthetic-owner",
+          "harness": "opencode",
+          "model": "deepseek:deepseek-v4-pro"
+        },
+        "evidence": {
+          "reference": "OWNER/synthetic-repo@0123456789abcdef0123456789abcdef01234567",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "producer": {
+        "session": "synthetic-session-005",
+        "harness": "opencode"
+      }
+    },
+    "source": "docs/plans/2099-01-01-synthetic-plan.md@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "approval_revision": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "fixed_issues": ["OWNER/synthetic-repo#1"]
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: top-level `approval_revision` (`sha256:eeee…`) does not equal `plan_ref.approved_revision` (`sha256:2222…`) — a mismatch is invalid (SC-1 \"changed approval\" rejected example, SDP l.540; D4 invariant).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b",
+    "sdp_line": 540
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

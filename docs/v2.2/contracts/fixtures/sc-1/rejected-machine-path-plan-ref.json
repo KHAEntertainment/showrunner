@@ -34,7 +34,7 @@
       }
     },
     "source": "~/.traycer/epics/synthetic-epic/artifacts/synthetic-plan/index.md",
-    "approval_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "approval_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
     "fixed_issues": ["OWNER/synthetic-repo#1"]
   },
   "expected_outcome": "reject",
