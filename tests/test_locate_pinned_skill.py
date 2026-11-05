@@ -97,6 +97,31 @@ class LocatorCliTests(unittest.TestCase):
         self.base = Path(tmp.name)
         self.root = self.base / "roots"
         self.root.mkdir()
+        self._locked: list[Path] = []
+
+    def tearDown(self) -> None:
+        """Restore every directory this test locked.
+
+        A directory left at mode 000 would keep the rest of the fixture tree
+        unreadable and would survive the temporary directory's cleanup.
+        """
+        for directory in self._locked:
+            try:
+                os.chmod(directory, 0o755)
+            except OSError:
+                pass
+
+    def lock(self, directory: Path) -> Path:
+        """Make a directory unreadable, and remember to restore it.
+
+        A root account defeats directory permissions, so the case that needs
+        an unreadable tree cannot be meaningful there.
+        """
+        if getattr(os, "geteuid", lambda: 1)() == 0:
+            self.skipTest("root bypasses directory permissions")
+        os.chmod(directory, 0o000)
+        self._locked.append(directory)
+        return directory
 
     def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -268,15 +293,170 @@ class LocatorCliTests(unittest.TestCase):
         locked = skill_dir / "references"
         locked.mkdir()
         (locked / "notes.md").write_bytes(b"notes\n")
-        os.chmod(locked, 0o000)
-        self.addCleanup(os.chmod, locked, 0o755)
+        self.lock(locked)
 
         completed = self.locate(digest)
         self.assertEqual(1, completed.returncode, completed.stdout)
-        self.assertEqual("", completed.stdout)
-        payload = json.loads(completed.stderr)
+        payload = json.loads(completed.stdout)
         self.assertEqual("error", payload["status"])
-        self.assertEqual("unreadable_candidate", payload["cause"])
+        self.assertEqual("candidate_unreadable", payload["cause"])
+
+    def test_an_unreadable_candidate_alone_is_an_error(self) -> None:
+        """A candidate that cannot be read yields no verdict at all."""
+        skill_dir = write_skill(self.root / SKILL_NAME)
+        digest = LOCATOR.directory_digest(skill_dir)
+        self.lock(skill_dir)
+
+        completed = self.locate(digest)
+        self.assertEqual(1, completed.returncode, completed.stdout)
+        payload = json.loads(completed.stdout)
+        self.assertEqual("error", payload["status"])
+        self.assertEqual("candidate_unreadable", payload["cause"])
+
+    def test_an_unreadable_candidate_does_not_hide_a_later_match(self) -> None:
+        """One unreadable version must not stop the search before a match."""
+        cache = self.root / "kha-marketplace" / "example-plugin"
+        broken = write_skill(cache / "1.0.0" / "skills" / SKILL_NAME, body="Old.\n")
+        good = write_skill(cache / "2.0.0" / "skills" / SKILL_NAME, body="New.\n")
+        digest = LOCATOR.directory_digest(good)
+        self.lock(broken)
+
+        completed = self.locate(digest)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        payload = self.payload(completed)
+        self.assertEqual("present", payload["status"])
+        self.assertEqual(str(good), payload["path"])
+
+    def test_an_unreadable_subtree_does_not_hide_a_later_match(self) -> None:
+        """The candidate itself is readable; something inside it is not.
+
+        This is the case where the failure happens while the tree is being
+        hashed, so the search has to survive it and keep looking.
+        """
+        cache = self.root / "kha-marketplace" / "example-plugin"
+        broken = write_skill(cache / "1.0.0" / "skills" / SKILL_NAME, body="Old.\n")
+        good = write_skill(cache / "2.0.0" / "skills" / SKILL_NAME, body="New.\n")
+        digest = LOCATOR.directory_digest(good)
+        locked = broken / "references"
+        locked.mkdir()
+        (locked / "notes.md").write_bytes(b"notes\n")
+        self.lock(locked)
+
+        completed = self.locate(digest)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        payload = self.payload(completed)
+        self.assertEqual("present", payload["status"])
+        self.assertEqual(str(good), payload["path"])
+
+    def test_a_symlinked_skill_md_is_never_present(self) -> None:
+        """A symlinked SKILL.md cannot be verified, so it is never a match."""
+        skill_dir = write_skill(self.root / SKILL_NAME)
+        target = self.base / "linked" / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((skill_dir / "SKILL.md").read_bytes())
+        (skill_dir / "SKILL.md").unlink()
+        (skill_dir / "SKILL.md").symlink_to(target)
+        # The pin is the digest of the tree as it stands: the old behaviour
+        # matched it and reported the skill as present.
+        digest = LOCATOR.directory_digest(skill_dir)
+
+        completed = self.locate(digest)
+        self.assertEqual(2, completed.returncode, completed.stdout)
+        payload = self.payload(completed)
+        self.assertEqual("drift", payload["status"])
+        self.assertEqual("symlinked_content", payload["cause"])
+        self.assertNotIn("path", payload)
+
+    def test_a_symlinked_sibling_file_is_never_present(self) -> None:
+        """A linked reference file is content too, and is never hashed."""
+        skill_dir = write_skill(self.root / SKILL_NAME, extra="Reference notes.\n")
+        target = self.base / "linked" / "notes.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"Reference notes.\n")
+        (skill_dir / "references" / "notes.md").unlink()
+        (skill_dir / "references" / "notes.md").symlink_to(target)
+        digest = LOCATOR.directory_digest(skill_dir)
+
+        completed = self.locate(digest)
+        self.assertEqual(2, completed.returncode, completed.stdout)
+        payload = self.payload(completed)
+        self.assertEqual("drift", payload["status"])
+        self.assertEqual("symlinked_content", payload["cause"])
+
+    def test_a_symlinked_sibling_directory_is_never_present(self) -> None:
+        """A linked directory is content too, and is never followed."""
+        skill_dir = write_skill(self.root / SKILL_NAME)
+        outside = self.base / "linked" / "references"
+        outside.mkdir(parents=True)
+        (outside / "notes.md").write_bytes(b"Reference notes.\n")
+        (skill_dir / "references").symlink_to(outside)
+        digest = LOCATOR.directory_digest(skill_dir)
+
+        completed = self.locate(digest)
+        self.assertEqual(2, completed.returncode, completed.stdout)
+        payload = self.payload(completed)
+        self.assertEqual("drift", payload["status"])
+        self.assertEqual("symlinked_content", payload["cause"])
+
+    def test_content_changed_behind_a_link_is_still_not_present(self) -> None:
+        """The hole this closes: the digest skips links, so what is behind
+        one could change without changing the digest."""
+        skill_dir = write_skill(self.root / SKILL_NAME)
+        target = self.base / "linked" / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"---\nname: example-skill\n---\n\nOriginal.\n")
+        (skill_dir / "SKILL.md").unlink()
+        (skill_dir / "SKILL.md").symlink_to(target)
+        digest = LOCATOR.directory_digest(skill_dir)
+
+        target.write_bytes(b"---\nname: example-skill\n---\n\nChanged.\n")
+        self.assertEqual(digest, LOCATOR.directory_digest(skill_dir))
+
+        completed = self.locate(digest)
+        self.assertEqual(2, completed.returncode, completed.stdout)
+        payload = self.payload(completed)
+        self.assertNotEqual("present", payload["status"])
+        self.assertEqual("symlinked_content", payload["cause"])
+
+    def test_a_clean_candidate_wins_over_a_symlinked_one(self) -> None:
+        """A refused candidate never hides a verifiable match beside it."""
+        cache = self.root / "kha-marketplace" / "example-plugin"
+        linked = write_skill(cache / "1.0.0" / "skills" / SKILL_NAME, body="Old.\n")
+        clean = write_skill(cache / "2.0.0" / "skills" / SKILL_NAME, body="New.\n")
+        target = self.base / "linked" / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((linked / "SKILL.md").read_bytes())
+        (linked / "SKILL.md").unlink()
+        (linked / "SKILL.md").symlink_to(target)
+
+        completed = self.locate(LOCATOR.directory_digest(clean))
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        payload = self.payload(completed)
+        self.assertEqual("present", payload["status"])
+        self.assertEqual(str(clean), payload["path"])
+
+    def test_an_unreadable_root_is_an_error_not_an_absence(self) -> None:
+        """The skill could be inside a root that cannot be read."""
+        root = self.base / "locked-root"
+        root.mkdir()
+        self.lock(root)
+
+        completed = self.locate(PINNED_DIGEST, root)
+        self.assertEqual(1, completed.returncode, completed.stdout)
+        payload = json.loads(completed.stdout)
+        self.assertEqual("error", payload["status"])
+        self.assertEqual("root_unreadable", payload["cause"])
+
+    def test_a_missing_root_does_not_hide_a_candidate_in_another_root(self) -> None:
+        """A missing root is skipped; another root still decides the verdict."""
+        skill_dir = write_skill(self.root / SKILL_NAME)
+        digest = LOCATOR.directory_digest(skill_dir)
+
+        completed = self.locate(digest, self.base / "does-not-exist", self.root)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        payload = self.payload(completed)
+        self.assertEqual("present", payload["status"])
+        self.assertEqual(str(skill_dir), payload["path"])
 
 
 class DirectoryDigestTests(unittest.TestCase):

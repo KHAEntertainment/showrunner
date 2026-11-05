@@ -16,16 +16,22 @@ Usage:
 ``--root`` may be repeated; every root is searched for directories named
 after the skill. A plugin cache that holds several versions of the same
 plugin yields several candidates, and the one whose digest matches the pin
-wins.
+wins. A root that does not exist is skipped. A root that exists but cannot
+be read is an operational error (``root_unreadable``), never an absence:
+the skill could be inside it.
 
 Output (one JSON object on stdout):
 
-* ``status`` is ``present``, ``not_available`` or ``drift``.
+* ``status`` is ``present``, ``not_available``, ``drift`` or ``error``.
 * On ``present``: ``path`` (the matching directory) and ``digest`` (the
   directory digest that was computed).
 * On ``not_available`` / ``drift``: a ``cause``, and never a "success" that a
   caller could mistake for a completed step.
-* ``candidates`` lists every directory that was examined, with its digest.
+* On ``error``: a ``cause`` and a ``detail``. An operational error is not a
+  verdict -- the locator could not find out whether the pin is satisfied.
+* ``candidates`` lists every candidate that was digested, with its digest;
+  ``symlinked`` lists the candidates refused because they hold a symlink;
+  ``unreadable`` lists the roots and candidates that could not be read.
 * ``pin_commit`` echoes the ``--commit`` value that was passed in. The commit
   is recorded, not verified: only the digest is checked, because the digest
   of the whole directory is what the pin is actually compared against. A
@@ -40,15 +46,44 @@ Causes:
   the pin.
 * ``multiple_versions_none_match`` -- several candidates were found (a plugin
   cache with more than one version) and none of them matched the pin.
+* ``symlinked_content`` -- a candidate holds a symlink, a file or a
+  directory, ``SKILL.md`` included. Symlinked content is never followed and
+  never hashed, so such a candidate can never be reported as ``present``.
+* ``root_unreadable`` -- a root exists but could not be read.
+* ``candidate_unreadable`` -- a candidate exists but could not be read.
 
 The ``not_available`` / ``drift`` vocabulary and the mandatory ``cause`` are
 the provider-result vocabulary of contract SC-5 as revised by PR #209: an
-absent or drifted provider is never reported as a completed research step.
+absent or drifted provider is never reported as a completed research step,
+and an operational error is not a verdict at all.
+
+Verdict precedence, when nothing matched:
+
+    1. a candidate that matched        -> present
+    2. an unreadable root              -> error / root_unreadable
+    3. an unreadable candidate         -> error / candidate_unreadable
+    4. a candidate holding a symlink   -> drift / symlinked_content
+    5. no candidate at all             -> not_available / no_candidate_found
+    6. candidates, none matching       -> drift / digest_mismatch (one) or
+                                          multiple_versions_none_match
+                                          (several)
+
+An unreadable tree outranks a drift cause, because an unreadable candidate
+could have been the match; a symlinked candidate can never match, so it
+yields a definitive drift.
 
 Exit codes:
+
     0  present -- a candidate matched the pinned digest.
-    2  not_available or drift -- the pin could not be satisfied.
-    1  usage error (bad arguments), or a candidate tree could not be read.
+    2  not_available or drift -- a definitive verdict: the pin was not
+       satisfied by anything that was found.
+    1  usage error, or an operational error.
+       - Usage error: stdout is empty and stderr carries the usage message.
+       - Operational error: stdout carries one JSON error object
+         ({"status": "error", "cause": ...}) and stderr is empty.
+       A caller must treat exit 1 as "no verdict": it is neither
+       ``present`` nor a definitive absence, and it must never be reported
+       as a completed research step.
 
 Directory digest
 ----------------
@@ -56,9 +91,12 @@ The digest of a skill directory is the SHA-256 (hex) of a canonical byte
 stream built from every regular file in the tree:
 
 * VCS directories (``.git``, ``.hg``, ``.svn``) are excluded.
-* Symlinks -- files and directories alike -- are excluded, so the digest
-  never depends on anything outside the directory it was given and never
-  follows a cycle.
+* Symlinks -- files and directories alike -- are excluded from the digest and
+  are never followed, so the digest never depends on anything outside the
+  directory it was given and never follows a cycle. A candidate that holds a
+  symlink is not a valid match at all: the content behind the link could
+  change without changing the digest, so such a candidate is reported as
+  drift with the cause ``symlinked_content``.
 * Non-regular files (sockets, FIFOs, devices) are excluded.
 * Empty directories carry no information and are excluded.
 * Every surviving file contributes exactly one record::
@@ -95,7 +133,7 @@ VCS_DIR_NAMES = frozenset({".git", ".hg", ".svn"})
 MAX_SEARCH_DEPTH = 8
 
 EXIT_PRESENT = 0
-EXIT_USAGE = 1
+EXIT_NO_VERDICT = 1  # usage error or operational error: no verdict at all
 EXIT_ABSENT = 2
 
 DIGEST_PREFIX = "sha256:"
@@ -132,46 +170,50 @@ def format_digest(hex_digest: str) -> str:
     return f"{DIGEST_PREFIX}{hex_digest}"
 
 
-def _collect_files(root: Path) -> list[tuple[str, Path]]:
-    """Return every hashable file under ``root`` as (relative path, path).
+def scan_directory(root: Path) -> tuple[list[tuple[str, Path]], list[str]]:
+    """Return the regular files and the symlinks under ``root``.
 
-    The relative path is POSIX-style and relative to ``root``. Exclusions:
-    VCS directories, symlinks, and non-regular files.
+    The first list holds ``(relative path, path)`` for every regular file,
+    sorted by the UTF-8 bytes of the relative path. The second holds the
+    relative path of every symlink found, sorted the same way. Symlinks are
+    never followed and never hashed.
+
+    Raises ``LocatorError`` when a directory in the tree cannot be read: a
+    partial tree has no digest, and saying so beats hashing what happened to
+    be readable.
     """
-    collected: list[tuple[str, Path]] = []
+    files: list[tuple[str, Path]] = []
+    links: list[str] = []
     stack: list[tuple[Path, str]] = [(root, "")]
     while stack:
         directory, prefix = stack.pop()
         try:
             entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
         except OSError as error:
-            # A tree that cannot be fully walked has no digest. Saying so is
-            # better than hashing a partial tree: a partial digest can only
-            # ever fail to match the pin, but it would report the pin as
-            # drifted when the truth is that the tree was unreadable.
             raise LocatorError(f"cannot read directory {directory}: {error}") from error
         for entry in entries:
             if entry.name in VCS_DIR_NAMES:
                 continue
-            if entry.is_symlink():
-                continue
             relative = f"{prefix}{entry.name}"
+            if entry.is_symlink():
+                # Never followed, never hashed: the content behind a link
+                # could change without changing the digest, so a candidate
+                # that holds one can never be a valid match.
+                links.append(relative)
+                continue
             if entry.is_dir():
                 stack.append((entry, f"{relative}/"))
             elif entry.is_file():
-                collected.append((relative, entry))
-    collected.sort(key=lambda item: item[0].encode("utf-8"))
-    return collected
+                files.append((relative, entry))
+    files.sort(key=lambda item: item[0].encode("utf-8"))
+    links.sort(key=lambda relative: relative.encode("utf-8"))
+    return files, links
 
 
-def directory_digest(root: Path) -> str:
-    """Return the SHA-256 hex digest of the directory tree at ``root``.
-
-    See the module docstring for the exact algorithm. The tree is read and
-    never written.
-    """
+def _digest_files(files: list[tuple[str, Path]]) -> str:
+    """Return the SHA-256 hex digest of the given ``(relative path, path)`` files."""
     digest = hashlib.sha256()
-    for relative, path in _collect_files(root):
+    for relative, path in files:
         try:
             data = path.read_bytes()
         except OSError as error:
@@ -180,6 +222,17 @@ def directory_digest(root: Path) -> str:
         record += str(len(data)).encode("ascii") + b"\0" + data + b"\0"
         digest.update(record)
     return digest.hexdigest()
+
+
+def directory_digest(root: Path) -> str:
+    """Return the SHA-256 hex digest of the directory tree at ``root``.
+
+    See the module docstring for the exact algorithm. The tree is read and
+    never written. Symlinks are excluded from the digest; a tree that holds
+    one is not a valid match for the locator (see ``symlinked_content``).
+    """
+    files, _links = scan_directory(root)
+    return _digest_files(files)
 
 
 def _iter_directories(root: Path, max_depth: int) -> list[tuple[Path, int]]:
@@ -205,25 +258,67 @@ def _iter_directories(root: Path, max_depth: int) -> list[tuple[Path, int]]:
     return found
 
 
-def find_candidates(roots: list[Path], skill: str, max_depth: int = MAX_SEARCH_DEPTH) -> list[Path]:
-    """Return every directory under ``roots`` that could hold the skill.
+def _classify_skill_entry(directory: Path) -> str:
+    """Return ``file``, ``symlink`` or ``absent`` for a candidate's ``SKILL.md``.
+
+    Raises OSError when the directory cannot be inspected at all, which is
+    how an unreadable candidate is told apart from one that simply has no
+    ``SKILL.md``.
+    """
+    entry = directory / "SKILL.md"
+    if entry.is_symlink():
+        return "symlink"
+    try:
+        entry.stat()
+    except FileNotFoundError:
+        return "absent"
+    if not entry.is_file():
+        return "absent"
+    return "file"
+
+
+def find_candidates(
+    roots: list[Path],
+    skill: str,
+    max_depth: int = MAX_SEARCH_DEPTH,
+) -> tuple[list[Path], list[tuple[Path, str]], list[tuple[Path, str]]]:
+    """Return the candidates, the unreadable roots and the unreadable candidates.
 
     A candidate is a directory whose name is exactly ``skill`` and that
-    contains a ``SKILL.md``. The name test is what makes a plugin cache with
+    holds a ``SKILL.md``. The name test is what makes a plugin cache with
     several versions resolve to several candidates instead of one.
+
+    A root that does not exist is skipped: it is not a candidate source and
+    its absence says nothing about the skill. A root that exists but cannot
+    be read is reported, because the skill could be inside it.
     """
     candidates: list[Path] = []
+    unreadable_roots: list[tuple[Path, str]] = []
+    unreadable_candidates: list[tuple[Path, str]] = []
     seen: set[Path] = set()
     for root in roots:
         try:
-            if not root.is_dir():
+            if not root.exists():
                 continue
-        except (OSError, ValueError):
+            if not root.is_dir():
+                raise ValueError(f"--root is not a directory: {root}")
+            list(root.iterdir())
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            unreadable_roots.append((root, f"cannot read root {root}: {error}"))
             continue
         for directory, depth in _iter_directories(root, max_depth):
             if depth > max_depth or directory.name != skill:
                 continue
-            if not (directory / "SKILL.md").is_file():
+            try:
+                kind = _classify_skill_entry(directory)
+            except OSError as error:
+                unreadable_candidates.append(
+                    (directory, f"cannot inspect {directory}: {error}")
+                )
+                continue
+            if kind == "absent":
                 continue
             resolved = directory.resolve()
             if resolved in seen:
@@ -231,7 +326,7 @@ def find_candidates(roots: list[Path], skill: str, max_depth: int = MAX_SEARCH_D
             seen.add(resolved)
             candidates.append(directory)
     candidates.sort(key=lambda path: str(path))
-    return candidates
+    return candidates, unreadable_roots, unreadable_candidates
 
 
 def locate(
@@ -246,38 +341,67 @@ def locate(
     ``digest`` is the bare lowercase hex of the pinned directory digest.
     """
     pinned = normalize_digest(digest)
-    candidates = find_candidates(roots, skill, max_depth=max_depth)
+    candidates, unreadable_roots, unreadable_candidates = find_candidates(
+        roots, skill, max_depth=max_depth
+    )
     examined: list[dict[str, str]] = []
+    symlinked: list[dict[str, object]] = []
+    matched: Path | None = None
+    matched_digest = ""
     for candidate in candidates:
-        actual = directory_digest(candidate)
+        try:
+            files, links = scan_directory(candidate)
+            if links:
+                symlinked.append({"path": str(candidate), "symlinks": links})
+                continue
+            actual = _digest_files(files)
+        except LocatorError as error:
+            unreadable_candidates.append((candidate, str(error)))
+            continue
         examined.append({"path": str(candidate), "digest": format_digest(actual)})
-        if actual == pinned:
-            return {
-                "status": "present",
-                "skill": skill,
-                "pin_commit": commit,
-                "path": str(candidate),
-                "digest": format_digest(actual),
-                "candidates": examined,
-            }
-    if not candidates:
+        if actual == pinned and matched is None:
+            matched = candidate
+            matched_digest = actual
+    unreadable = [
+        {"path": str(path), "detail": detail}
+        for path, detail in unreadable_roots + unreadable_candidates
+    ]
+    base: dict[str, object] = {
+        "skill": skill,
+        "pin_commit": commit,
+        "candidates": examined,
+        "symlinked": symlinked,
+        "unreadable": unreadable,
+    }
+    if matched is not None:
         return {
-            "status": "not_available",
-            "skill": skill,
-            "pin_commit": commit,
-            "cause": "no_candidate_found",
-            "candidates": [],
+            **base,
+            "status": "present",
+            "path": str(matched),
+            "digest": format_digest(matched_digest),
         }
+    if unreadable_roots:
+        return {
+            **base,
+            "status": "error",
+            "cause": "root_unreadable",
+            "detail": unreadable[0]["detail"],
+        }
+    if unreadable_candidates:
+        return {
+            **base,
+            "status": "error",
+            "cause": "candidate_unreadable",
+            "detail": unreadable[0]["detail"],
+        }
+    if symlinked:
+        return {**base, "status": "drift", "cause": "symlinked_content"}
+    if not candidates:
+        return {**base, "status": "not_available", "cause": "no_candidate_found"}
     cause = (
         "multiple_versions_none_match" if len(candidates) > 1 else "digest_mismatch"
     )
-    return {
-        "status": "drift",
-        "skill": skill,
-        "pin_commit": commit,
-        "cause": cause,
-        "candidates": examined,
-    }
+    return {**base, "status": "drift", "cause": cause}
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -290,7 +414,7 @@ class _ArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # noqa: D102 - argparse contract
         self.print_usage(sys.stderr)
         print(f"error: {message}", file=sys.stderr)
-        raise SystemExit(EXIT_USAGE)
+        raise SystemExit(EXIT_NO_VERDICT)
 
 
 def _digest_argument(value: str) -> str:
@@ -344,25 +468,40 @@ def main(argv: list[str] | None = None) -> int:
     for raw in args.root:
         if not raw.strip():
             print("error: --root must not be empty", file=sys.stderr)
-            return EXIT_USAGE
+            return EXIT_NO_VERDICT
         try:
             roots.append(Path(raw).expanduser())
         except (OSError, RuntimeError, ValueError) as error:
             print(f"error: invalid --root {raw!r}: {error}", file=sys.stderr)
-            return EXIT_USAGE
+            return EXIT_NO_VERDICT
     try:
         payload = locate(args.skill, args.commit, args.digest, roots)
-    except LocatorError as error:
-        print(
-            json.dumps({"status": "error", "cause": "unreadable_candidate", "detail": str(error)}),
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
     except ValueError as error:
+        # A bad argument: a malformed pin, or a root that is not a directory.
         print(f"error: {error}", file=sys.stderr)
-        return EXIT_USAGE
+        return EXIT_NO_VERDICT
+    except LocatorError as error:
+        # An operational error: stdout carries the error object, because the
+        # caller asked for a JSON result and there is no verdict to give.
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "cause": "candidate_unreadable",
+                    "detail": str(error),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return EXIT_NO_VERDICT
     print(json.dumps(payload, indent=2, sort_keys=True))
-    return EXIT_PRESENT if payload["status"] == "present" else EXIT_ABSENT
+    status = payload["status"]
+    if status == "present":
+        return EXIT_PRESENT
+    if status == "error":
+        return EXIT_NO_VERDICT
+    return EXIT_ABSENT
 
 
 if __name__ == "__main__":
