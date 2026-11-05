@@ -55,7 +55,7 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-3/evidence-accepted-parent-acceptance.json` | `11847ae86c6c9cae442f63f27b901962d003f514643f9da751bb33e94b210d72` |
 | `fixtures/sc-3/evidence-rejected-parent-acceptance-carries-result.json` | `45bb71c55b2e14bd42ccd839bc40cfd0f29987608494c755e45e4fe91d0d8710` |
 | `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `bc99b3afc095a0e772f9c95f031b9a397481545cb5bae6c024aa7c17dd5b8576` |
-| `fixtures/sc-4/accepted-mapped-acceptance-lane.json` | `b9c5b3987d52b735dc1619dd7f694e172330d50f609920259218aa8183df3ae4` |
+| `fixtures/sc-4/accepted-mapped-acceptance-lane.json` | `5da5c4ee61e8e5951be3a3a27eb484ebd0ab82a7feafe69f686da134ac67cde0` |
 | `fixtures/sc-4/rejected-missing-mandatory-qa.json` | `ed6c30ce2968548c85132701fd5c7d8ff86766adfd5993dc4c60b1f3f9645284` |
 | `fixtures/sc-5/accepted-scoped-read-only-finding.json` | `81e1e7ace3f34a8ba71672b4e5966abec2f1db45135a94435dc47c1287b8d76c` |
 | `fixtures/sc-5/rejected-secret-bearing-request.json` | `8f89c71441bf67ea3da61e5df288a5865ca644c2899518c0c20d9a7a370d90ed` |

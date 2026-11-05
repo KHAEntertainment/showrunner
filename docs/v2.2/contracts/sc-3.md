@@ -96,14 +96,25 @@ Meanings from the SDP only; spelling is Dev's (l.432).
 | `goal.fixed_issues` | frozen qualified Issue set | 1..* | required | the frozen Issue set |
 | `goal.frozen_at` | time | 1 | required | freeze time |
 | `evidence_profile` | reference | 1 | required | the evidence profile (`completion-evidence-v1`) |
-| `consumed_inputs` | list of reference/revision/recorded-time/digest | 1..* | required | each consumed input with reference, revision or recorded time, and digest (l.443); includes the merged-tree gate result and the per-criterion identity/evaluator/proof, each bound to the tested subject (D4.4 l.410) |
+| `consumed_inputs` | list of reference/revision/recorded-time/digest | 1..* | required | each consumed input with reference, revision or recorded time, and digest (l.443); includes the merged-tree gate result and the per-criterion identity/evaluator/proof, whose accepted-proof form follows its evaluator type — only the `test` form binds to the tested subject (D4.4 l.408–l.415) |
 | `purpose` | enum (`final` / `readiness`) | 1 | required | `final` returns `verified`/`not_complete`/`inconclusive`; `readiness` returns `evidence_ready`/`not_ready`/`inconclusive`, **never `verified`** (l.433) |
 | `repository_facts` | record + `observed_at` | 1 | required | fresh repository facts: PRs with state, merge revision, destination branch and reachability from that branch (D4.3 l.390–392), closed Issues, and integrated acceptance with its record/revision (l.434) |
-| `criteria[]` | per-criterion record | 1..* | required | at `criteria_ref`: evaluator, `met`/`unmet`/`inconclusive`, reason code, and accepted proof — `{conclusion, definition, tested_subject}` bound to the tested subject (l.435; D4.4 l.410) |
+| `criteria[]` | per-criterion record | 1..* | required | at `criteria_ref`: evaluator, `met`/`unmet`/`inconclusive`, reason code, and accepted proof — conditional on the evaluator type (four D4.4 forms, below); only the `test` form is bound to the tested subject (l.435; D4.4 l.408–l.415) |
 | `outcome` | enum | 1 | required | outcome within its purpose's vocabulary |
 | `reason_codes` | list | 0..* | conditional (when not `verified`) | each naming affected Issues/PRs/criteria (l.436) |
 | `producer` | record | 1 | required | helper + Skill revision; invoker role/ID/harness; consumer context; `recorded_by: lead` (l.437) |
 | `supersedes` | lineage reference | 0..* | conditional | lineage chain per `(run_id, purpose)` (l.438) |
+
+## Accepted proof by evaluator type (D4.4 l.408–l.415)
+
+`criteria[].accepted_proof` is conditional on the criterion's `evaluator` type; only the `test` form binds the proof to the tested subject. Field names and the never-accepted limits are copied from the SDP.
+
+| Evaluator | Proof GV accepts | Never accepted |
+| --- | --- | --- |
+| `test` | The named CI run, job and attempt concluded `success`; its definition matches the recorded `definition_ref`; it covers the recorded tested subject with applicability established | A green run for a different subject, definition or environment; a skipped or cancelled run |
+| `demonstration` | A recorded demonstration naming what was shown, where, at which revision, and how; at the criterion's current revision and not expired | A demonstration standing in for a test, reviewer or human evaluator; an unexplained "works" claim |
+| `independent reviewer` | A review by the project's reviewer of record at the recorded head, with no unresolved material finding against the criterion; an external reviewer is identified by the GitHub review author, an internal review lane by the recorded lane identity plus retained review evidence | A review by the lead or by the worker who implemented the change; a review of an earlier head |
+| `human` | A fixed acceptance command `/accept <criterion-id>` (revision-qualified ID) posted from the owner's configured GitHub account, after the criterion's current revision was approved; one acceptance per criterion, never per PR | A lead's summary or paraphrase; an informal comment such as "looks good"; a panel acknowledgement (D9.5); a command naming a superseded criterion revision |
 
 ## D4.5 reader rules (l.441–l.448)
 
