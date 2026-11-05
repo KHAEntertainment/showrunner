@@ -42,6 +42,7 @@ REQUIRED = {
     "scripts/dev_config.py",
     "scripts/resolve_repository.py",
     "scripts/workspace_debt.py",
+    "scripts/locate_pinned_skill.py",
     "graft.md",
 }
 
