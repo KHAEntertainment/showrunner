@@ -2,6 +2,8 @@
 
 **Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.544. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
+L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
+
 **Contracts.** `provider-request-v1` (a request to a provider/model/tool) and `provider-result-v1` (the result/error it returns).
 
 **Semantic owner.** Shared utility owner; the domain owns the verdict (l.544).
@@ -28,9 +30,21 @@
 | `result` / `error_provenance` | record | 1 | required | result or error provenance |
 | `credentials` | reference | 0..* | conditional (condition not stated in the SDP; present only when the source records it (no default inferred)) | credentials by reference only — never inline (l.544) |
 
-**Accepted example.** A scoped read-only finding, or a typed domain answer (l.544).
+**`result` sub-table.** `provider-result-v1` `result.type` ∈ {`finding`, `needs_input`, `not_available`, `drift`, `error`} (SDP l.81; AC-02 l.750).
 
-**Rejected example.** Secret-bearing requests; model-granted writes; an unavailable required judgment defaulting to LOW; one domain's calibration asserted for another (l.544).
+| `result.type` | `cause` / `question` | Meaning |
+| --- | --- | --- |
+| `finding` | none | a scoped read-only finding or typed domain answer — the domain owns the verdict (l.544) |
+| `needs_input` | `question` (required, read-only) | a question returned to the lead, who answers from evidence or escalates genuinely user-owned choices (l.81) |
+| `not_available` | `cause` (required) | the provider is absent; fall back visibly, never install automatically (l.81) |
+| `drift` | `cause` (required) | the provider pin mismatches the located/installed provider; fall back visibly (l.81) |
+| `error` | `cause` (required) | a failed invocation with error provenance |
+
+`cause` is required for `not_available`, `drift` and `error`. `not_available` and `drift` are never reported as a completed research step — they are a visible fallback, not a step result (l.81; l.750).
+
+**Accepted example.** A scoped read-only finding, or a typed domain answer (l.544); a `needs_input` question back to the lead; an absent/drifted provider falling back visibly with a `cause` (l.81, l.750).
+
+**Rejected example.** Secret-bearing requests; model-granted writes; an unavailable required judgment defaulting to LOW; one domain's calibration asserted for another (l.544); a `not_available`/`drift`/`error` result without a `cause` (l.81, l.750).
 
 **Edge cases.**
 
@@ -38,10 +52,17 @@
 - model-granted write → `reject`
 - unavailable required judgment defaulting LOW → `reject`
 - one domain's calibration asserted for another → `reject`
+- `not_available` / `drift` / `error` without `cause` → `reject`
+- `needs_input` without `question` → `reject`
 
 **Fixtures.**
 
 - `fixtures/sc-5/accepted-scoped-read-only-finding.json` (accept)
 - `fixtures/sc-5/rejected-secret-bearing-request.json` (reject)
+- `fixtures/sc-5/accepted-needs-input.json` (accept)
+- `fixtures/sc-5/accepted-drift-fallback.json` (accept)
+- `fixtures/sc-5/rejected-not-available-without-cause.json` (reject)
 
 **Counterpart acceptance.** `pending` per consumer (P1; U2, O-STOP, O-DB later). No compatibility inferred from silence (l.550).
+
+**Revision note.** Additive v1 revision, 2026-11-05, M2 L0b (defects D-SC1-1, D-SC5-1). Consumers listed unchanged.

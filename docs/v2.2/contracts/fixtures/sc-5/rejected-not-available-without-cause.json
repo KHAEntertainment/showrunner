@@ -1,0 +1,30 @@
+{
+  "sc": "SC-5",
+  "version": "provider-result-v1",
+  "kind": "rejected",
+  "name": "rejected-not-available-without-cause",
+  "input": {
+    "domain": "research",
+    "schema": "synthetic-finding-v1",
+    "source_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sensitivity": "internal",
+    "allowed_capabilities": ["read_only"],
+    "provider": "synthetic-provider",
+    "model": "synthetic-model",
+    "route": "synthetic-route",
+    "usage": "bounded",
+    "retry": 1,
+    "result": {
+      "type": "not_available"
+    }
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: a `not_available` result (provider absent) without a required `cause` — `cause` is required for `not_available`/`drift`/`error` (SDP l.81; AC-02 l.750).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b",
+    "sdp_line": 544
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}
