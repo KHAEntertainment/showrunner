@@ -113,6 +113,7 @@ class WiringTests(unittest.TestCase):
     def test_template_plans_row_and_gitignore(self) -> None:
         text = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("`docs/plans/`", text)
+        self.assertIn("prototypes/\nPRD-draft.md\n.agent/\n", text)
         self.assertIn("is never committed (D6.5.5)", text)
 
 

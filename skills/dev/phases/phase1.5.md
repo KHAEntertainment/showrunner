@@ -84,7 +84,7 @@ Present the draft for the user's approval. Only the user approves the Technical 
 
 ## Step 5 — `plan_ref` provenance
 
-Every approved Technical Plan carries a `plan_ref`. The shape is the `plan_ref` sub-table of SC-1 (`docs/v2.2/contracts/sc-1.md` @ `f839f15`), and it must not require machine-specific paths (D1):
+Every approved Technical Plan carries a `plan_ref`. The shape is the `plan_ref` sub-table of SC-1 (`docs/v2.2/contracts/sc-1.md` @ `89231c0`), and it must not require machine-specific paths (D1):
 
 ```
 plan_ref:

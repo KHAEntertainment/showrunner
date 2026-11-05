@@ -95,7 +95,7 @@ class TemplateContentTests(unittest.TestCase):
         for field in ("**origin**", "**revision or digest**", "**directives not followed**"):
             with self.subTest(field=field):
                 self.assertIn(field, self.template)
-        self.assertIn("the source locator lives in this section", self.template)
+        self.assertIn("the supplied source's locator lives in this section", self.template)
 
 
 if __name__ == "__main__":

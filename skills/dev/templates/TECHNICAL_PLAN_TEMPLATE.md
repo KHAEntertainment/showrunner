@@ -16,7 +16,7 @@ For each supplied source, record three per-source fields (D6.3.6):
 - **revision or digest** — the source's revision or digest as read.
 - **directives not followed** — the source's foreign workflow directives, listed once and not followed.
 
-`plan_ref.source_revision` carries only the drafted-from input's digest; the source locator lives in this section, not in `plan_ref`.
+`plan_ref.source_revision` carries only the drafted-from input's digest; the supplied source's locator lives in this section, not in `plan_ref`.
 
 ## Locked decisions
 
@@ -46,7 +46,7 @@ A material amendment creates a new revision and reopens affected approval (D6.2.
 
 ## `plan_ref` (SC-1)
 
-The shape is the `plan_ref` sub-table of SC-1 (`docs/v2.2/contracts/sc-1.md` @ `f839f15`), and it must not require machine-specific paths:
+The shape is the `plan_ref` sub-table of SC-1 (`docs/v2.2/contracts/sc-1.md` @ `89231c0`), and it must not require machine-specific paths:
 
 ```text
 origin:
