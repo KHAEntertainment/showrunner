@@ -62,15 +62,17 @@ Verdict precedence, when nothing matched:
     1. a candidate that matched        -> present
     2. an unreadable root              -> error / root_unreadable
     3. an unreadable candidate         -> error / candidate_unreadable
-    4. a candidate holding a symlink   -> drift / symlinked_content
-    5. no candidate at all             -> not_available / no_candidate_found
-    6. candidates, none matching       -> drift / digest_mismatch (one) or
+    4. clean candidates, none matching -> drift / digest_mismatch (one) or
                                           multiple_versions_none_match
                                           (several)
+    5. a candidate holding a symlink   -> drift / symlinked_content
+    6. no candidate at all             -> not_available / no_candidate_found
 
 An unreadable tree outranks a drift cause, because an unreadable candidate
-could have been the match; a symlinked candidate can never match, so it
-yields a definitive drift.
+could have been the match. A clean candidate whose digest mismatches is a
+more specific drift than a symlinked one: a symlinked candidate can never
+match, so it is listed under ``symlinked`` and never chosen, but it does not
+hide a digest mismatch beside it.
 
 Exit codes:
 
@@ -298,13 +300,16 @@ def find_candidates(
     seen: set[Path] = set()
     for root in roots:
         try:
-            if not root.exists():
-                continue
+            root.stat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            unreadable_roots.append((root, f"cannot read root {root}: {error}"))
+            continue
+        try:
             if not root.is_dir():
                 raise ValueError(f"--root is not a directory: {root}")
             list(root.iterdir())
-        except FileNotFoundError:
-            continue
         except OSError as error:
             unreadable_roots.append((root, f"cannot read root {root}: {error}"))
             continue
@@ -394,14 +399,14 @@ def locate(
             "cause": "candidate_unreadable",
             "detail": unreadable[0]["detail"],
         }
+    if examined:
+        cause = (
+            "multiple_versions_none_match" if len(examined) > 1 else "digest_mismatch"
+        )
+        return {**base, "status": "drift", "cause": cause}
     if symlinked:
         return {**base, "status": "drift", "cause": "symlinked_content"}
-    if not candidates:
-        return {**base, "status": "not_available", "cause": "no_candidate_found"}
-    cause = (
-        "multiple_versions_none_match" if len(candidates) > 1 else "digest_mismatch"
-    )
-    return {**base, "status": "drift", "cause": cause}
+    return {**base, "status": "not_available", "cause": "no_candidate_found"}
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -479,21 +484,6 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         # A bad argument: a malformed pin, or a root that is not a directory.
         print(f"error: {error}", file=sys.stderr)
-        return EXIT_NO_VERDICT
-    except LocatorError as error:
-        # An operational error: stdout carries the error object, because the
-        # caller asked for a JSON result and there is no verdict to give.
-        print(
-            json.dumps(
-                {
-                    "status": "error",
-                    "cause": "candidate_unreadable",
-                    "detail": str(error),
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
         return EXIT_NO_VERDICT
     print(json.dumps(payload, indent=2, sort_keys=True))
     status = payload["status"]

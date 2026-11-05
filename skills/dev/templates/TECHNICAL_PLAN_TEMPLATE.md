@@ -26,6 +26,17 @@ Decisions settled at intake or during drafting, each with its source citation. F
 
 Open items that still need a decision, each at decision granularity. Document conflicts become gaps here (D6.3.5).
 
+## Research findings and provider provenance
+
+Record each research source or provider in SC-5 shape (D6.3.6, SC-5):
+
+- **type** — `C1` (built-in read-only research lane) or `C2` (pinned provider).
+- **provider** — for C2, the provider name and pin (skill name, commit, directory digest); for C1, the research agent.
+- **locator** — for C2, the locator verdict `present`, or `not_available` / `drift` / `error` with its `cause` (availability, not an SC-5 result).
+- **result** — the SC-5 `result.type`: `finding` only for an evidenced answer; `needs_input` with `question`; `not_available` / `drift` / `error` with `cause`. A locator fallback is recorded with no finding.
+- **evidence** — the sources read, each with its revision or digest, and what it supports.
+- **unresolved questions** — gaps left open after research, at decision granularity.
+
 ## Approach
 
 How the change is made: the mechanism, the sequence, and the reversible engineering details.

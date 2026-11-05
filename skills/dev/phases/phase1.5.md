@@ -61,8 +61,11 @@ Record origin, revision or digest, and the list of directives not followed, per 
 
 ## Step 2 — Research
 
-> **Placeholder — Research (C1/C2), defined by #207.**
-> No content here yet; #207 defines the research lane (C1 built-in read-only research and lead-owned synthesis; C2 optional pinned `advise-project-approach`).
+Research the gaps that remain after intake, read-only, with lead-owned synthesis (D6.3). The lane is defined in `${CLAUDE_SKILL_DIR}/research.md`.
+
+- **C1** runs always: the lead dispatches the read-only researcher (`${CLAUDE_SKILL_DIR}/agents/researcher.md`) against the repository and primary documentation.
+- **C2** is optional: the lead runs the locator (`${CLAUDE_SKILL_DIR}/scripts/locate_pinned_skill.py`) with the proposed pin in `${CLAUDE_SKILL_DIR}/research.md`. `present` → the provider may be used; `not_available` / `drift` / `error` → fall back visibly to C1 with the `cause` shown and recorded, never install automatically, and never report the fallback as a completed research step.
+- A provider `needs_input` returns to the lead, who answers from evidence or escalates only genuinely user-owned choices.
 
 The lite Phase 1.5 for Refactoring skips this step entirely.
 

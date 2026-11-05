@@ -2,8 +2,8 @@
 
 Assertions cover only what the lane creates: the phase file and template exist,
 the disambiguation and intake sentences are present, the template sections and
-provisional `plan_ref` fields are present, and the research placeholder is
-marked with no content.
+provisional `plan_ref` fields are present, and the Step 2 research step points
+at the C1/C2 lane instead of a placeholder.
 """
 
 from __future__ import annotations
@@ -65,8 +65,10 @@ class Phase15ContentTests(unittest.TestCase):
             self.phase,
         )
 
-    def test_research_placeholder_marked(self) -> None:
-        self.assertIn("Research (C1/C2), defined by #207", self.phase)
+    def test_research_step_is_defined_not_placeholder(self) -> None:
+        # L4 (#207) filled the Step 2 placeholder; it is no longer a placeholder.
+        self.assertNotIn("Research (C1/C2), defined by #207", self.phase)
+        self.assertIn("${CLAUDE_SKILL_DIR}/research.md", self.phase)
 
     def test_plan_ref_cites_sc1_and_d4_invariant(self) -> None:
         self.assertIn("SC-1", self.phase)
