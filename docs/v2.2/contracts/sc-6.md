@@ -30,21 +30,25 @@
 
 **Board schema.** Not identified in this package's pinned sources. Recorded as `unavailable/deferred` with reason: board notes/presence are owned by the board, and the board schema is not among the sources pinned for SC-6 here. No D9 question is decided by this package.
 
-**Field table.** Meanings from the SDP only.
+**Field table.** Meanings from the SDP only; required/conditional are source-dependent (`.dev.json` vs a supplied document vs Foreman `project.json`).
 
 | Field | Type | Cardinality | Required/conditional | Meaning |
 | --- | --- | --- | --- | --- |
-| `project` / `repo` / `host` | qualified identifier | 1 | required | explicit project/repo/host |
-| `push_repository` | qualified identifier | 1 | required | the push destination (distinct from the PR destination) |
-| `pull_request_repository` | qualified identifier | 1 | required | the PR destination |
-| `push_remote` | string | 1 | required | the named push remote |
-| `tracker_ids` | list of tracker-qualified IDs/revisions | 1..* | required | tracker-qualified IDs and revisions |
-| `bridge` | record | 0..1 | conditional | bridge watermark / bridged records |
-| `provenance` | record | 1 | required | provenance of the record |
+| `source` | enum (`dev-config` / `foreman-project` / `supplied-document`) | 1 | required | which source the record projects: `.dev.json`, Foreman `project.json`, or a supplied document |
+| `project` / `repo` / `host` | qualified identifier | 1 | required | explicit project/repo/host. **Alias (declared):** Foreman `project.json` `repo.github` maps to the same `project`/`repo` meaning; a record uses one spelling, never both inconsistently |
+| `push_repository` | qualified identifier | 0..1 | conditional (`dev-config` source) | push destination (distinct from PR destination), `dev_config.py` `github.pushRepository` |
+| `pull_request_repository` | qualified identifier | 0..1 | conditional (`dev-config` source) | PR destination, `dev_config.py` `github.pullRequestRepository` |
+| `push_remote` | string | 0..1 | conditional (`dev-config` source) | named push remote, `dev_config.py` `github.pushRemote` |
+| `destination_branch` | string | 0..1 | conditional (`foreman-project` source) | default branch, `project.json` `repo.default_branch` |
+| `tracker_ids` | list of tracker-qualified IDs/revisions | 1..* | required (`record-link-v1`); conditional otherwise | tracker-qualified IDs and revisions |
+| `bridge` | record | 0..1 | conditional (Linear trackers only) | bridge watermark / bridged records, `FOREMAN_STATE_TEMPLATE.md` `github_bridge` |
+| `provenance` | record (`origin`, `digest`) | 1 | required | provenance of the record; `origin` names the source |
 | `authoritative_writer` | identity record | 1 | required | the authoritative writer |
 | `operation` | enum (read/write) | 1 | required | intended read/write operation |
 | `delivery` / `dedup_identity` | record | 1 | required | delivery and dedup identity |
 | `policy_ref` / `state_ref` / `credential_ref` | references | 0..* | conditional | kept separate (l.545) |
+
+**Source-dependent required fields.** A `supplied-document` record carries `project`/`repo`/`host` + `provenance` and need not pretend to be Dev config — no `push_repository`/`pull_request_repository`/`push_remote`. A `dev-config` record carries those config fields (distinct push vs PR destinations). A `foreman-project` record carries `repository` (alias of `project`/`repo`), `destination_branch`, and `bridge` when the tracker is Linear.
 
 **Accepted example.** A supplied document with verified provenance; an existing authorized bridge link (l.545).
 

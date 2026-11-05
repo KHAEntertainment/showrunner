@@ -4,7 +4,7 @@
   "kind": "rejected",
   "name": "unusable-outcome-outside-vocabulary",
   "input": {
-    "profile_version": "1",
+    "profile_version": "completion-result-v1",
     "result_id": "synthetic-result-003",
     "run_id": "synthetic-run-010",
     "plan_ref": "docs/plans/2099-01-01-synthetic-plan.md",

@@ -4,6 +4,7 @@
   "kind": "accepted",
   "name": "accepted-verified-provenance-document",
   "input": {
+    "source": "supplied-document",
     "project": "OWNER/synthetic-repo",
     "repo": "OWNER/synthetic-repo",
     "host": "github.com",

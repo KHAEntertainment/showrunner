@@ -4,7 +4,7 @@
   "kind": "rejected",
   "name": "unusable-readiness-never-verified",
   "input": {
-    "profile_version": "1",
+    "profile_version": "completion-result-v1",
     "result_id": "synthetic-result-002",
     "run_id": "synthetic-run-009",
     "plan_ref": "docs/plans/2099-01-01-synthetic-plan.md",

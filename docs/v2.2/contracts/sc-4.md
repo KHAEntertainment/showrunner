@@ -14,18 +14,26 @@
 
 **Authoritative writer / one writer per ledger.** The Dev lead is the sole writer of the Dev conformance record; Foreman keeps its own status checklist. `conformance-v1` maps the actual six-mark Foreman checklist to Dev applicability (l.543); it introduces no new writable store. A satisfied process mark does not grant merge/completion authority (STATUS_UPDATE.md l.32).
 
-**Field table.** Meanings from the SDP only.
+**Field table.** Meanings from the SDP only; required/conditional are source- and interface-dependent (STATUS_UPDATE.md l.28 → SDP D2 l.240–l.241).
 
 | Field | Type | Cardinality | Required/conditional | Meaning |
 | --- | --- | --- | --- | --- |
 | `workflow` / `policy_revision` | reference + digest | 1 | required | workflow / policy revision |
 | `run` / `lane` | string | 1 | required | the run or lane |
 | `head` | reference | 1 | required | the head under check |
-| `gate_applicability` | enum | 1 | required | which gates apply |
-| `evidence` | list of evidence records | 1..* | required | each gate as `required` / `valid-skip` / `pending` / `failed` |
-| `marks` | list of `{foreman_mark, dev_applicability}` | 1..* | required | the Foreman checklist marks mapped to Dev gate applicability |
-| `evaluator` | identity record | 1 | required | the evaluator |
+| `gate_applicability` | enum | 1 | required | which gates apply to this run/lane (e.g. `qa_trigger_below_threshold`) |
+| `evidence` | list of gate records | 1..* | required | one record per applicable gate; entry shape depends on the gate's `state` (below) |
+| `marks` | list of `{foreman_mark, dev_applicability, state}` | 1..* | required | the six Foreman checklist marks (STATUS_UPDATE.md l.28) mapped to Dev applicability |
+| `evaluator` | identity record | 1 | required | the conformance evaluator |
 | `report_ref` | reference | 1 | required | the report reference |
+
+**Gate-kind-dependent `evidence` entry shape.** Each `evidence[]` entry carries `{gate, state}` plus state-dependent fields:
+
+- `state: required` → `evaluator` + `report_ref` are required (a mandatory gate must name its evaluator and report).
+- `state: valid-skip` → `reason` is required (a documented skip must state why, D2 l.240); no evaluator is required.
+- `state: pending` / `state: failed` → no evaluator is required yet; `failed` names the failing evidence.
+
+**Foreman mark → Dev applicability** (STATUS_UPDATE.md l.28 → SDP D2 l.240–l.241). A `marks[]` entry maps a Foreman checklist mark to its Dev gate applicability and the mark's own `state` (`required` / `valid-skip` / `pending` / `failed`).
 
 **Foreman checklist → Dev applicability** (STATUS_UPDATE.md l.28 → SDP D2 l.240–l.241).
 

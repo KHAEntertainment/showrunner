@@ -4,7 +4,7 @@
   "kind": "accepted",
   "name": "accepted-final-verified-completion",
   "input": {
-    "profile_version": "1",
+    "profile_version": "completion-result-v1",
     "result_id": "synthetic-result-001",
     "run_id": "synthetic-run-008",
     "plan_ref": {
@@ -19,16 +19,25 @@
     "evidence_profile": "completion-evidence-v1",
     "consumed_inputs": [
       {
-        "reference": "OWNER/synthetic-repo#1",
-        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "reference": "OWNER/synthetic-repo#10@pr_assurance#post_merge",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
         "recorded_at": "2099-01-02T00:00:00Z",
-        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "supplies": "merged-tree gate result (gate_result, criteria_verdict) at the merge sha"
       },
       {
-        "reference": "OWNER/synthetic-repo#10",
-        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "reference": "OWNER/synthetic-repo#10@pr_assurance#criteria",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
         "recorded_at": "2099-01-02T00:00:00Z",
-        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "supplies": "per-criterion identity, evaluator, and successful proof bound to the tested subject"
+      },
+      {
+        "reference": "OWNER/synthetic-repo#1@parent_acceptance",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+        "recorded_at": "2099-01-02T00:00:00Z",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000003",
+        "supplies": "integrated acceptance record"
       }
     ],
     "purpose": "final",
@@ -37,28 +46,45 @@
       "pull_requests": [
         {
           "pr": "OWNER/synthetic-repo#10",
-          "merge_sha": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
-          "destination_reachable": true
+          "state": "merged",
+          "merge_sha": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+          "destination_branch": "main",
+          "reachable_from_destination": true
         }
       ],
       "closed_issues": [
         {
           "issue": "OWNER/synthetic-repo#1",
-          "closed": true
+          "state": "closed"
         }
       ],
       "integrated_acceptance": {
         "parent": "OWNER/synthetic-repo#1",
-        "current": true
+        "record": "parent_acceptance",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000005"
       }
     },
     "criteria": [
       {
         "criteria_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "id": "AC-1@0000000000000000000000000000000000000000000000000000000000000002",
         "evaluator": "test",
         "state": "met",
         "reason_code": "ok",
-        "accepted_proof": "CI run synthetic-run-001/job-1/attempt-1"
+        "accepted_proof": {
+          "conclusion": "success",
+          "definition": {
+            "ref": "synthetic-test-definition",
+            "rev": "sha256:0000000000000000000000000000000000000000000000000000000000000003"
+          },
+          "tested_subject": {
+            "sha": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+            "kind": "merge_ref",
+            "head": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+            "base_oid": "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+          },
+          "evidence_ref": "synthetic-run-001/job-1/attempt-1"
+        }
       }
     ],
     "outcome": "verified",
@@ -75,7 +101,7 @@
     "supersedes": []
   },
   "expected_outcome": "accept",
-  "expected_reason": "Accepted: a `final` result that names the revision-qualified plan_ref and criteria_ref, the fresh repository facts (PRs, merge revisions, destination reachability, closed Issues, integrated acceptance) with observed_at, retained consumed-input snapshots each with revision/recorded time/digest, and producer with consumer context and recorded_by: lead — complete, consistent, fresh closed-Issue proof with every criterion `met` and outcome `verified` within the `final` vocabulary (SC-3 accepted example, SDP l.542; D4.5 l.441, l.445).",
+  "expected_reason": "Accepted: a `final` result that names the revision-qualified plan_ref and criteria_ref, the fresh repository facts (PRs with merge revision, destination branch and reachability, closed Issues, integrated acceptance record with its record/revision) with observed_at, retained consumed-input snapshots each with reference, revision/recorded time and digest — including the merged-tree gate result and the per-criterion identity/evaluator/proof bound to the tested subject — and producer with consumer context and recorded_by: lead. Complete, consistent, fresh closed-Issue proof with every criterion `met` and outcome `verified` within the `final` vocabulary (SC-3 accepted example, SDP l.542; D4.5 l.441, l.443, l.445; D4.4 l.410).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",

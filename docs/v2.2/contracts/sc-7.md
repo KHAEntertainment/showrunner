@@ -21,8 +21,8 @@
 | Field | Type | Cardinality | Required/conditional | Meaning |
 | --- | --- | --- | --- | --- |
 | `source` | string | 1 | required | source of the projection |
-| `version` | string | 1 | required | source schema version |
-| `freshness` | time | 1 | required | freshness timestamp |
+| `version` | string | 0..1 | conditional (null when `source` is explicitly `unknown`) | source schema version — never a fabricated value for an unresolvable source (l.546) |
+| `freshness` | time | 0..1 | conditional (null when `source` is explicitly `unknown`) | freshness timestamp — reported `unknown`, never satisfied, when it cannot be read or ordered |
 | `run` / `session` / `seat` | string | 1 | required | run, session, and seat identity |
 | `lifecycle` | enum | 1 | required | lifecycle state |
 | `predecessor` | reference | 0..1 | conditional | predecessor |

@@ -69,7 +69,17 @@ Normative fixture source: the [v2.1.3 cross-project reconciliation report §2](~
 
 Managed-mode references (`mode: managed`, `managed`, `assignment_ref`, `parent_mapping`) belong to the same profile and are not written by this Skill version (l.356–l.358).
 
-**Invalidation rules (D4.2 l.378).** A new head; a merged-tree mismatch (full required gate rerun); a criteria amendment with an explicit `criteria_map`; a changed check definition or environment; a rollback; a reopened Issue; an expired preview. Each invalidates the affected assurance, which becomes non-current (never reused) and its outcomes `inconclusive` until reassessed.
+**Invalidation rules (normative report §2 l.165).** Each event invalidates the affected assurance, which becomes non-current (`current: false` with a `stale_reason`) and is never reused, and each carries its own event-specific transition:
+
+- **New head** → every `check` and criterion outcome is re-assessed; reuse only when `definition_ref.rev`, inputs and environment are unchanged, keeping the old run's tested subject and time.
+- **Merged tree ≠ tested tree** → full required gate rerun on the integrated target; a scoped recheck never replaces it.
+- **`criteria_ref` change / amendment** → affected criteria `inconclusive`, tests and evaluator judgment reassessed against the new intent regardless of file changes, with an explicit `criteria_map`.
+- **Changed check definition, dependency or environment** → affected checks `inconclusive`.
+- **Rollback** → `integrated.current` withdrawn for that target, history retained (never the withdrawal itself).
+- **Reopened Issue** → affected acceptance withdrawn even though code may remain on the branch.
+- **Expired preview** → `demonstrated` marked `expired`.
+
+Historical `assurance.outcome` is preserved with `current: false` (DEV_STATE_TEMPLATE l.318–320). These are the D4.2 meanings (l.378); this spec does not change them.
 
 ## `completion-result-v1` — field table (D4.5 meanings)
 
@@ -86,10 +96,10 @@ Meanings from the SDP only; spelling is Dev's (l.432).
 | `goal.fixed_issues` | frozen qualified Issue set | 1..* | required | the frozen Issue set |
 | `goal.frozen_at` | time | 1 | required | freeze time |
 | `evidence_profile` | reference | 1 | required | the evidence profile (`completion-evidence-v1`) |
-| `consumed_inputs` | list of reference/revision/recorded-time/digest | 1..* | required | each consumed input with reference, revision or recorded time, and digest (l.443) |
+| `consumed_inputs` | list of reference/revision/recorded-time/digest | 1..* | required | each consumed input with reference, revision or recorded time, and digest (l.443); includes the merged-tree gate result and the per-criterion identity/evaluator/proof, each bound to the tested subject (D4.4 l.410) |
 | `purpose` | enum (`final` / `readiness`) | 1 | required | `final` returns `verified`/`not_complete`/`inconclusive`; `readiness` returns `evidence_ready`/`not_ready`/`inconclusive`, **never `verified`** (l.433) |
-| `repository_facts` | record + `observed_at` | 1 | required | fresh repository facts (PRs, merge revisions, destination reachability, closed Issues, integrated acceptance) |
-| `criteria[]` | per-criterion record | 1..* | required | at `criteria_ref`: evaluator, `met`/`unmet`/`inconclusive`, reason code, accepted proof (l.435) |
+| `repository_facts` | record + `observed_at` | 1 | required | fresh repository facts: PRs with state, merge revision, destination branch and reachability from that branch (D4.3 l.390–392), closed Issues, and integrated acceptance with its record/revision (l.434) |
+| `criteria[]` | per-criterion record | 1..* | required | at `criteria_ref`: evaluator, `met`/`unmet`/`inconclusive`, reason code, and accepted proof — `{conclusion, definition, tested_subject}` bound to the tested subject (l.435; D4.4 l.410) |
 | `outcome` | enum | 1 | required | outcome within its purpose's vocabulary |
 | `reason_codes` | list | 0..* | conditional (when not `verified`) | each naming affected Issues/PRs/criteria (l.436) |
 | `producer` | record | 1 | required | helper + Skill revision; invoker role/ID/harness; consumer context; `recorded_by: lead` (l.437) |
