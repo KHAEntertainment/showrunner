@@ -111,10 +111,10 @@ Meanings from the SDP only; spelling is Dev's (l.432).
 
 | Evaluator | Proof GV accepts | Never accepted |
 | --- | --- | --- |
-| `test` | The named CI run, job and attempt concluded `success`; its definition matches the recorded `definition_ref`; it covers the recorded tested subject with applicability established | A green run for a different subject, definition or environment; a skipped or cancelled run |
-| `demonstration` | A recorded demonstration naming what was shown, where, at which revision, and how; at the criterion's current revision and not expired | A demonstration standing in for a test, reviewer or human evaluator; an unexplained "works" claim |
+| `test` | The named CI run, job and attempt concluded `success`; its definition matches the recorded `definition_ref`; it covers the recorded tested subject with applicability established. A local run counts only under an approved fallback, with its executor recorded. | A green run for a different subject, definition or environment; a skipped or cancelled run |
+| `demonstration` | A recorded demonstration naming what was shown, where, at which revision, and how; at the criterion's current revision and not expired. It counts only where demonstration is the assigned evaluator. | A demonstration standing in for a test, reviewer or human evaluator; an unexplained "works" claim |
 | `independent reviewer` | A review by the project's reviewer of record at the recorded head, with no unresolved material finding against the criterion; an external reviewer is identified by the GitHub review author, an internal review lane by the recorded lane identity plus retained review evidence | A review by the lead or by the worker who implemented the change; a review of an earlier head |
-| `human` | A fixed acceptance command `/accept <criterion-id>` (revision-qualified ID) posted from the owner's configured GitHub account, after the criterion's current revision was approved; one acceptance per criterion, never per PR | A lead's summary or paraphrase; an informal comment such as "looks good"; a panel acknowledgement (D9.5); a command naming a superseded criterion revision |
+| `human` | A fixed acceptance command `/accept <criterion-id>` (revision-qualified ID) posted from the owner's configured GitHub account. It goes on the parent Issue, or on the Issue itself for a single-Issue goal. It must be posted after the criterion's current revision was approved; one acceptance per criterion, never per PR. | A lead's summary or paraphrase; an informal comment such as "looks good"; a panel acknowledgement (D9.5); a command naming a superseded criterion revision |
 
 ## D4.5 reader rules (l.441–l.448)
 
