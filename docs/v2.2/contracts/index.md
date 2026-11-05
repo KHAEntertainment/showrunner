@@ -15,7 +15,7 @@ L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from 
 
 ## Provenance table
 
-| SC | Contract(s) | Source revision (SDP `fee134d9…`) | Semantic owner | Producer | Consumers (package) |
+| SC | Contract(s) | Source line (SDP `fee134d9…`, unchanged at `7177580c…`) | Semantic owner | Producer | Consumers (package) |
 | --- | --- | --- | --- | --- | --- |
 | SC-1 | `assignment-v1` | l.540; D1 l.85; D6.5 l.142 | Dev planning owner | Dev planning + backend adapter | P1; P2, GV, panel (U1); I1 (later) |
 | SC-2 | `authorization-context-v1` | l.541; l.250; D2 | Dev execution/recovery owner | Dev operation gates; Foreman grant owner | P2; I1, O-DB, O-STOP (later) |

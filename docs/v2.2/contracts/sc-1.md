@@ -39,14 +39,14 @@ L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from 
 | Field | Type | Cardinality | Required | Meaning |
 | --- | --- | --- | --- | --- |
 | `origin` | reference | 1 | required | canonical plan location — a Traycer artifact in the current epic or a native Markdown document (SDP l.79; D1 l.89) |
-| `source_revision` | digest | 1 | required | the source plan revision as an immutable digest (SDP l.79; D1 l.90) |
+| `source_revision` | digest | 1 | required | digest of the input the plan was drafted from (frozen PRD or supplied document; the D6.2.3 PRD-first route names the PRD as source), SDP l.115, l.129; the input's identity is carried by `source` provenance per D6.3.6, not by `origin` |
 | `approved_revision` | digest | 1 | required | the approved plan revision as an immutable digest (SDP l.79; D1 l.90) |
 | `approval.authority` | identity record | 1 | required | who approved the plan (SDP l.79) |
 | `approval.evidence` | reference + digest | 1 | required | GitHub-addressable approval evidence — commit SHA, PR review id, or a retained snapshot/digest (SDP l.79; D1 l.91) |
 | `producer.session` | string (session id) | 1 | required | the producing session (SDP l.79) |
 | `producer.harness` | string (harness) | 1 | required | the producing harness (SDP l.79) |
 
-**Invariant — v1 specification correction (D4), 2026-11-05.** When an assignment runs from an approved plan, the top-level `approval_revision` MUST equal `plan_ref.approved_revision` (same reference + digest), and the top-level `source` names the promoted plan copy at that revision (SDP D1 l.90). `plan_ref.source_revision` is the revision of the input the plan was drafted from (PRD or supplied document; D6.2.3/D6.3.6, SDP l.115, l.129), so it may differ from both. A mismatch between `approval_revision` and `plan_ref.approved_revision` is invalid (the SC-1 "changed approval" rejected example, l.540).
+**Invariant — v1 specification correction (D4), 2026-11-05.** When an assignment runs from an approved plan, the top-level `approval_revision` MUST equal `plan_ref.approved_revision` (the same digest), and the top-level `source` names the promoted plan copy at that revision (SDP D1 l.90). `plan_ref.source_revision` is the revision of the input the plan was drafted from (PRD or supplied document; D6.2.3/D6.3.6, SDP l.115, l.129), so it may differ from both. A mismatch between `approval_revision` and `plan_ref.approved_revision` is invalid (the SC-1 "changed approval" rejected example, l.540).
 
 **Accepted example.** Two distinct runs in the same repository; an explicitly bounded charter subset (l.540).
 
