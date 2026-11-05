@@ -91,6 +91,12 @@ class TemplateContentTests(unittest.TestCase):
         self.assertIn("SC-1", self.template)
         self.assertIn("`approval_revision` equals `plan_ref.approved_revision`", self.template)
 
+    def test_source_documents_and_provenance_fields(self) -> None:
+        for field in ("**origin**", "**revision or digest**", "**directives not followed**"):
+            with self.subTest(field=field):
+                self.assertIn(field, self.template)
+        self.assertIn("the source locator lives in this section", self.template)
+
 
 if __name__ == "__main__":
     unittest.main()

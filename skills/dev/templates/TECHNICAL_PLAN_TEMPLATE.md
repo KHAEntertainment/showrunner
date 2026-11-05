@@ -10,7 +10,13 @@ What this change accomplishes and the target system or repository it lands in. M
 
 ## Source documents and provenance
 
-Per source: origin, revision or digest, and the list of directives not followed (D6.3.6).
+For each supplied source, record three per-source fields (D6.3.6):
+
+- **origin** — the source's location or identity (a tracker-qualified identifier, a harness plan-mode file, a Traycer Tech Plan, or `pasted` when no identifier exists).
+- **revision or digest** — the source's revision or digest as read.
+- **directives not followed** — the source's foreign workflow directives, listed once and not followed.
+
+`plan_ref.source_revision` carries only the drafted-from input's digest; the source locator lives in this section, not in `plan_ref`.
 
 ## Locked decisions
 

@@ -18,6 +18,9 @@ CONTRACT = SKILL / "backends" / "contract.md"
 TEMPLATE = SKILL / "templates" / "PROJECT_CONTEXT_TEMPLATE.md"
 
 NO_REASK_SENTENCE = "never re-asks a locked decision"
+WORKER_NO_REASK = "do not re-ask or re-decide"
+WORKER_REPORT_CONFLICT = "report the conflict to the Tech Lead"
+CONTRACT_WORKER_GATE = "the worker's implementation-plan gate"
 
 
 def _router_paths() -> dict[str, str]:
@@ -37,6 +40,14 @@ def _router_paths() -> dict[str, str]:
 
 def _no_reask_present(text: str) -> bool:
     return NO_REASK_SENTENCE in text
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _contains(text: str, sentence: str) -> bool:
+    return sentence in text
 
 
 class RouterRowTests(unittest.TestCase):
@@ -80,27 +91,51 @@ class WiringTests(unittest.TestCase):
         self.assertIn("`plan_ref` (SC-1)", WORKER_NEW.read_text(encoding="utf-8"))
         self.assertIn("`plan_ref` (SC-1)", WORKER_FIX.read_text(encoding="utf-8"))
 
+    def test_worker_prompts_do_not_reask_or_redecide(self) -> None:
+        self.assertIn(WORKER_NO_REASK, WORKER_NEW.read_text(encoding="utf-8"))
+        self.assertIn(WORKER_NO_REASK, WORKER_FIX.read_text(encoding="utf-8"))
+
+    def test_worker_prompts_report_conflict_to_the_lead(self) -> None:
+        self.assertIn(WORKER_REPORT_CONFLICT, WORKER_NEW.read_text(encoding="utf-8"))
+        self.assertIn(WORKER_REPORT_CONFLICT, WORKER_FIX.read_text(encoding="utf-8"))
+
     def test_contract_disambiguation(self) -> None:
         self.assertIn(
             "Technical Plan approval is not worker plan approval",
             CONTRACT.read_text(encoding="utf-8"),
         )
 
+    def test_contract_plan_approval_requirement_is_the_worker_gate(self) -> None:
+        contract = CONTRACT.read_text(encoding="utf-8")
+        self.assertIn("plan-approval requirement", contract)
+        self.assertIn(CONTRACT_WORKER_GATE, contract)
+
     def test_template_plans_row_and_gitignore(self) -> None:
         text = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn("`docs/plans/`", text)
-        self.assertIn(".agent/", text)
+        self.assertIn("is never committed (D6.5.5)", text)
 
 
 class MutationTests(unittest.TestCase):
-    """The no-reask check must actually read the file: stripping the sentence
-    from a copy flips the check to false."""
+    """Each key-sentence check must actually read the file: stripping the
+    sentence from a copy flips its check to false."""
 
-    def test_removing_the_no_reask_sentence_is_detected(self) -> None:
-        text = PHASE2.read_text(encoding="utf-8")
-        self.assertTrue(_no_reask_present(text))
-        stripped = text.replace(NO_REASK_SENTENCE, "")
-        self.assertFalse(_no_reask_present(stripped))
+    CASES = (
+        (PHASE2, NO_REASK_SENTENCE),
+        (WORKER_NEW, WORKER_NO_REASK),
+        (WORKER_FIX, WORKER_NO_REASK),
+        (WORKER_NEW, WORKER_REPORT_CONFLICT),
+        (WORKER_FIX, WORKER_REPORT_CONFLICT),
+        (CONTRACT, CONTRACT_WORKER_GATE),
+    )
+
+    def test_removing_each_key_sentence_is_detected(self) -> None:
+        for path, sentence in self.CASES:
+            with self.subTest(file=path.name, sentence=sentence):
+                text = _read(path)
+                self.assertTrue(_contains(text, sentence))
+                stripped = text.replace(sentence, "")
+                self.assertFalse(_contains(stripped, sentence))
 
 
 if __name__ == "__main__":

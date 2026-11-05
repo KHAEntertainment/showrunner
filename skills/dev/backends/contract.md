@@ -41,7 +41,7 @@ Every backend sends the full role prompt plus: role, Issue or review lane, topol
 
 The assignment must not depend on Claude-specific tool names. Native packaging for a non-Claude lead may reuse this contract later; it is not required for Codex, OpenCode, Cursor, or smaller harnesses to serve as Traycer-managed children.
 
-The envelope's `plan-approval requirement` and the carried `plan_ref` (SC-1) record plan-level approval. Technical Plan approval is not worker plan approval: an approved plan does not green-light implementation work, and Phase 2 gates still apply.
+The envelope's `plan_ref` (SC-1) records the approved Technical Plan's provenance and approval only — its origin, source/approved revisions, approval authority and evidence, and producing session/harness. The envelope's `plan-approval requirement` is unchanged: it remains the worker's implementation-plan gate required by Phase 3 (`${CLAUDE_SKILL_DIR}/phases/phase3.md`) and each worker prompt, and an approved Technical Plan never satisfies it. Technical Plan approval is not worker plan approval.
 
 ## Report-back enforcement
 
