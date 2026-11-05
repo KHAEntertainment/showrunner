@@ -24,13 +24,14 @@
 | `docs/api-contracts.md` | Endpoint list, request/response formats, error codes (for frontend-backend split projects) | When endpoints are added/modified |
 | `docs/style-guide.md` | Naming conventions, directory structure, error handling conventions, comment conventions | When conventions change |
 | `docs/feature-log.md` | List of completed features (PR number, merge date) | Update every Phase 5 round |
+| `docs/plans/` | Promoted, approved PRDs and Technical Plans (read-only; each names its origin, approved revision, and status) | Added by the plan's docs-only promotion PR (D6.4, D6.5) |
 
 ---
 
 ## Current Status (the only part of this file that needs frequent updates)
 
 - **Last updated**: YYYY-MM-DD
-- **Current iteration goal**: [description of features to complete this round]
+- **Current iteration goal**: [description of features to complete this round, citing the active approved plan's `plan_ref` revision while work runs from it]
 - **Open PRs**: #N [description], #M [description]
 - **Known tech debt**: see the bottom of `docs/feature-log.md`
 
@@ -125,9 +126,10 @@ Prototype artifacts produced during Phase 1 do not enter git by default. Add to 
 ```
 prototypes/
 PRD-draft.md
+.agent/
 ```
 
-`PRD-draft.md` is the draft used while Phase 1 is in progress; it is renamed to `PRD.md` only after the Step D freeze, and only then enters git. The user can selectively `git add` individual high-value prototypes from `prototypes/`.
+`.agent/` holds Dev's working state (drafts and the ledger) and is never committed (D6.5.5). `PRD-draft.md` is the draft used while Phase 1 is in progress; it is renamed to `PRD.md` only after the Step D freeze, and only then enters git. The user can selectively `git add` individual high-value prototypes from `prototypes/`.
 
 ---
 

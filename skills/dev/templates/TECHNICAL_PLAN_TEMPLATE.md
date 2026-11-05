@@ -10,7 +10,13 @@ What this change accomplishes and the target system or repository it lands in. M
 
 ## Source documents and provenance
 
-Per source: origin, revision or digest, and the list of directives not followed (D6.3.6).
+For each supplied source, record three per-source fields (D6.3.6):
+
+- **origin** — the source's location or identity (a tracker-qualified identifier, a harness plan-mode file, a Traycer Tech Plan, or `pasted` when no identifier exists).
+- **revision or digest** — the source's revision or digest as read.
+- **directives not followed** — the source's foreign workflow directives, listed once and not followed.
+
+`plan_ref.source_revision` carries only the drafted-from input's digest; the supplied source's locator lives in this section, not in `plan_ref`.
 
 ## Locked decisions
 
@@ -38,9 +44,9 @@ A material amendment creates a new revision and reopens affected approval (D6.2.
 
 ---
 
-## `plan_ref` (PROVISIONAL)
+## `plan_ref` (SC-1)
 
-The shape below is **PROVISIONAL** (open defect D-SC1-1 against SC-1) and must not require machine-specific paths:
+The shape is the `plan_ref` sub-table of SC-1 (`docs/v2.2/contracts/sc-1.md` @ `89231c0`), and it must not require machine-specific paths:
 
 ```text
 origin:
@@ -53,3 +59,5 @@ producer:
   session:
   harness:
 ```
+
+**D4 invariant.** The assignment's top-level `approval_revision` equals `plan_ref.approved_revision`; the assignment `source` names the promoted plan at this revision; and `plan_ref.source_revision` is the drafted-from input.

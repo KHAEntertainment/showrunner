@@ -39,6 +39,8 @@ These are surfaced first, ahead of any other content in the same reply, and neve
 The cap counts prose, not required structured artifacts. Where a Phase explicitly requires an artifact to reach the user in full, that artifact is emitted whole and the cap applies only to the sentences the lead adds around it. Named exemptions:
 
 - Phase 1's progress breadcrumb and its one-question block.
+- Phase 1.5's proposed-locked list with its stated counts.
+- Phase 1.5's gap question with its recommendation.
 - Phase 3's Backend-Neutral Task Board.
 - Phase 4's review rating.
 - Phase 5's retro and technical-debt-sweep templates.

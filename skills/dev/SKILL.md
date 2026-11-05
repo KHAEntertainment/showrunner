@@ -118,11 +118,11 @@ Classify the request, explain your reasoning to the user, get confirmation, then
 | Type | Criteria | Path |
 |------|----------|------|
 | **New Project** | No existing repo, starting from scratch | Phase 1 → 2 → 3 → 3.5 (per risk tier) → 4 → 5 |
-| **New Feature / Large Change** | Existing repo, touches multiple files or new modules | Phase 2 → 3 → 3.5 (per risk tier) → 4 → 5 |
+| **New Feature / Large Change** | Existing repo, touches multiple files or new modules | Phase 1.5 → 2 → 3 → 3.5 (per risk tier) → 4 → 5 |
 | **Small Change / Bug Fix** | Existing repo, scope is clear and limited | Phase 2 (lightweight) → 3 → 3.5 (per risk tier) → 4 → 5 |
 | **Emergency Hotfix** | Live incident requiring immediate fix, cannot wait for scheduling | Phase 2 (express) → 3 → 3.5 (per risk tier) → 4 → 5, **run rebase scan after merge** |
-| **Architectural Change** | Requirements overturn existing architecture decisions (e.g. replacing auth system, rewriting core module) | Phase 2 (with change impact assessment) → 3 → 3.5 (per risk tier) → 4 → 5 |
-| **Refactoring** | Changing internal structure without adding new external behavior | Phase 2 (refactor mode) → 3 (**forced serial**: refactor before features that depend on it) → 3.5 (per risk tier) → 4 → 5 |
+| **Architectural Change** | Requirements overturn existing architecture decisions (e.g. replacing auth system, rewriting core module) | Phase 1.5 → 2 (with change impact assessment) → 3 → 3.5 (per risk tier) → 4 → 5 |
+| **Refactoring** | Changing internal structure without adding new external behavior | Phase 1.5 (lite, no research) → 2 (refactor mode) → 3 (**forced serial**: refactor before features that depend on it) → 3.5 (per risk tier) → 4 → 5 |
 
 **Risk tier (applies to every path above, Emergency Hotfix included):** whether Phase 3.5 runs is decided by the diff's risk tier, not by the request type and not by diff size. The tier floors are defined once, in `${CLAUDE_SKILL_DIR}/phases/phase3.5.md` (Risk Tiers); this table only mirrors each tier's Phase 3.5 value, and `scripts/validate_skill.py` fails when the two disagree.
 
@@ -138,6 +138,12 @@ Classify the request, explain your reasoning to the user, get confirmation, then
 - Architectural Change: run change impact assessment in Phase 2 (see phase2.md) before task decomposition; update PROJECT_CONTEXT.md immediately, do not wait for Phase 5
 - Refactoring: Phase 2 Issues must use the dual-dimension acceptance criteria format (structural metric + full regression test pass)
 
+### Argument modes (D6.1)
+
+- **`/dev plan <description>`** plans only. On an existing repository it runs Phase 1.5 through approval and promotion; on a new project it runs Phase 1 through PRD freeze.
+- **`/dev <approved plan>`** goes straight to Phase 2 only for a plan Dev itself approved and promoted that has no Issues yet. Every other plan — including an outside plan marked approved — goes through Phase 1.5 intake (D6.1.2).
+- **Handoff (D6.1.4).** When plan-only work ends, Dev recommends one of three paths: continue in the same session when there is ample context room; otherwise start a fresh session with `/dev <plan reference>`, where the approved plan is the whole handoff; compact only when a fresh session is impractical.
+
 ---
 
 ## Phase 1 — Product Alignment
@@ -148,6 +154,15 @@ Classify the request, explain your reasoning to the user, get confirmation, then
 `${CLAUDE_SKILL_DIR}/phases/phase1-prototyping.md`
 
 Core principle: module-progressive alignment (each module goes Big Picture → Behavior → Detail), one question at a time with an AI recommended answer, document-first alignment when a requirements document is supplied (its own answers are extracted with citations and only its gaps are asked), word precision inline-written into `docs/glossary.md`, low-fidelity questions dispatched to a prototype agent through the selected adapter, uncapped questioning with the user controlling the module-switch gate, and a frozen PRD as Phase 2's input.
+
+---
+
+## Phase 1.5 — Technical Planning
+
+**Before entering this Phase, read the detailed rules:**
+`${CLAUDE_SKILL_DIR}/phases/phase1.5.md`
+
+Core principle: produce the Technical Plan for an existing repository — how to change the system (approach, affected areas, decisions, and verification) — through intake, draft, approval, and promotion; the approved plan carries `plan_ref` provenance, and Phase 2 records and consumes its locked decisions without re-asking them.
 
 ---
 
@@ -222,7 +237,7 @@ Core principle: produce the iteration retro first, then route tracked cleanup th
 - **git operations**: always run in the correct worktree/directory and through `rtk git ...` or `rtk proxy git ...`
 - **GitHub operations**: always run through `rtk gh ...`; use summary fields for scans and deep-read only one Issue/PR at a time
 - **Repository/account target**: every push and every GitHub mutation runs `${CLAUDE_SKILL_DIR}/phases/repository-context.md`'s pre-write verification immediately before the write and uses its validated remote/target — never a bare `git push`, a `gh` command that relies on the CLI's own repository default, or a stale check from earlier in the session
-- **Unclear requirements**: go back to Phase 1 and ask; never assume
+- **Unclear requirements**: go back to Phase 1 on a new project or Phase 1.5 on an existing repository, and ask; never assume (D6.1, D6.3)
 - **main branch**: only modify via PR, never push directly
 - **PROJECT_CONTEXT.md**: update immediately when architecture decisions change; after repository initialization, commit tracked context changes through a docs-only or related PR; update the main index and `docs/feature-log.md` at the end of each round
 - **Hotfix post-merge**: scan all open PRs, list PRs with file overlap with the hotfix changes, notify corresponding Worker Agents to rebase

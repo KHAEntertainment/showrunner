@@ -38,6 +38,8 @@ Module-progressive alignment + word-precision capture + prototype-driven when ne
 - **Situation B — User did not provide a requirements document**:
   → Run the full Step A → B → C → D, ultimately producing the PRD.
 
+- **PRD-first route for a large feature in an existing repository (D6.2.2).** When an existing repository has a large feature with open product questions (new users, new behavior, or unclear acceptance), the lead may recommend a PRD first, and the user may ask for one; the user decides. That effort runs Phase 1 through PRD freeze, then Phase 1.5 produces the Technical Plan. The frozen PRD is locked input to the Technical Plan, which cites it and does not re-ask its decisions.
+
 ---
 
 ## Step A — Product overview + module split
