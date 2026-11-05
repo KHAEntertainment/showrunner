@@ -447,6 +447,16 @@ class LocatorCliTests(unittest.TestCase):
         self.assertEqual("error", payload["status"])
         self.assertEqual("root_unreadable", payload["cause"])
 
+    def test_a_root_that_is_not_a_directory_is_a_usage_error(self) -> None:
+        """``--root`` naming a regular file is a bad argument, not an absence."""
+        root = self.base / "not-a-directory"
+        root.write_bytes(b"not a directory\n")
+
+        completed = self.locate(PINNED_DIGEST, root)
+        self.assertEqual(1, completed.returncode, completed.stdout)
+        self.assertEqual("", completed.stdout)
+        self.assertIn("--root is not a directory", completed.stderr)
+
     def test_a_missing_root_does_not_hide_a_candidate_in_another_root(self) -> None:
         """A missing root is skipped; another root still decides the verdict."""
         skill_dir = write_skill(self.root / SKILL_NAME)
