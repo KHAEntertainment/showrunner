@@ -70,7 +70,7 @@ The lite Phase 1.5 for Refactoring skips this step entirely.
 
 ## Step 3 — Draft the Technical Plan
 
-Draft per `templates/TECHNICAL_PLAN_TEMPLATE.md`. The Technical Plan opens with a short section on intent and destination, so most work in an existing repository needs no separate PRD (D6.2.2).
+Draft per `${CLAUDE_SKILL_DIR}/templates/TECHNICAL_PLAN_TEMPLATE.md`. The Technical Plan opens with a short section on intent and destination, so most work in an existing repository needs no separate PRD (D6.2.2).
 
 When a frozen PRD exists — the D6.2 PRD-first route — the Technical Plan takes it as locked input, cites it, and does not re-ask its decisions (D6.2.3). A material amendment to the PRD reopens the affected parts of the Technical Plan and their approval.
 
