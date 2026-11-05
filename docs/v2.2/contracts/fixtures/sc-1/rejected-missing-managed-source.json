@@ -19,7 +19,7 @@
   "expected_reason": "Rejected: a managed assignment omits the managed-only source/coordinator/charter bindings (`source` and `approval_revision` are missing), so the managed source is absent and the assignment is rejected (SC-1 rejected example, SDP l.540).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/orchestration-workflow-foreman/charters/p0-baseline-and-contracts/index.md",
-    "revision_or_digest": "sha256:9b81bb31a9ee9979329815d6b9e3f4b0e8a8c57612417887a29d0e492e69ba8b",
+    "revision_or_digest": "sha256:59aab9b17b2cd46102299478251d2d8f35999b9ca35629940a7aaa57afcabfe2",
     "sdp_line": 540
   },
   "status": "not-run",

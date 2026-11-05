@@ -1,6 +1,6 @@
 # SC-2 — authority/continuation (`authorization-context-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `63124e80…` §8 l.541 and §5 l.250 (SC-2 continuation compatibility fixture). Owner-bound values from settled D2 (l.232–l.250) and D3 (l.805). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.541 and §5 l.250 (SC-2 continuation compatibility fixture). Owner-bound values from settled D2 (l.232–l.250) and D3 (l.805). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contract.** `authorization-context-v1` — the read projection of an operation's authority and continuation context. Separate `Begin` and `Continue` results (l.541).
 

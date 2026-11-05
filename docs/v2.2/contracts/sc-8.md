@@ -1,6 +1,6 @@
 # SC-8 — distribution/adoption (`component-receipt-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `63124e80…` §8 l.547. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.547. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contract.** `component-receipt-v1` — the receipt for an installed or adopted component.
 

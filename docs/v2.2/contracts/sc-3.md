@@ -1,6 +1,6 @@
 # SC-3 — completion (`completion-evidence-v1`, `completion-result-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `63124e80…` §8 l.542, D4.2 (l.372–l.383), D4.5 (l.426–l.450). Reconciled with the Foreman Architect response `~/.traycer/epics/d4441475-0b2c-4519-99ce-0832b63313f9/artifacts/foreman-coordination/completion-result-v1-response/index.md` (SHA-256 `de1301ba9ceb24e93487e381c580a31c5ec7dc643ae9d8289c953d1140756aef`, 41 lines), labelled **proposed reconciliation — the owner-approved form is SDP D4.5**. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.542, D4.2 (l.372–l.383), D4.5 (l.426–l.450). Reconciled with the Foreman Architect response `~/.traycer/epics/d4441475-0b2c-4519-99ce-0832b63313f9/artifacts/foreman-coordination/completion-result-v1-response/index.md` (SHA-256 `de1301ba9ceb24e93487e381c580a31c5ec7dc643ae9d8289c953d1140756aef`, 41 lines), labelled **proposed reconciliation — the owner-approved form is SDP D4.5**. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Status.** **Settled** — `completion-result-v1` is owner-approved (2026-11-04) and SC-3 reads it as settled (ledger §3.1, §2 D4.5 row). This spec records the settled policy; it is **not implemented** and proposes no default beyond it.
 
@@ -17,7 +17,7 @@
 
 **Producer.** GV (read-only); the Dev lead is the sole writer of the result (l.430).
 
-**Consumers (package).** P3 (wires GV before G3), pilot, resume, panel; future Foreman audit/hooks.
+**Consumers (package).** P3 (wires GV before G3), pilot, resume, panel (U1); future Foreman audit/hooks.
 
 **Authoritative writer / one writer per ledger.** The Dev lead is the sole writer of the GV result record. The parent-acceptance record's `goal_completion_ref` points to it. No new store, schema authority, or shared writable ledger (l.428, l.383).
 
@@ -143,4 +143,4 @@ A cross-repository parent or non-PR work is rejected at goal arming (D4.3, D4.4)
 - `fixtures/sc-3/evidence-accepted-parent-acceptance.json` (accept — `parent_acceptance`)
 - `fixtures/sc-3/evidence-rejected-parent-acceptance-carries-result.json` (reject)
 
-**Counterpart acceptance.** `pending` per consumer (P3, pilot, resume, panel; future Foreman audit/hooks). No compatibility inferred from silence (l.550).
+**Counterpart acceptance.** `pending` per consumer (P3, pilot, resume, panel (U1); future Foreman audit/hooks). No compatibility inferred from silence (l.550).

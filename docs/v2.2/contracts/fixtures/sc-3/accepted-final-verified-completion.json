@@ -104,7 +104,7 @@
   "expected_reason": "Accepted: a `final` result that names the revision-qualified plan_ref and criteria_ref, the fresh repository facts (PRs with merge revision, destination branch and reachability, closed Issues, integrated acceptance record with its record/revision) with observed_at, retained consumed-input snapshots each with reference, revision/recorded time and digest — including the merged-tree gate result and the per-criterion identity/evaluator/proof bound to the tested subject — and producer with consumer context and recorded_by: lead. Complete, consistent, fresh closed-Issue proof with every criterion `met` and outcome `verified` within the `final` vocabulary (SC-3 accepted example, SDP l.542; D4.5 l.441, l.443, l.445; D4.4 l.410).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
     "sdp_line": 426
   },
   "status": "not-run",

@@ -29,7 +29,7 @@
   "expected_reason": "Accepted: the same open in-progress operation Continues with stable ID/holder/bindings (begin.grant_id/grant_holder/grant_epoch all unchanged) across a coordinator epoch rotation — observation.coordinator_epoch (2) is newer than begin.grant_epoch (1), and Continue does not reapply the epoch as another admission check (SC-2 continuation fixture, SDP l.250; l.552).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
     "sdp_line": 250
   },
   "status": "not-run",

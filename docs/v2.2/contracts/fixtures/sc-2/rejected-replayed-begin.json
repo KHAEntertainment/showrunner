@@ -26,7 +26,7 @@
   "expected_reason": "Rejected: actor, run, operation, target, head and the grant bindings are all identical to the valid acknowledged Begin (synthetic-grant-005); the ONLY difference is result: Begin — a replayed Begin for an already-begun operation. Only a bounded Continue is admitted; the replay is rejected on that sole basis (SC-2 continuation fixture, SDP l.250; rejected example l.541).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
     "sdp_line": 250
   },
   "status": "not-run",

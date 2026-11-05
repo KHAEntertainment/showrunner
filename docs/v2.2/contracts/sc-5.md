@@ -1,6 +1,6 @@
 # SC-5 — provider/tool invocation (`provider-request-v1`, `provider-result-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `63124e80…` §8 l.544. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.544. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contracts.** `provider-request-v1` (a request to a provider/model/tool) and `provider-result-v1` (the result/error it returns).
 

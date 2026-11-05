@@ -19,7 +19,7 @@
   "expected_reason": "Rejected: hot replacement of running instructions (adopting v2.2.1 over a running v2.2.0) with a global load marker counted as per-run coverage — adoption must be a safe next-session change, and a global marker is not per-run proof (SC-8 rejected example, SDP l.547).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
     "sdp_line": 547
   },
   "status": "not-run",

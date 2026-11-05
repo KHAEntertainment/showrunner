@@ -29,7 +29,7 @@
   "expected_reason": "Accepted: the same open in-progress operation Continues with stable ID/holder/bindings after its original latest-start expiry — observation.observed_at (2099-01-03) is after begin.grant_expiry (2099-01-02), and Continue does not reapply latest-start expiry as another admission check; a generic stale-grant rejection is insufficient and must not block a safe acknowledged Continue (SC-2 continuation fixture, SDP l.250; l.552).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
     "sdp_line": 250
   },
   "status": "not-run",

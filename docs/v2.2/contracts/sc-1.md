@@ -1,6 +1,6 @@
 # SC-1 — identity/scope (`assignment-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `63124e80…` §8 l.540 (snapshot SHA-256 `63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb`). Owner-bound values from settled D1 (l.85) and D6.5 (l.142). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot (see `index.md`).
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.540 (snapshot SHA-256 `fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd`). Owner-bound values from settled D1 (l.85) and D6.5 (l.142). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot (see `index.md`).
 
 **Contract.** `assignment-v1` — the identity/scope read projection for one assignment.
 
@@ -10,7 +10,7 @@
 
 **Producer.** Dev planning + backend adapter (l.540).
 
-**Consumers (package).** P1 (primary — normalizes the same semantics in both backends); P2, GV, panel consume; I1 (live coordinator) later.
+**Consumers (package).** P1 (primary — normalizes the same semantics in both backends); P2, GV, panel (U1) consume; I1 (live coordinator) later.
 
 **Authoritative writer / one writer per ledger.** The Tech Lead is the sole writer of the Dev ledger (`skills/dev/templates/DEV_STATE_TEMPLATE.md`, `schema_version: 2`). Foreman/board keep their own separate schemas. `assignment-v1` is a projection/interface over these sources — it is not a replacement for any source schema and introduces no new writable store. Read/normalize only (l.540).
 
@@ -50,4 +50,4 @@
 - `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` (reject)
 - `fixtures/sc-1/rejected-missing-managed-source.json` (reject)
 
-**Counterpart acceptance.** `pending` per consumer (P1, P2, GV, panel; I1 later). No compatibility inferred from silence (l.550).
+**Counterpart acceptance.** `pending` per consumer (P1, P2, GV, panel (U1); I1 later). No compatibility inferred from silence (l.550).

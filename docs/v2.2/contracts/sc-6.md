@@ -1,6 +1,6 @@
 # SC-6 — records/config/tracker (`project-binding-v1`, `record-link-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `63124e80…` §8 l.545. Bound schemas: `.dev.json` closed schema (`skills/dev/scripts/dev_config.py`, `SUPPORTED_VERSION = 1`), Foreman project config `~/foreman/showrunner/.foreman/project.json` (SHA-256 `f68b259be5bc4ab5e4818865bb28a12770a7a1a6f00b36686fa6f0c531373ad3`), Foreman state `~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md` (SHA-256 `acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.545. Bound schemas: `.dev.json` closed schema (`skills/dev/scripts/dev_config.py`, `SUPPORTED_VERSION = 1`), Foreman project config `~/foreman/showrunner/.foreman/project.json` (SHA-256 `f68b259be5bc4ab5e4818865bb28a12770a7a1a6f00b36686fa6f0c531373ad3`), Foreman state `~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md` (SHA-256 `acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contracts.** `project-binding-v1` (explicit project/repo/host intent) and `record-link-v1` (a link between records and tracker IDs).
 

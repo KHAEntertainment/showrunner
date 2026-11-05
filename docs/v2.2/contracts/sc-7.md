@@ -1,20 +1,20 @@
 # SC-7 — lifecycle/projection (`run-projection-v1`, `custody-reference-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `63124e80…` §8 l.546. Bound schemas: Dev `schema_version: 2` state (`skills/dev/templates/DEV_STATE_TEMPLATE.md`), Foreman sessions/packets/epoch/logs (`~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md`, SHA-256 `acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.546. Bound schemas: Dev `schema_version: 2` state (`skills/dev/templates/DEV_STATE_TEMPLATE.md`), Foreman sessions/packets/epoch/logs (`~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md`, SHA-256 `acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contracts.** `run-projection-v1` (a read projection of run lifecycle) and `custody-reference-v1` (custody references).
 
-**Semantic owner.** Source lead (Dev); the panel and inventory own their read adapters.
+**Semantic owner.** Source lead (Dev); the U1 panel and inventory own their read adapters.
 
 **Version owner.** This SDP owns the version identifier.
 
 **Producer.** Dev schema-v2 state, Foreman sessions/packets/epoch/logs, board records.
 
-**Consumers (package).** P4 and #112 read; I1, O-LIFE later.
+**Consumers (package).** U1 panel (read adapter); P4 (owned inventory, #112); I1, O-LIFE later.
 
 **Authoritative writer / one writer per ledger.** Dev is the sole writer of Dev state; Foreman writes its own sessions/packets; the board owns notes/presence. `run-projection-v1` / `custody-reference-v1` are read projections with **separate fields and no synthetic global phase** (l.546); they introduce no new writable store.
 
-**Scope boundary (Q2).** This spec records only the fields/examples the SDP already states at l.546. It answers **none** of D9.1–D9.7 — same-repo discovery, YAML/evidence version tolerance, completion trigger/cache, the human acceptance channel, invalidation/offline behavior, hook/config precedence, cross-host scope, and the 15 degraded cases are all deferred to the P4 panel technical plan (SDP §14 l.811). No D9 item is answered here.
+**Scope boundary (Q2).** This spec records only the fields/examples the SDP already states at l.546. It answers **none** of D9.1–D9.7 here — same-repo discovery, YAML/evidence version tolerance, completion trigger/cache, the human acceptance channel, invalidation/offline behavior, hook/config precedence, cross-host scope, and the 15 degraded cases are all answered in the panel technical plan (U1 phase since 2026-11-04), which starts after the three bounded critiques (SDP l.590–l.592). No D9 item is answered in this spec.
 
 **Field table.** Meanings from the SDP only.
 
@@ -46,11 +46,11 @@
 - deleting worktrees from archival → `reject`
 - note acknowledgment as acceptance → `reject`
 
-**Fixtures.**
+**Fixtures (assigned to consumer).**
 
-- `fixtures/sc-7/accepted-distinct-concurrent-runs.json` (accept)
-- `fixtures/sc-7/accepted-explicit-unknown-source.json` (accept)
-- `fixtures/sc-7/rejected-two-active-writers.json` (reject)
-- `fixtures/sc-7/rejected-idle-inferred-done.json` (reject)
+- `fixtures/sc-7/accepted-distinct-concurrent-runs.json` (accept) — U1 panel: read/display of distinct concurrent runs without collapsing their identity.
+- `fixtures/sc-7/accepted-explicit-unknown-source.json` (accept) — U1 panel: read/display of an explicit unknown source reported `unknown` rather than fabricated.
+- `fixtures/sc-7/rejected-two-active-writers.json` (reject) — P4/#112: ownership cleanup, two active writers on one run ledger.
+- `fixtures/sc-7/rejected-idle-inferred-done.json` (reject) — P4/#112: idle must not be inferred done (reversible archival, never deletion).
 
-**Counterpart acceptance.** `pending` per consumer (P4, #112; I1, O-LIFE later). No compatibility inferred from silence (l.550).
+**Counterpart acceptance.** `pending` per consumer (U1 panel, P4, #112; I1, O-LIFE later). No compatibility inferred from silence (l.550).

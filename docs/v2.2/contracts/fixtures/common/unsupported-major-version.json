@@ -14,7 +14,7 @@
   "expected_reason": "Unsupported *-v1 interface major version: the common reader supports `assignment-v1` (major 1) only; `assignment-v3` (major 3) is unsupported and reported invalid, never guessed (representation rule, SDP l.536). This discriminator is the *-v1 interface version — distinct from the Dev ledger `schema_version` and from `completion-result-v1` `profile_version`.",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
     "sdp_line": 536
   },
   "status": "not-run",

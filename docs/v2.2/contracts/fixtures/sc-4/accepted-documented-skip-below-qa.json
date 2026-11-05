@@ -42,7 +42,7 @@
   "expected_reason": "Accepted: a documented skip below the QA triggers, with the remaining mandatory review still required and attributed to an independent evaluator (SC-4 accepted example, SDP l.543).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
     "sdp_line": 543
   },
   "status": "not-run",
