@@ -11,6 +11,15 @@
 
 ---
 
+## Approved Plan Consumption (no re-ask)
+
+Phase 2 consumes the approved Technical Plan through its `plan_ref` (SC-1). Locked decisions are recorded and consumed, never re-asked. The architecture checkpoint confirms the decisions the plan already locked instead of re-deriving them.
+
+- Issues carry the `plan_ref` of the plan that produced them; workers read it rather than re-decide a locked choice.
+- A material amendment to the plan reopens the affected approval and routes back to Phase 1.5; Phase 2 never re-asks a locked decision.
+
+---
+
 ## Architecture Decision Checkpoint (run for all modes, before task decomposition)
 
 Before decomposing tasks, the following architecture decisions must be confirmed and recorded in `PROJECT_CONTEXT.md`.

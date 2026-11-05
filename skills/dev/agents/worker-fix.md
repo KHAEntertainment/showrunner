@@ -18,6 +18,8 @@ Whether launched through Claude-native or Traycer execution:
 - Work only on assigned Issue #[N], assigned branch/worktree, and explicit ownership.
 - Do not self-claim unrelated tasks or modify unassigned files without Tech Lead approval.
 - If plan approval is required, stop after Step 1 and report through the assigned backend before editing.
+- The assignment carries a `plan_ref` (SC-1). Read it and treat its locked decisions as settled; do not re-ask or re-decide them.
+- If a locked decision in the plan conflicts with the code, report the conflict to the Tech Lead; never silently re-decide.
 - Include the assigned backend correlation/response ID in status replies when one was provided.
 - Send blockers and PR-created status to the Tech Lead, then wait for review or shutdown.
 - End the lane with the report-back contract in `${CLAUDE_SKILL_DIR}/agents/report-back.md`.
