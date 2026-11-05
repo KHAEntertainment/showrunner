@@ -68,8 +68,9 @@ class Phase15ContentTests(unittest.TestCase):
     def test_research_placeholder_marked(self) -> None:
         self.assertIn("Research (C1/C2), defined by #207", self.phase)
 
-    def test_plan_ref_marked_provisional(self) -> None:
-        self.assertIn("PROVISIONAL", self.phase)
+    def test_plan_ref_cites_sc1_and_d4_invariant(self) -> None:
+        self.assertIn("SC-1", self.phase)
+        self.assertIn("`approval_revision` equals `plan_ref.approved_revision`", self.phase)
 
 
 class TemplateContentTests(unittest.TestCase):
@@ -86,8 +87,9 @@ class TemplateContentTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertIn(field, self.template)
 
-    def test_plan_ref_marked_provisional(self) -> None:
-        self.assertIn("PROVISIONAL", self.template)
+    def test_plan_ref_cites_sc1_and_d4_invariant(self) -> None:
+        self.assertIn("SC-1", self.template)
+        self.assertIn("`approval_revision` equals `plan_ref.approved_revision`", self.template)
 
 
 if __name__ == "__main__":

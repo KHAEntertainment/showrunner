@@ -84,22 +84,24 @@ Present the draft for the user's approval. Only the user approves the Technical 
 
 ## Step 5 — `plan_ref` provenance
 
-Every approved Technical Plan carries a `plan_ref`. The shape is **PROVISIONAL** (open defect D-SC1-1 against SC-1), and must not require machine-specific paths (D1):
+Every approved Technical Plan carries a `plan_ref`. The shape is the `plan_ref` sub-table of SC-1 (`docs/v2.2/contracts/sc-1.md` @ `f839f15`), and it must not require machine-specific paths (D1):
 
 ```
-plan_ref (PROVISIONAL):
-- origin
-- source_revision
-- approved_revision
+plan_ref:
+- origin: canonical plan location (a Traycer artifact in the current epic or a native Markdown document)
+- source_revision: the source plan revision as an immutable digest
+- approved_revision: the approved plan revision as an immutable digest
 - approval:
-    - authority
-    - evidence
+    - authority: who approved the plan
+    - evidence: GitHub-addressable approval evidence (commit SHA, PR review id, or a retained snapshot/digest)
 - producer:
-    - session
-    - harness
+    - session: the producing session
+    - harness: the producing harness
 ```
 
-`plan_ref` names origin, source revision, approved revision, approval authority/evidence, and producing session/harness (D1). Phase 2 and goal entry consume the Technical Plan through the same reference; Issues and workers carry it rather than re-deriving locked decisions.
+Phase 2 and goal entry consume the Technical Plan through the same reference; Issues and workers carry it rather than re-deriving locked decisions.
+
+**D4 invariant.** The assignment's top-level `approval_revision` equals `plan_ref.approved_revision`; the assignment `source` names the promoted plan at that revision; and `plan_ref.source_revision` is the drafted-from input.
 
 ---
 

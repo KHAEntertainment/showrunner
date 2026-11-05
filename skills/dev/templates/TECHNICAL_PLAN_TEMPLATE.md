@@ -38,9 +38,9 @@ A material amendment creates a new revision and reopens affected approval (D6.2.
 
 ---
 
-## `plan_ref` (PROVISIONAL)
+## `plan_ref` (SC-1)
 
-The shape below is **PROVISIONAL** (open defect D-SC1-1 against SC-1) and must not require machine-specific paths:
+The shape is the `plan_ref` sub-table of SC-1 (`docs/v2.2/contracts/sc-1.md` @ `f839f15`), and it must not require machine-specific paths:
 
 ```text
 origin:
@@ -53,3 +53,5 @@ producer:
   session:
   harness:
 ```
+
+**D4 invariant.** The assignment's top-level `approval_revision` equals `plan_ref.approved_revision`; the assignment `source` names the promoted plan at this revision; and `plan_ref.source_revision` is the drafted-from input.
