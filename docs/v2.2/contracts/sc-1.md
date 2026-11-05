@@ -39,7 +39,7 @@ L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from 
 | Field | Type | Cardinality | Required | Meaning |
 | --- | --- | --- | --- | --- |
 | `origin` | reference | 1 | required | canonical plan location — a Traycer artifact in the current epic or a native Markdown document (SDP l.79; D1 l.89) |
-| `source_revision` | digest | 1 | required | digest of the input the plan was drafted from (frozen PRD or supplied document; the D6.2.3 PRD-first route names the PRD as source), SDP l.115, l.129; the input's identity is carried by `source` provenance per D6.3.6, not by `origin` |
+| `source_revision` | digest | 1 | required | digest of the input the plan was drafted from (frozen PRD or supplied document; the D6.2.3 PRD-first route names the PRD as source), SDP l.115, l.129 |
 | `approved_revision` | digest | 1 | required | the approved plan revision as an immutable digest (SDP l.79; D1 l.90) |
 | `approval.authority` | identity record | 1 | required | who approved the plan (SDP l.79) |
 | `approval.evidence` | reference + digest | 1 | required | GitHub-addressable approval evidence — commit SHA, PR review id, or a retained snapshot/digest (SDP l.79; D1 l.91) |
