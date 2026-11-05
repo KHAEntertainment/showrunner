@@ -1,0 +1,31 @@
+{
+  "sc": "SC-5",
+  "version": "provider-result-v1",
+  "kind": "accepted",
+  "name": "accepted-scoped-read-only-finding",
+  "input": {
+    "domain": "code-review",
+    "schema": "synthetic-finding-v1",
+    "source_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sensitivity": "internal",
+    "allowed_capabilities": ["read_only"],
+    "provider": "synthetic-provider",
+    "model": "synthetic-model",
+    "route": "synthetic-route",
+    "usage": "bounded",
+    "retry": 1,
+    "result": {
+      "type": "finding",
+      "verdict": "no_blocking_issue"
+    }
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a scoped read-only finding with credentials absent (by reference only) and a typed domain answer — the domain owns the verdict (SC-5 accepted example, SDP l.544).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
+    "sdp_line": 544
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

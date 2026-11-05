@@ -1,0 +1,51 @@
+{
+  "sc": "SC-3",
+  "version": "completion-evidence-v1",
+  "kind": "accepted",
+  "name": "evidence-accepted-parent-acceptance",
+  "input": {
+    "profile_version": "completion-evidence-v1",
+    "scope": "parent_acceptance",
+    "parent": "OWNER/synthetic-repo#1",
+    "mode": "standalone",
+    "criteria_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "criteria_map": [],
+    "contributions": [
+      {
+        "pr": "OWNER/synthetic-repo#10",
+        "issue": "OWNER/synthetic-repo#1",
+        "criteria": ["AC-1@00000000"],
+        "assurance": {
+          "outcome": "pass",
+          "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+          "current": true
+        },
+        "integrated": "sha256:0000000000000000000000000000000000000000000000000000000000000004"
+      }
+    ],
+    "criteria": [
+      {
+        "id": "AC-1@00000000",
+        "evaluator": {
+          "type": "test",
+          "id": "synthetic-run-001"
+        },
+        "outcome": "pass",
+        "evidence_ref": "synthetic-run-001/job-1/attempt-1"
+      }
+    ],
+    "outcome": "complete",
+    "reason": null,
+    "observed_at": "2099-01-02T00:00:00Z",
+    "goal_completion_ref": null
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a `parent_acceptance` record stating acceptance of the parent objective across contributing PRs, each contribution carrying an assurance with revision and current state, each criterion carrying its evaluator and evidence_ref, with `goal_completion_ref` null — it points to (never carries) the GV result, and `assurance` is not read as goal completion (D4.2 l.376; DEV_STATE_TEMPLATE l.300–307, l.347–356; normative report §2 l.158–165).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 376
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

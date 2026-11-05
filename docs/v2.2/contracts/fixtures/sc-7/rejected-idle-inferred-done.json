@@ -1,0 +1,26 @@
+{
+  "sc": "SC-7",
+  "version": "run-projection-v1",
+  "kind": "rejected",
+  "name": "rejected-idle-inferred-done",
+  "input": {
+    "source": "dev-state-v2",
+    "version": "2",
+    "freshness": "2099-01-02T00:00:00Z",
+    "run": "synthetic-run-018",
+    "session": "synthetic-session-018",
+    "seat": "worker-new",
+    "lifecycle": "idle",
+    "epoch": 1,
+    "next_action": "inferred_complete"
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: an idle run is inferred done — idle is never inferred as done; an explicit lifecycle transition is required (SC-7 rejected example, SDP l.546).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204",
+    "sdp_line": 546
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

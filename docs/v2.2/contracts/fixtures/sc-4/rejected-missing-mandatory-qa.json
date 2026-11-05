@@ -1,0 +1,36 @@
+{
+  "sc": "SC-4",
+  "version": "conformance-v1",
+  "kind": "rejected",
+  "name": "rejected-missing-mandatory-qa",
+  "input": {
+    "workflow": "synthetic-workflow",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "run": "synthetic-run-014",
+    "lane": "synthetic-lane-014",
+    "head": "sha256:0000000000000000000000000000000000000000000000000000000000000005",
+    "gate_applicability": "qa_required",
+    "evidence": [
+      {
+        "gate": "qa",
+        "state": "failed"
+      },
+      {
+        "gate": "review",
+        "state": "failed",
+        "report_ref": "synthetic-report-002"
+      }
+    ],
+    "evaluator": "synthetic-lead-001",
+    "report_ref": "synthetic-report-002"
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: missing mandatory QA (state `failed`) and a failed review — mandatory QA/review cannot be skipped by a generic pass, and family diversity is never inferred from a generic pass (SC-4 rejected example, SDP l.543).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
+    "sdp_line": 543
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

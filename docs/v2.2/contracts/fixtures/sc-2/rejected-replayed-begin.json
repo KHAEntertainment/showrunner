@@ -1,0 +1,34 @@
+{
+  "sc": "SC-2",
+  "version": "authorization-context-v1",
+  "kind": "rejected",
+  "name": "rejected-replayed-begin",
+  "input": {
+    "policy_ref": "synthetic-policy",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "actor": "synthetic-agent-005",
+    "run": "synthetic-run-005",
+    "operation": "merge",
+    "target": "OWNER/synthetic-repo",
+    "head": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "begin": {
+      "grant_id": "synthetic-grant-005",
+      "grant_kind": "bounded",
+      "grant_holder": "synthetic-agent-005",
+      "grant_epoch": 1,
+      "grant_state": "in_progress",
+      "grant_start": "2099-01-01T00:00:00Z",
+      "grant_expiry": "2099-01-02T00:00:00Z"
+    },
+    "result": "Begin"
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: actor, run, operation, target, head and the grant bindings are all identical to the valid acknowledged Begin (synthetic-grant-005); the ONLY difference is result: Begin — a replayed Begin for an already-begun operation. Only a bounded Continue is admitted; the replay is rejected on that sole basis (SC-2 continuation fixture, SDP l.250; rejected example l.541).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
+    "sdp_line": 250
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

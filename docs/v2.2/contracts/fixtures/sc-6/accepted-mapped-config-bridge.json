@@ -1,0 +1,52 @@
+{
+  "sc": "SC-6",
+  "version": "project-binding-v1",
+  "kind": "accepted",
+  "name": "accepted-mapped-config-bridge",
+  "input": {
+    "source": "dev-config",
+    "host": "github.com",
+    "account": "OWNER",
+    "repository": "OWNER/synthetic-repo",
+    "push_repository": "OWNER/synthetic-repo",
+    "pull_request_repository": "OWNER/synthetic-repo",
+    "push_remote": "origin",
+    "destination_branch": "main",
+    "tracker_ids": [
+      {
+        "id": "OWNER/synthetic-repo#1",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "bridge": {
+      "last_scan": "2099-01-02T00:00:00Z",
+      "bridged": [
+        {
+          "n": 1,
+          "key": "OWNER/synthetic-repo#1",
+          "created": "2099-01-02T00:00:00Z"
+        }
+      ],
+      "left": []
+    },
+    "provenance": {
+      "origin": "dev-config",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "authoritative_writer": "synthetic-writer-001",
+    "operation": "read",
+    "delivery": "synthetic-delivery-001",
+    "dedup_identity": "OWNER/synthetic-repo#1@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "policy_ref": "synthetic-policy",
+    "credential_ref": "synthetic-credential-ref"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a `dev-config`-sourced projection that maps `.dev.json` config fields (host/account, push_repository and pull_request_repository kept distinct, push_remote) plus the Foreman bridge watermark/bridged records, all with verified provenance — an existing authorized bridge link (SC-6 accepted example, SDP l.545; dev_config.py l.42–47).",
+  "retained_source": {
+    "path": "~/foreman/showrunner/.foreman/project.json",
+    "revision_or_digest": "sha256:f68b259be5bc4ab5e4818865bb28a12770a7a1a6f00b36686fa6f0c531373ad3",
+    "sdp_line": 545
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

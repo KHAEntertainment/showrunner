@@ -1,0 +1,32 @@
+{
+  "sc": "SC-7",
+  "version": "run-projection-v1",
+  "kind": "accepted",
+  "name": "accepted-distinct-concurrent-runs",
+  "input": {
+    "source": "dev-state-v2",
+    "version": "2",
+    "freshness": "2099-01-02T00:00:00Z",
+    "run": "synthetic-run-015",
+    "session": "synthetic-session-015",
+    "seat": "worker-new",
+    "lifecycle": "active",
+    "predecessor": null,
+    "successor": null,
+    "epoch": 1,
+    "obligations": [],
+    "heartbeat": "2099-01-02T00:00:00Z",
+    "report_verdict": null,
+    "verification": null,
+    "next_action": "run_backend_detection"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: distinct concurrent runs (synthetic-run-015 coexisting with another active run) are read as separate projections with no synthetic global phase (SC-7 accepted example, SDP l.546).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 546
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

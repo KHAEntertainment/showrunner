@@ -1,0 +1,29 @@
+{
+  "sc": "SC-7",
+  "version": "custody-reference-v1",
+  "kind": "rejected",
+  "name": "rejected-two-active-writers",
+  "input": {
+    "source": "dev-state-v2",
+    "version": "2",
+    "freshness": "2099-01-02T00:00:00Z",
+    "run": "synthetic-run-017",
+    "session": "synthetic-session-017",
+    "seat": "worker-new",
+    "lifecycle": "active",
+    "epoch": 1,
+    "writers": [
+      "synthetic-agent-017",
+      "synthetic-agent-018"
+    ]
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: two active writers claim the same run/session — a single authoritative writer is required, and two active writers are rejected (SC-7 rejected example, SDP l.546; never allow two writers, §7 l.500).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 546
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

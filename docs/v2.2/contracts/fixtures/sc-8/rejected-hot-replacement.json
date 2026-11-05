@@ -1,0 +1,27 @@
+{
+  "sc": "SC-8",
+  "version": "component-receipt-v1",
+  "kind": "rejected",
+  "name": "rejected-hot-replacement",
+  "input": {
+    "source_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "release": "v2.2.1",
+    "installed_version": "v2.2.0",
+    "adopted_version": "v2.2.1",
+    "supported_interface": "synthetic-interface-v1",
+    "runtime": "python3",
+    "registration": "synthetic-registration-002",
+    "load_proof": {
+      "kind": "global_load_marker"
+    }
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: hot replacement of running instructions (adopting v2.2.1 over a running v2.2.0) with a global load marker counted as per-run coverage — adoption must be a safe next-session change, and a global marker is not per-run proof (SC-8 rejected example, SDP l.547).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
+    "sdp_line": 547
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

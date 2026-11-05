@@ -1,0 +1,18 @@
+{
+  "sc": "common",
+  "version": "*-v1 (any)",
+  "kind": "rejected",
+  "name": "ambiguous-identity",
+  "input": {
+    "fixed_issues": ["184", "synthetic-note"]
+  },
+  "expected_outcome": "invalid",
+  "expected_reason": "Ambiguous identity: bare Issue numbers without a qualified OWNER/REPO prefix are ambiguous and invalid (representation rule, SDP l.536; SC-1 rejected example l.540).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/orchestration-workflow-foreman/charters/p0-baseline-and-contracts/index.md",
+    "revision_or_digest": "sha256:59aab9b17b2cd46102299478251d2d8f35999b9ca35629940a7aaa57afcabfe2",
+    "sdp_line": 536
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

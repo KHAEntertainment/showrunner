@@ -1,0 +1,19 @@
+{
+  "sc": "common",
+  "version": "*-v1 (any)",
+  "kind": "rejected",
+  "name": "required-field-missing",
+  "input": {
+    "project": "OWNER/synthetic-repo",
+    "mode": "standalone"
+  },
+  "expected_outcome": "invalid",
+  "expected_reason": "Required field missing: `run` (a required identity field) is absent, so the record is invalid rather than defaulted (representation rule, SDP l.536).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 536
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

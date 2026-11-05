@@ -1,0 +1,21 @@
+{
+  "sc": "common",
+  "version": "Dev ledger schema",
+  "kind": "rejected",
+  "name": "dev-ledger-unsupported-schema-version",
+  "input": {
+    "schema_version": 3,
+    "execution": {
+      "execution_backend": "incomplete"
+    }
+  },
+  "expected_outcome": "invalid",
+  "expected_reason": "Dev ledger `schema_version != 2`: the Dev validator fails the record with `schema_version must be 2` (dev_state.py l.156–159). This discriminator is the Dev ledger schema, not a *-v1 interface version, and it is distinct from `completion-result-v1` `profile_version`, where a missing/unknown value is `unknown`, not invalid (D4.5 l.445).",
+  "retained_source": {
+    "path": "skills/dev/scripts/dev_state.py",
+    "revision_or_digest": "sha256:c4c2408740426cc4ebcd6469d0c297087d0d99a4214c368dacb0e87744d9c436",
+    "sdp_line": 536
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}
