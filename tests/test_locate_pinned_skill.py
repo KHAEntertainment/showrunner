@@ -435,11 +435,56 @@ class LocatorCliTests(unittest.TestCase):
         self.assertEqual("present", payload["status"])
         self.assertEqual(str(clean), payload["path"])
 
+    def test_a_clean_mismatch_outranks_a_symlinked_candidate(self) -> None:
+        """A symlinked candidate never hides a clean digest mismatch beside it.
+
+        A clean candidate whose digest mismatches is a more specific drift than
+        a symlinked one: the symlinked candidate is listed under ``symlinked``
+        and never chosen, and the verdict names the digest mismatch.
+        """
+        cache = self.root / "kha-marketplace" / "example-plugin"
+        linked = write_skill(cache / "1.0.0" / "skills" / SKILL_NAME, body="Old.\n")
+        clean = write_skill(cache / "2.0.0" / "skills" / SKILL_NAME, body="New.\n")
+        target = self.base / "linked" / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((linked / "SKILL.md").read_bytes())
+        (linked / "SKILL.md").unlink()
+        (linked / "SKILL.md").symlink_to(target)
+
+        elsewhere = write_skill(self.base / "unrelated" / SKILL_NAME, body="Pinned.\n")
+        completed = self.locate(LOCATOR.directory_digest(elsewhere))
+        self.assertEqual(2, completed.returncode, completed.stdout)
+        payload = self.payload(completed)
+        self.assertEqual("drift", payload["status"])
+        self.assertEqual("digest_mismatch", payload["cause"])
+        self.assertEqual(str(linked), payload["symlinked"][0]["path"])
+        self.assertNotIn("path", payload)
+
     def test_an_unreadable_root_is_an_error_not_an_absence(self) -> None:
         """The skill could be inside a root that cannot be read."""
         root = self.base / "locked-root"
         root.mkdir()
         self.lock(root)
+
+        completed = self.locate(PINNED_DIGEST, root)
+        self.assertEqual(1, completed.returncode, completed.stdout)
+        payload = json.loads(completed.stdout)
+        self.assertEqual("error", payload["status"])
+        self.assertEqual("root_unreadable", payload["cause"])
+
+    def test_a_root_behind_an_unreadable_parent_is_an_error_not_an_absence(self) -> None:
+        """A root whose parent cannot be searched must not be skipped as absent.
+
+        ``Path.exists()`` swallows a permission error and reports False, so a
+        root sitting behind an unreadable parent looked absent and produced
+        ``not_available``. It is an operational error: the skill could be
+        inside it.
+        """
+        parent = self.base / "locked-parent"
+        parent.mkdir()
+        root = parent / "root"
+        root.mkdir()
+        self.lock(parent)
 
         completed = self.locate(PINNED_DIGEST, root)
         self.assertEqual(1, completed.returncode, completed.stdout)
@@ -590,6 +635,29 @@ class LocatorSourceTests(unittest.TestCase):
                 elif isinstance(node.func, ast.Attribute):
                     with self.subTest(call=node.func.attr):
                         self.assertNotIn(node.func.attr, self.FORBIDDEN_CALLS)
+
+    def test_main_has_no_dead_locator_error_handler(self) -> None:
+        """``locate()`` internalizes ``LocatorError``, so ``main()`` has no handler.
+
+        The operational-error JSON contract (exit 1, an ``{"status": "error",
+        "cause": ...}`` object on stdout) is produced by ``locate()``'s return
+        payload, not by an exception handler, so a handler for ``LocatorError``
+        in ``main()`` is dead code.
+        """
+        main_node = next(
+            (
+                node
+                for node in ast.walk(self.tree)
+                if isinstance(node, ast.FunctionDef) and node.name == "main"
+            ),
+            None,
+        )
+        self.assertIsNotNone(main_node, "main() not found")
+        handled: list[str] = []
+        for node in ast.walk(main_node):
+            if isinstance(node, ast.ExceptHandler) and isinstance(node.type, ast.Name):
+                handled.append(node.type.id)
+        self.assertNotIn("LocatorError", handled)
 
 
 if __name__ == "__main__":
