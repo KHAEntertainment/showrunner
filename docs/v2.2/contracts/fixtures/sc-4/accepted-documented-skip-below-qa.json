@@ -1,0 +1,38 @@
+{
+  "sc": "SC-4",
+  "version": "conformance-v1",
+  "kind": "accepted",
+  "name": "accepted-documented-skip-below-qa",
+  "input": {
+    "workflow": "synthetic-workflow",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "run": "synthetic-run-013",
+    "lane": "synthetic-lane-013",
+    "head": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+    "gate_applicability": "qa_trigger_below_threshold",
+    "evidence": [
+      {
+        "gate": "qa",
+        "state": "valid-skip",
+        "reason": "below QA trigger"
+      },
+      {
+        "gate": "review",
+        "state": "required",
+        "evaluator": "synthetic-reviewer-001",
+        "report_ref": "synthetic-report-001"
+      }
+    ],
+    "evaluator": "synthetic-lead-001",
+    "report_ref": "synthetic-report-001"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a documented skip below the QA triggers, with the remaining mandatory review still required and attributed to an independent evaluator (SC-4 accepted example, SDP l.543).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "sdp_line": 543
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

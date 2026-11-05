@@ -1,0 +1,31 @@
+{
+  "sc": "SC-8",
+  "version": "component-receipt-v1",
+  "kind": "accepted",
+  "name": "accepted-compatible-existing-installation",
+  "input": {
+    "source_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "release": "v2.2.0",
+    "installed_version": "v2.2.0",
+    "adopted_version": "v2.2.0",
+    "supported_interface": "synthetic-interface-v1",
+    "runtime": "python3",
+    "registration": "synthetic-registration-001",
+    "load_proof": {
+      "session": "synthetic-session-019",
+      "loaded_at": "2099-01-02T00:00:00Z"
+    },
+    "update_window": "2099-01-03T00:00:00Z",
+    "backup": "synthetic-backup-ref",
+    "rollback": "synthetic-rollback-ref"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a compatible existing installation with per-session load proof (not a global marker) — the receipt records installed vs adopted version and safe adoption (SC-8 accepted example, SDP l.547).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "sdp_line": 547
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

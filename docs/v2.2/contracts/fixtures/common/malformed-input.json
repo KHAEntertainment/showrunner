@@ -1,0 +1,19 @@
+{
+  "sc": "common",
+  "version": "*-v1 (any)",
+  "kind": "rejected",
+  "name": "malformed-input",
+  "input": {
+    "fixed_issues": "OWNER/synthetic-repo#1",
+    "run": 12345
+  },
+  "expected_outcome": "invalid",
+  "expected_reason": "Malformed input: `fixed_issues` is a scalar where a list of qualified Issue IDs is required, and `run` is a number where a string is required; malformed input yields an explicit invalid result, not a repair (representation rule, SDP l.536).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 536
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

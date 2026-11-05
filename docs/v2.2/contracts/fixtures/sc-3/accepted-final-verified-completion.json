@@ -1,0 +1,59 @@
+{
+  "sc": "SC-3",
+  "version": "completion-result-v1",
+  "kind": "accepted",
+  "name": "accepted-final-verified-completion",
+  "input": {
+    "profile_version": "1",
+    "result_id": "synthetic-result-001",
+    "run_id": "synthetic-run-008",
+    "plan_ref": "docs/plans/2099-01-01-synthetic-plan.md",
+    "goal": {
+      "repository": "OWNER/synthetic-repo",
+      "fixed_issues": ["OWNER/synthetic-repo#1"],
+      "frozen_at": "2099-01-01T00:00:00Z"
+    },
+    "evidence_profile": "completion-evidence-v1",
+    "consumed_inputs": [
+      {
+        "reference": "OWNER/synthetic-repo#1",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "recorded_at": "2099-01-02T00:00:00Z",
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "purpose": "final",
+    "repository_facts": {
+      "observed_at": "2099-01-02T00:00:00Z"
+    },
+    "criteria": [
+      {
+        "criteria_ref": "synthetic-criterion-1",
+        "evaluator": "test",
+        "state": "met",
+        "reason_code": "ok",
+        "accepted_proof": "CI run synthetic-run-001/job-1/attempt-1"
+      }
+    ],
+    "outcome": "verified",
+    "reason_codes": [],
+    "producer": {
+      "helper_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "skill_revision": "v2.2.0",
+      "invoker_role": "lead",
+      "invoker_id": "synthetic-agent-008",
+      "invoker_harness": "opencode",
+      "recorded_by": "lead"
+    },
+    "supersedes": []
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a `final` result that is complete, consistent and fresh closed-Issue proof, with every criterion `met` and outcome `verified` within the `final` purpose vocabulary (SC-3 accepted example, SDP l.542; D4.5 l.445).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "sdp_line": 426
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

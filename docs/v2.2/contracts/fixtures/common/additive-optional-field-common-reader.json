@@ -1,0 +1,27 @@
+{
+  "sc": "common",
+  "version": "*-v1 (any)",
+  "kind": "accepted",
+  "name": "additive-optional-field-common-reader",
+  "input": {
+    "schema_version": 2,
+    "project": "OWNER/synthetic-repo",
+    "run": "synthetic-run-001",
+    "mode": "goal",
+    "lead": {
+      "agent_id": "synthetic-agent-001",
+      "harness": "opencode",
+      "model": "deepseek:deepseek-v4-pro"
+    },
+    "additive_optional_field": "reader-tolerant"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Additive optional field: a common reader accepts the document with the additive field present and ignores it — this is a common-reader fixture, not silent parser leniency (representation rule, SDP l.536; Dev schema_version 2 permits additive keys).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 536
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

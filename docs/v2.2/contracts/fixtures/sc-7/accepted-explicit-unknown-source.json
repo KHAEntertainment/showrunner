@@ -1,0 +1,29 @@
+{
+  "sc": "SC-7",
+  "version": "run-projection-v1",
+  "kind": "accepted",
+  "name": "accepted-explicit-unknown-source",
+  "input": {
+    "source": "unknown",
+    "version": null,
+    "freshness": null,
+    "run": "synthetic-run-016",
+    "session": "synthetic-session-016",
+    "seat": "unknown",
+    "lifecycle": "unknown",
+    "predecessor": null,
+    "successor": null,
+    "epoch": null,
+    "obligations": [],
+    "next_action": "unknown"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: an explicit unknown source is reported as `unknown` — the projection carries a source whose identity cannot be resolved rather than fabricating one (SC-7 accepted example, SDP l.546).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204",
+    "sdp_line": 546
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

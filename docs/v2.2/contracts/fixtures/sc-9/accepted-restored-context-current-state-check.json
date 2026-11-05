@@ -1,0 +1,33 @@
+{
+  "sc": "SC-9",
+  "version": "recovery-receipt-v1",
+  "kind": "accepted",
+  "name": "accepted-restored-context-current-state-check",
+  "input": {
+    "run": "synthetic-run-020",
+    "session": "synthetic-session-020",
+    "event": "synthetic-event-020",
+    "adapter": "synthetic-adapter",
+    "version": "v0.2.1",
+    "note_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "freshness": "2099-01-02T00:00:00Z",
+    "authoritative_refs": [
+      "docs/plans/2099-01-01-synthetic-plan.md"
+    ],
+    "coverage": "top_level",
+    "degradation": null,
+    "event_accounting": {
+      "result": "counted_once"
+    },
+    "admission_outcome": "restored_then_current_state_check"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: restored context followed by current-state checks, with event accounted exactly once and no authority renewal claimed (SC-9 accepted example, SDP l.548).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
+    "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",
+    "sdp_line": 548
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

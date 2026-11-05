@@ -1,0 +1,36 @@
+{
+  "sc": "SC-6",
+  "version": "project-binding-v1",
+  "kind": "accepted",
+  "name": "accepted-verified-provenance-document",
+  "input": {
+    "project": "OWNER/synthetic-repo",
+    "repo": "OWNER/synthetic-repo",
+    "host": "github.com",
+    "tracker_ids": [
+      {
+        "id": "OWNER/synthetic-repo#1",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ],
+    "provenance": {
+      "origin": "supplied-document",
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "authoritative_writer": "synthetic-writer-001",
+    "operation": "read",
+    "delivery": "synthetic-delivery-001",
+    "dedup_identity": "OWNER/synthetic-repo#1@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "policy_ref": "synthetic-policy",
+    "credential_ref": "synthetic-credential-ref"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a supplied document with verified provenance (origin + digest), an authoritative writer, and policy/credential refs kept separate (SC-6 accepted example, SDP l.545).",
+  "retained_source": {
+    "path": "skills/dev/scripts/dev_config.py",
+    "revision_or_digest": "sha256:9125822a01e3b01a99ee0ebdd611154cd21f17ec69503a4ccf3efa9b685f5d7d",
+    "sdp_line": 545
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

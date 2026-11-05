@@ -1,0 +1,39 @@
+{
+  "sc": "SC-3",
+  "version": "completion-result-v1",
+  "kind": "rejected",
+  "name": "rejected-cross-repo-goal-at-arming",
+  "input": {
+    "profile_version": "1",
+    "result_id": "synthetic-result-005",
+    "run_id": "synthetic-run-012",
+    "plan_ref": "docs/plans/2099-01-01-synthetic-plan.md",
+    "goal": {
+      "repository": "OWNER/synthetic-repo",
+      "parent": "OWNER/synthetic-parent",
+      "fixed_issues": [
+        "OWNER/synthetic-repo#1",
+        "OTHER/synthetic-other#2"
+      ],
+      "frozen_at": "2099-01-01T00:00:00Z"
+    },
+    "evidence_profile": "completion-evidence-v1",
+    "purpose": "final",
+    "outcome": "verified",
+    "reason_codes": [],
+    "producer": {
+      "helper_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "skill_revision": "v2.2.0",
+      "recorded_by": "lead"
+    }
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected at arming: a cross-repository goal (issues spanning OWNER/synthetic-repo and OTHER/synthetic-other) is rejected at goal arming and uses the ordinary workflow; no GV result is produced or fabricated (D4.3 l.389; D4.5 §5 l.449).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
+    "sdp_line": 389
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}
