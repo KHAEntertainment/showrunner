@@ -39,8 +39,10 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/common/malformed-input.json` | `5dc13b6342f902b9dc693a6e22e285a2a223c467e465a3ede46e197c9b42cdb4` |
 | `fixtures/common/required-field-missing.json` | `36e6cd9e4ac70879d85627f5249e6e076620cb085dff4d5eb6964aead367bc21` |
 | `fixtures/common/unsupported-major-version.json` | `71d3a7b79a381eb4d7f8f3420ac3788e46a708276d13330299d4d5e5477774fa` |
+| `fixtures/sc-1/accepted-structured-plan-ref.json` | `0e4ab000f23632145d8457dda91cb136677e5d3d55cf2095fcc663a50b22d4de` |
 | `fixtures/sc-1/accepted-two-distinct-runs.json` | `4d41af3b80572dc43388b47c7ed6431fa3dd0b54be6d3159a8925bc21f0af4c5` |
 | `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` | `10337809fc832a00e7bb89da52bcc2d65f2dadee8db7015b7193129aa2b2f197` |
+| `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `2dce53421ec27c5cd01b27a8ea322cd93298ca37b546d8c3a2a6373a7be5fe4b` |
 | `fixtures/sc-1/rejected-missing-managed-source.json` | `f199e6f7c1cc7d3f2e7519dd2830c238ee9c8143dbc94a3662f98dbe9a2d3abf` |
 | `fixtures/sc-2/accepted-continue-epoch-rotation.json` | `0616d15296c88dc7394a8c77985393c8a60763f9ecc889c78e84524042656021` |
 | `fixtures/sc-2/accepted-continue-latest-start-expiry.json` | `8c05043366ec54b347f4ba88de9691cef7e7ad7e490ed9da9e2eb5f6099b4936` |
@@ -57,7 +59,10 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `bc99b3afc095a0e772f9c95f031b9a397481545cb5bae6c024aa7c17dd5b8576` |
 | `fixtures/sc-4/accepted-mapped-acceptance-lane.json` | `5da5c4ee61e8e5951be3a3a27eb484ebd0ab82a7feafe69f686da134ac67cde0` |
 | `fixtures/sc-4/rejected-missing-mandatory-qa.json` | `ed6c30ce2968548c85132701fd5c7d8ff86766adfd5993dc4c60b1f3f9645284` |
+| `fixtures/sc-5/accepted-drift-fallback.json` | `00d83cd67366a930c1575a7c2286d32c5e0c75132791668725bcb096e0f88965` |
+| `fixtures/sc-5/accepted-needs-input.json` | `4a870ec99b043c7770a38ac3f4536c860eea06f5e5943aeeeb11f1c25a62e680` |
 | `fixtures/sc-5/accepted-scoped-read-only-finding.json` | `81e1e7ace3f34a8ba71672b4e5966abec2f1db45135a94435dc47c1287b8d76c` |
+| `fixtures/sc-5/rejected-not-available-without-cause.json` | `9c23fa4789d4b6b74550f91ab891e8946e6c9df41aa807cf37128dfcdfbf629b` |
 | `fixtures/sc-5/rejected-secret-bearing-request.json` | `8f89c71441bf67ea3da61e5df288a5865ca644c2899518c0c20d9a7a370d90ed` |
 | `fixtures/sc-6/accepted-verified-provenance-document.json` | `cb402b28d4980ead26798e57c15bcb9e52741725ea01138a06f617bff5d7ee2a` |
 | `fixtures/sc-6/accepted-mapped-config-bridge.json` | `4d8e688cf021d3b0f048ff0559d0e1cf83b7954dc9254cf256bff306faf9571a` |

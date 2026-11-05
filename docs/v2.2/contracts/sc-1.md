@@ -22,7 +22,7 @@
 | `run` | string (run id) | 1 | required | the run this assignment belongs to |
 | `mode` | enum | 1 | required | execution mode (`standalone` / `managed`; SDP l.23–l.28) |
 | `lead` | identity record | 1 | required | lead agent identity (agent id / harness / model) |
-| `plan_ref` | reference | 1 | required | portable plan reference (D1 l.89–l.90) |
+| `plan_ref` | record (see sub-table) | 1 | required | portable plan reference carrying origin, source/approved revisions, approval and producer provenance (SDP l.79; D1 l.89–l.90) |
 | `source` | reference | 1 | required | source document reference |
 | `approval_revision` | reference + digest | 1 | required | the approval revision of the source |
 | `fixed_issues` | list of qualified Issue IDs | 1..* | required | the frozen qualified Issue set (`OWNER/REPO#N`) |
@@ -32,9 +32,21 @@
 
 `mode` has exactly two values — `standalone` and `managed` (SDP l.23–l.28). A goal run is not a third mode: goal-run identity is a merge-authority concept (D2 l.256) carried by SC-2, not by the assignment mode. No `goal` value is invented here.
 
+**`plan_ref` sub-table.** `plan_ref` is a structured record, not an opaque reference (SDP l.79). It carries plan provenance without requiring machine-specific paths; every revision is GitHub-addressable (D1 l.89–l.91).
+
+| Field | Type | Cardinality | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `origin` | reference | 1 | required | canonical plan location — a Traycer artifact in the current epic or a native Markdown document (SDP l.79; D1 l.89) |
+| `source_revision` | digest | 1 | required | the source plan revision as an immutable digest (SDP l.79; D1 l.90) |
+| `approved_revision` | digest | 1 | required | the approved plan revision as an immutable digest (SDP l.79; D1 l.90) |
+| `approval.authority` | identity record | 1 | required | who approved the plan (SDP l.79) |
+| `approval.evidence` | reference + digest | 1 | required | GitHub-addressable approval evidence — commit SHA, PR review id, or a retained snapshot/digest (SDP l.79; D1 l.91) |
+| `producer.session` | string (session id) | 1 | required | the producing session (SDP l.79) |
+| `producer.harness` | string (harness) | 1 | required | the producing harness (SDP l.79) |
+
 **Accepted example.** Two distinct runs in the same repository; an explicitly bounded charter subset (l.540).
 
-**Rejected example.** Bare ambiguous Issue IDs; changed approval; missing managed source; auto-admitted new milestone Issue (l.540).
+**Rejected example.** Bare ambiguous Issue IDs; changed approval; missing managed source; auto-admitted new milestone Issue (l.540); a machine-specific path in `plan_ref` or `source` (SDP l.79).
 
 **Edge cases.**
 
@@ -43,11 +55,18 @@
 - required field missing → `invalid`
 - malformed input → `invalid`
 - additive optional field → common-reader fixture, not silent parser leniency (l.536)
+- machine-specific path in `plan_ref` or `source` → `invalid`
 
 **Fixtures.**
 
 - `fixtures/sc-1/accepted-two-distinct-runs.json` (accept)
 - `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` (reject)
 - `fixtures/sc-1/rejected-missing-managed-source.json` (reject)
+- `fixtures/sc-1/accepted-structured-plan-ref.json` (accept)
+- `fixtures/sc-1/rejected-machine-path-plan-ref.json` (reject)
+
+`accepted-two-distinct-runs.json` predates the structured `plan_ref` rule (D-SC1-1): its `plan_ref` is a bare path and its `source` is a machine-specific `~/.traycer/…` path. It is retained byte-identical as a known legacy fixture; the structured `plan_ref` shape is exercised by `accepted-structured-plan-ref.json`.
 
 **Counterpart acceptance.** `pending` per consumer (P1, P2, GV, panel (U1); I1 later). No compatibility inferred from silence (l.550).
+
+**Revision note.** Additive v1 revision, 2026-11-05, M2 L0b (defects D-SC1-1, D-SC5-1). Consumers listed unchanged.

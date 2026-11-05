@@ -1,0 +1,31 @@
+{
+  "sc": "SC-5",
+  "version": "provider-result-v1",
+  "kind": "accepted",
+  "name": "accepted-needs-input",
+  "input": {
+    "domain": "research",
+    "schema": "synthetic-finding-v1",
+    "source_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "sensitivity": "internal",
+    "allowed_capabilities": ["read_only"],
+    "provider": "synthetic-provider",
+    "model": "synthetic-model",
+    "route": "synthetic-route",
+    "usage": "bounded",
+    "retry": 1,
+    "result": {
+      "type": "needs_input",
+      "question": "synthetic-question-returned-to-the-lead"
+    }
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a provider `needs_input` result returns a read-only question to the lead, who answers from evidence or escalates genuinely user-owned choices; the question never becomes the user script (SDP l.81; AC-02 l.750).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b",
+    "sdp_line": 544
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}
