@@ -33,8 +33,8 @@
         "harness": "opencode"
       }
     },
-    "source": "docs/plans/2099-01-01-synthetic-plan.md@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "approval_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "source": "docs/plans/2099-01-01-synthetic-plan.md@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "approval_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
     "fixed_issues": ["OWNER/synthetic-repo#1"]
   },
   "expected_outcome": "accept",

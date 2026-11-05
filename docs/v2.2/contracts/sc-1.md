@@ -1,6 +1,6 @@
 # SC-1 — identity/scope (`assignment-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.540 (snapshot SHA-256 `fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd`). Owner-bound values from settled D1 (l.85) and D6.5 (l.142). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot (see `index.md`).
+**Source revision.** Showrunner v2.2 SDP `7177580c…` §8 l.540 (snapshot SHA-256 `7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b`, 819 lines). Owner-bound values from settled D1 (l.85) and D6.5 (l.142). Issue #184's body cites the superseded snapshot `dae53a66…`; the earlier snapshot `fee134d9…` is superseded by `7177580c…` (re-pinned 2026-11-05).
 
 L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
 
@@ -39,12 +39,14 @@ L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from 
 | Field | Type | Cardinality | Required | Meaning |
 | --- | --- | --- | --- | --- |
 | `origin` | reference | 1 | required | canonical plan location — a Traycer artifact in the current epic or a native Markdown document (SDP l.79; D1 l.89) |
-| `source_revision` | digest | 1 | required | the source plan revision as an immutable digest (SDP l.79; D1 l.90) |
+| `source_revision` | digest | 1 | required | digest of the input the plan was drafted from (frozen PRD or supplied document; the D6.2.3 PRD-first route names the PRD as source), SDP l.115, l.129 |
 | `approved_revision` | digest | 1 | required | the approved plan revision as an immutable digest (SDP l.79; D1 l.90) |
 | `approval.authority` | identity record | 1 | required | who approved the plan (SDP l.79) |
 | `approval.evidence` | reference + digest | 1 | required | GitHub-addressable approval evidence — commit SHA, PR review id, or a retained snapshot/digest (SDP l.79; D1 l.91) |
 | `producer.session` | string (session id) | 1 | required | the producing session (SDP l.79) |
 | `producer.harness` | string (harness) | 1 | required | the producing harness (SDP l.79) |
+
+**Invariant — v1 specification correction (D4), 2026-11-05.** When an assignment runs from an approved plan, the top-level `approval_revision` MUST equal `plan_ref.approved_revision` (the same digest), and the top-level `source` names the promoted plan copy at that revision (SDP D1 l.90). `plan_ref.source_revision` is the revision of the input the plan was drafted from (PRD or supplied document; D6.2.3/D6.3.6, SDP l.115, l.129), so it may differ from both. A mismatch between `approval_revision` and `plan_ref.approved_revision` is invalid (the SC-1 "changed approval" rejected example, l.540).
 
 **Accepted example.** Two distinct runs in the same repository; an explicitly bounded charter subset (l.540).
 
@@ -58,6 +60,7 @@ L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from 
 - malformed input → `invalid`
 - additive optional field → common-reader fixture, not silent parser leniency (l.536)
 - machine-specific path in `plan_ref` or `source` → `invalid`
+- `approval_revision` ≠ `plan_ref.approved_revision` → `invalid`
 
 **Fixtures.**
 
@@ -66,6 +69,7 @@ L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from 
 - `fixtures/sc-1/rejected-missing-managed-source.json` (reject)
 - `fixtures/sc-1/accepted-structured-plan-ref.json` (accept)
 - `fixtures/sc-1/rejected-machine-path-plan-ref.json` (reject)
+- `fixtures/sc-1/rejected-approval-revision-mismatch.json` (reject)
 
 **Counterpart acceptance.** `pending` per consumer (P1, P2, GV, panel (U1); I1 later). No compatibility inferred from silence (l.550).
 

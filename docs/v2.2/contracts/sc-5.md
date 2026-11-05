@@ -1,6 +1,6 @@
 # SC-5 — provider/tool invocation (`provider-request-v1`, `provider-result-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.544. Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `7177580c…` §8 l.544 (snapshot SHA-256 `7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b`, 819 lines). Issue #184's body cites the superseded snapshot `dae53a66…`; the earlier snapshot `fee134d9…` is superseded by `7177580c…` (re-pinned 2026-11-05).
 
 L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
 

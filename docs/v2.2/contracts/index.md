@@ -2,7 +2,7 @@
 
 This directory is the P0-02 delivery package for `KHAEntertainment/showrunner#184`. It specifies the SDP SC-1–SC-9 producer/consumer contract examples and retained fixture provenance. It implements no runtime, records no policy default, and never claims behavioral/runtime/cross-harness/pilot proof from text.
 
-**Canonical source.** Showrunner v2.2 SDP, snapshot SHA-256 `fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd` (819 lines), retained at `~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md`. Issue #184's body cites the superseded snapshot `dae53a66…` (789 lines); this package binds the current snapshot `fee134d9…` per the admission ledger's re-pin note (ledger l.444).
+**Canonical source.** Showrunner v2.2 SDP, snapshot SHA-256 `7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b` (819 lines), retained at `~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md`. Issue #184's body cites the superseded snapshot `dae53a66…` (789 lines); the earlier snapshot `fee134d9…` is superseded by `7177580c…` (re-pinned 2026-11-05).
 
 L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
 
@@ -15,7 +15,7 @@ L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from 
 
 ## Provenance table
 
-| SC | Contract(s) | Source revision (SDP `fee134d9…`) | Semantic owner | Producer | Consumers (package) |
+| SC | Contract(s) | Source line (SDP `fee134d9…`, unchanged at `7177580c…`) | Semantic owner | Producer | Consumers (package) |
 | --- | --- | --- | --- | --- | --- |
 | SC-1 | `assignment-v1` | l.540; D1 l.85; D6.5 l.142 | Dev planning owner | Dev planning + backend adapter | P1; P2, GV, panel (U1); I1 (later) |
 | SC-2 | `authorization-context-v1` | l.541; l.250; D2 | Dev execution/recovery owner | Dev operation gates; Foreman grant owner | P2; I1, O-DB, O-STOP (later) |
@@ -41,10 +41,11 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/common/malformed-input.json` | `5dc13b6342f902b9dc693a6e22e285a2a223c467e465a3ede46e197c9b42cdb4` |
 | `fixtures/common/required-field-missing.json` | `36e6cd9e4ac70879d85627f5249e6e076620cb085dff4d5eb6964aead367bc21` |
 | `fixtures/common/unsupported-major-version.json` | `71d3a7b79a381eb4d7f8f3420ac3788e46a708276d13330299d4d5e5477774fa` |
-| `fixtures/sc-1/accepted-structured-plan-ref.json` | `e212d3163d396e0bf77a928aff7ff589a61b000299c847405c3b4c972affd834` |
-| `fixtures/sc-1/accepted-two-distinct-runs.json` | `2850f13c5d9e498bf665f2a3e5fd7c45f44234d8b4a85e19be44449dd59d3a26` |
+| `fixtures/sc-1/accepted-structured-plan-ref.json` | `81d00015525e1f415ea9f51ef403c4530fa20a48002bd688ccf5499efc6594f6` |
+| `fixtures/sc-1/accepted-two-distinct-runs.json` | `dab391a7be6e3874177fcc1000020ee8b52d06f7d940052cca6db203b94cb3f6` |
+| `fixtures/sc-1/rejected-approval-revision-mismatch.json` | `5c9cb61b0a0480fd3313b90260a490b8ea1dec0ccf24fcf7c07bce650d5b5d95` |
 | `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` | `10337809fc832a00e7bb89da52bcc2d65f2dadee8db7015b7193129aa2b2f197` |
-| `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `a4602d4f6b5fb4f94a4d524ffc48989b6c0477527dac345fdb46ff30f615a521` |
+| `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `660177869580a256dfc648f0f213dd3f2504d261fd79eecdf563df58dd4db834` |
 | `fixtures/sc-1/rejected-missing-managed-source.json` | `f199e6f7c1cc7d3f2e7519dd2830c238ee9c8143dbc94a3662f98dbe9a2d3abf` |
 | `fixtures/sc-2/accepted-continue-epoch-rotation.json` | `0616d15296c88dc7394a8c77985393c8a60763f9ecc889c78e84524042656021` |
 | `fixtures/sc-2/accepted-continue-latest-start-expiry.json` | `8c05043366ec54b347f4ba88de9691cef7e7ad7e490ed9da9e2eb5f6099b4936` |
