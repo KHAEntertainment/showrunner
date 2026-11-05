@@ -5,7 +5,7 @@
   "name": "required-field-missing",
   "input": {
     "project": "OWNER/synthetic-repo",
-    "mode": "goal"
+    "mode": "standalone"
   },
   "expected_outcome": "invalid",
   "expected_reason": "Required field missing: `run` (a required identity field) is absent, so the record is invalid rather than defaulted (representation rule, SDP l.536).",

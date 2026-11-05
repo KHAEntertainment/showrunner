@@ -20,12 +20,16 @@
 
 | Field | Type | Cardinality | Required/conditional | Meaning |
 | --- | --- | --- | --- | --- |
-| `source` / `version` / `freshness` | record | 1 | required | source, version, and freshness of the projection |
+| `source` | string | 1 | required | source of the projection |
+| `version` | string | 1 | required | source schema version |
+| `freshness` | time | 1 | required | freshness timestamp |
 | `run` / `session` / `seat` | string | 1 | required | run, session, and seat identity |
 | `lifecycle` | enum | 1 | required | lifecycle state |
-| `predecessor` / `successor` / `epoch` | record | 0..* | conditional | lineage and epoch |
+| `predecessor` | reference | 0..1 | conditional | predecessor |
+| `successor` | reference | 0..1 | conditional | successor |
+| `epoch` | number | 0..1 | conditional | epoch |
 | `obligations` | list | 0..* | conditional | obligations |
-| `heartbeat` | record | 0..1 | conditional | heartbeat |
+| `heartbeat` | time | 0..1 | conditional | heartbeat |
 | `report_verdict` | record | 0..1 | conditional | report verdict |
 | `verification` | record | 0..1 | conditional | verification |
 | `next_action` | string | 0..1 | conditional | next action |

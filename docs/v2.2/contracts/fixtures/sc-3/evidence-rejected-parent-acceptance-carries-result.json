@@ -1,0 +1,29 @@
+{
+  "sc": "SC-3",
+  "version": "completion-evidence-v1",
+  "kind": "rejected",
+  "name": "evidence-rejected-parent-acceptance-carries-result",
+  "input": {
+    "profile_version": "completion-evidence-v1",
+    "scope": "parent_acceptance",
+    "parent": "OWNER/synthetic-repo#1",
+    "mode": "standalone",
+    "criteria_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "contributions": [],
+    "outcome": "pass",
+    "goal_completion_ref": {
+      "profile_version": "1",
+      "purpose": "final",
+      "outcome": "verified"
+    }
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: the parent record carries the GV result inline in `goal_completion_ref` — `goal_completion_ref` must only point to the verifier's result, and the parent record never carries that result (D4.2 l.376; DEV_STATE_TEMPLATE l.354–356).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 376
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

@@ -1,0 +1,89 @@
+{
+  "sc": "SC-3",
+  "version": "completion-evidence-v1",
+  "kind": "accepted",
+  "name": "evidence-accepted-pr-assurance",
+  "input": {
+    "profile_version": "completion-evidence-v1",
+    "scope": "pr_assurance",
+    "repository": "OWNER/synthetic-repo",
+    "issue": "OWNER/synthetic-repo#1",
+    "parent_ref": "OWNER/synthetic-repo#1",
+    "criteria_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "criteria_ids": ["AC-1@00000000"],
+    "policy_ref": {
+      "ref": "synthetic-policy",
+      "rev": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "base_oid": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "target_branch": "main",
+    "headRefOid": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+    "checks": [
+      {
+        "id": "synthetic-check-001",
+        "definition_ref": {
+          "ref": "synthetic-def",
+          "rev": "sha256:0000000000000000000000000000000000000000000000000000000000000003"
+        },
+        "executor": "ci",
+        "tested_subject": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "environment": "ci",
+        "outcome": "pass",
+        "evidence_ref": "synthetic-run-001/job-1/attempt-1",
+        "observed_at": "2099-01-02T00:00:00Z"
+      }
+    ],
+    "criteria": [
+      {
+        "id": "AC-1@00000000",
+        "evaluator": {
+          "type": "test",
+          "id": "synthetic-run-001"
+        },
+        "outcome": "pass",
+        "evidence_ref": "synthetic-run-001/job-1/attempt-1"
+      }
+    ],
+    "demonstrated": {
+      "what": "synthetic behavior",
+      "where": "synthetic environment",
+      "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "how": "synthetic demonstration"
+    },
+    "assurance": {
+      "outcome": "pass",
+      "reason": "all contributed criteria pass",
+      "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "observed_at": "2099-01-02T00:00:00Z",
+      "current": true,
+      "stale_reason": null
+    },
+    "post_merge": [
+      {
+        "merge_sha": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "merged_at": "2099-01-02T00:00:00Z",
+        "tested_vs_merged": "same",
+        "action": "applies_verbatim",
+        "criteria_verdict": "pass"
+      }
+    ],
+    "integrated": {
+      "current": {
+        "branch": "main",
+        "merge_sha": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+      },
+      "history": []
+    },
+    "limitations": []
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a complete `pr_assurance` record with identity, subject, observation (checks/criteria), progress (demonstrated, assurance current pass, post_merge, integrated) and provenance. It carries no goal-completion field (D4.2 l.376; DEV_STATE_TEMPLATE l.322).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 372
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

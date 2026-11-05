@@ -6,7 +6,7 @@
   "input": {
     "project": "OWNER/synthetic-repo",
     "run": "synthetic-run-003",
-    "mode": "goal",
+    "mode": "standalone",
     "lead": {
       "agent_id": "synthetic-agent-003",
       "harness": "opencode",

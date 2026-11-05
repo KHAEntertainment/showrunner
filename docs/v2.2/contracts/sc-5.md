@@ -23,7 +23,8 @@
 | `sensitivity` | enum | 1 | required | sensitivity of the source |
 | `allowed_capabilities` | list | 1 | required | the capabilities the request permits |
 | `provider` / `model` / `route` | reference | 1 | required | the provider, model, and route |
-| `usage` / `retry` | bounded record | 1 | required | bounded usage and retry |
+| `usage` | string | 1 | required | bounded usage |
+| `retry` | number | 1 | required | retry bound |
 | `result` / `error_provenance` | record | 1 | required | result or error provenance |
 | `credentials` | reference | 0..* | conditional | credentials by reference only — never inline (l.544) |
 

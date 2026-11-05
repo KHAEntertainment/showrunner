@@ -1,0 +1,48 @@
+{
+  "sc": "SC-4",
+  "version": "conformance-v1",
+  "kind": "accepted",
+  "name": "accepted-mapped-acceptance-lane",
+  "input": {
+    "workflow": "synthetic-workflow",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "run": "synthetic-run-022",
+    "lane": "synthetic-lane-022",
+    "head": "sha256:0000000000000000000000000000000000000000000000000000000000000006",
+    "gate_applicability": "qa_trigger_below_threshold",
+    "evidence": [
+      {
+        "gate": "qa",
+        "state": "valid-skip",
+        "reason": "below QA trigger"
+      },
+      {
+        "gate": "review",
+        "state": "required",
+        "evaluator": "synthetic-reviewer-002",
+        "report_ref": "synthetic-report-003"
+      }
+    ],
+    "marks": [
+      {
+        "foreman_mark": "acceptance lane",
+        "dev_applicability": "current-head QA, or a valid recorded skip below the QA trigger (D2 l.240)"
+      },
+      {
+        "foreman_mark": "independent review",
+        "dev_applicability": "independent review by a different family, or clean-context same family (D2 l.265)"
+      }
+    ],
+    "evaluator": "synthetic-lead-001",
+    "report_ref": "synthetic-report-003"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: the `acceptance lane` Foreman mark is mapped to Dev applicability — a valid recorded skip below the QA trigger — while the independent-review mark is still required (STATUS_UPDATE.md l.28 → SDP D2 l.240; SC-4 accepted example l.543).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/STATUS_UPDATE.md",
+    "revision_or_digest": "sha256:596358538eecdb6f410d5f2c3e70b8c64cb507d484d84e4cd09a9cea6394d4c4",
+    "sdp_line": 543
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

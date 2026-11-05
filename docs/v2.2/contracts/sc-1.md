@@ -20,7 +20,7 @@
 | --- | --- | --- | --- | --- |
 | `project` / `repo` | qualified identifier (`OWNER/REPO`) | 1 | required | the target GitHub host + owner/repository |
 | `run` | string (run id) | 1 | required | the run this assignment belongs to |
-| `mode` | enum | 1 | required | execution mode (`goal` / `managed` / `standalone`) |
+| `mode` | enum | 1 | required | execution mode (`standalone` / `managed`; SDP l.23–l.28) |
 | `lead` | identity record | 1 | required | lead agent identity (agent id / harness / model) |
 | `plan_ref` | reference | 1 | required | portable plan reference (D1 l.89–l.90) |
 | `source` | reference | 1 | required | source document reference |
@@ -29,6 +29,8 @@
 | `coordinator` | identity record | 0..1 | conditional (managed only) | the coordinating agent |
 | `charter_revision` | reference + digest | 0..1 | conditional (managed only) | the charter revision |
 | `contract_refs` | list of references | 0..* | conditional (managed only) | contract references |
+
+`mode` has exactly two values — `standalone` and `managed` (SDP l.23–l.28). A goal run is not a third mode: goal-run identity is a merge-authority concept (D2 l.256) carried by SC-2, not by the assignment mode. No `goal` value is invented here.
 
 **Accepted example.** Two distinct runs in the same repository; an explicitly bounded charter subset (l.540).
 

@@ -11,17 +11,22 @@
     "operation": "merge",
     "target": "OWNER/synthetic-repo",
     "head": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
-    "grant_id": "synthetic-grant-005",
-    "grant_kind": "bounded",
-    "grant_holder": "synthetic-agent-005",
-    "grant_epoch": 1,
-    "grant_state": "in_progress",
-    "grant_start": "2099-01-01T00:00:00Z",
-    "grant_expiry": "2099-01-02T00:00:00Z",
-    "result": "Continue"
+    "begin": {
+      "grant_id": "synthetic-grant-005",
+      "grant_kind": "bounded",
+      "grant_holder": "synthetic-agent-005",
+      "grant_epoch": 1,
+      "grant_state": "in_progress",
+      "grant_start": "2099-01-01T00:00:00Z",
+      "grant_expiry": "2099-01-02T00:00:00Z"
+    },
+    "result": "Continue",
+    "observation": {
+      "coordinator_epoch": 2
+    }
   },
   "expected_outcome": "accept",
-  "expected_reason": "Accepted: after an acknowledged Begin, the same open in-progress operation Continues across a coordinator epoch rotation — Continue checks stable ID/holder/bindings/started-at and does not reapply epoch rotation as another admission check (SC-2 continuation fixture, SDP l.250; l.552).",
+  "expected_reason": "Accepted: the same open in-progress operation Continues with stable ID/holder/bindings (begin.grant_id/grant_holder/grant_epoch all unchanged) across a coordinator epoch rotation — observation.coordinator_epoch (2) is newer than begin.grant_epoch (1), and Continue does not reapply the epoch as another admission check (SC-2 continuation fixture, SDP l.250; l.552).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",

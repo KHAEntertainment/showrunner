@@ -1,0 +1,34 @@
+{
+  "sc": "SC-3",
+  "version": "completion-evidence-v1",
+  "kind": "rejected",
+  "name": "evidence-rejected-pr-assurance-noncurrent-no-stale-reason",
+  "input": {
+    "profile_version": "completion-evidence-v1",
+    "scope": "pr_assurance",
+    "repository": "OWNER/synthetic-repo",
+    "issue": "OWNER/synthetic-repo#1",
+    "criteria_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "base_oid": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "target_branch": "main",
+    "headRefOid": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+    "assurance": {
+      "outcome": "pass",
+      "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "current": false
+    },
+    "integrated": {
+      "current": null,
+      "history": []
+    }
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: the assurance is non-current (`current: false`) with no `stale_reason` naming the invalidating event (a new head, a withdrawn integration, or an invalidated input); a non-current assurance is never reused, and parent acceptance cannot count it (DEV_STATE_TEMPLATE l.318–319; D4.2 l.378).",
+  "retained_source": {
+    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
+    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "sdp_line": 378
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

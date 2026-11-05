@@ -7,7 +7,7 @@
     "schema_version": 2,
     "project": "OWNER/synthetic-repo",
     "run": "synthetic-run-001",
-    "mode": "goal",
+    "mode": "standalone",
     "lead": {
       "agent_id": "synthetic-agent-001",
       "harness": "opencode",

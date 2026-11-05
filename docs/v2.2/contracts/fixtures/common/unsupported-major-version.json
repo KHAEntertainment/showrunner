@@ -1,20 +1,20 @@
 {
   "sc": "common",
-  "version": "*-v1 (any)",
+  "version": "*-v1 interface",
   "kind": "rejected",
   "name": "unsupported-major-version",
   "input": {
-    "profile_version": "3",
+    "interface": "assignment-v3",
     "payload": {
       "project": "OWNER/synthetic-repo",
       "run": "synthetic-run-001"
     }
   },
   "expected_outcome": "invalid",
-  "expected_reason": "Unsupported major version: the reader supports major version 2 only; major 3 is reported invalid, never guessed (representation rule, SDP l.536).",
+  "expected_reason": "Unsupported *-v1 interface major version: the common reader supports `assignment-v1` (major 1) only; `assignment-v3` (major 3) is unsupported and reported invalid, never guessed (representation rule, SDP l.536). This discriminator is the *-v1 interface version — distinct from the Dev ledger `schema_version` and from `completion-result-v1` `profile_version`.",
   "retained_source": {
-    "path": "skills/dev/templates/DEV_STATE_TEMPLATE.md",
-    "revision_or_digest": "sha256:6ee3365f8811666edbb564bb6fc8271e1dbc40aaf77cbb5663608bf8c06b57ee",
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:63124e802cb0452f586617b8b913e563941fc700ea7c93efa2dac35db7baddfb",
     "sdp_line": 536
   },
   "status": "not-run",

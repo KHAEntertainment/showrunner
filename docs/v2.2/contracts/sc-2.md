@@ -20,14 +20,14 @@
 | --- | --- | --- | --- | --- |
 | `policy_ref` | reference | 1 | required | policy document reference |
 | `policy_revision` | reference + digest | 1 | required | policy revision |
-| `actor` | identity record | 1 | required | the acting agent |
+| `actor` | agent id (string) | 1 | required | the acting agent |
 | `run` | string (run id) | 1 | required | the run |
 | `operation` | string | 1 | required | the operation name |
 | `target` | qualified reference | 1 | required | operation target (repo / PR / Issue) |
 | `head` | reference | 1 | required | the head being operated on |
 | `grant_id` | string | 0..1 | conditional (granted operation) | grant identifier |
 | `grant_kind` | enum | 0..1 | conditional | grant kind |
-| `grant_holder` | identity record | 0..1 | conditional | grant holder |
+| `grant_holder` | agent id (string) | 0..1 | conditional | grant holder |
 | `grant_epoch` | number | 0..1 | conditional | grant epoch |
 | `grant_state` | enum | 0..1 | conditional | grant state |
 | `grant_start` | time | 0..1 | conditional | start time |
@@ -42,6 +42,8 @@
 **Rejected example.** APPROVE alone; replayed Begin; stale head/grant; paused new work; unlisted scope; renewed budget on rotation (l.541).
 
 **SC-2 continuation fixture (l.250).** After an acknowledged Begin, the same open in-progress operation may Continue across coordinator epoch rotation or its original latest-start expiry. Continue checks stable ID/holder/bindings/started-at and ongoing state; it must not reapply epoch or latest-start expiry as another admission check. Pause or passed finish deadline restricts it to reaching a safe point. Accept that bounded continuation; reject a replayed Begin, changed binding, new operation, or unrestricted new work during pause. A generic stale-grant rejection is insufficient (l.552) — it must not accidentally prohibit an acknowledged operation from reaching safety.
+
+**Fixture shape.** Each SC-2 fixture carries the acknowledged Begin (a `begin` sub-record with `grant_id`/`grant_kind`/`grant_holder`/`grant_epoch`/`grant_state`/`grant_start`/`grant_expiry`) and, for the two accepted cases, an `observation` proving the condition: a `coordinator_epoch` newer than `grant_epoch` (rotation), or an `observed_at` after `grant_expiry` (latest-start expiry). The rejected case keeps `actor`/`run`/`operation`/`target`/`head` and every `begin` binding identical to a valid acknowledged Begin, so the **only** reason to reject is the replayed `Begin`.
 
 **Edge cases.**
 
