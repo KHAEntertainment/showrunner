@@ -767,16 +767,18 @@ first.
 
 | Field | Meaning |
 |---|---|
-| `obligations` | The `Obligations` snapshot recovery must preserve unchanged: `children`, `owed_replies` (restated first), `original_request`, `responsible_party`, `evidence`, `consumed_allowances`, `worker_count`, `defect_episode`, `fix_batch_count`, `owner_escalation`. A duplicate event or handoff leaves it equal. |
-| `custody` | The `classify_lineage` claim: `prior_session_id`, `current_session_id`, `claim` (`successor`, `takeover`, or `null`), `outcome` (`accept` or `invalid`) and `reason`. A live or unknown previous lead blocks takeover. |
+| `obligations` | The `Obligations` snapshot recovery must preserve unchanged: `children`, `owed_replies` (restated first), `original_request`, `responsible_party`, `evidence`, `consumed_allowances`, `worker_count`, `defect_episode`, `fix_batch_count`, `owner_escalation`. A duplicate event or handoff leaves it equal. `defect_episode` names the canonical top-level `defect_episodes` entry (its `id`) or is `null`; `fix_batch_count` must equal that episode's `fix_batches` (or `0` when `defect_episode` is `null`). The snapshot keeps no second counter authority. |
+| `custody` | The `classify_lineage` claim: `prior_session_id`, `current_session_id`, `claim` (`successor`, `takeover`, or `null`), `outcome` (`accept` or `invalid`), `reason`, and the ledger-only `previous_lead_liveness` (`live`, `unknown`, `ended`, or `null`). On a takeover (prior session differs), an `accept` outcome validates only when `previous_lead_liveness` is `ended`; a live or unknown previous lead blocks it. |
 | `event_ledger` | The `EventLedger`: `seen` (counted event identities, unique) and `duplicates` (identity → re-delivery count). Counts the event once; a duplicate changes no counter. |
 | `recovery_receipts` | Receipt id → a `recovery-receipt-v1` record (the `checkpoint-reference-v1` fields plus `event_accounting.result` and `admission_outcome`), checked by `validate_sc9_record`. |
 | `unknown_effects` | Effect id → `state` (`unknown` or `resolved`), `blocked` (the dependents it blocks), `evidence` (required to mark an effect resolved; a resolved effect cannot block dependents). |
 
 Malformed recovery records fail as `goal_run.<field>: <reason>`, for example
 `goal_run.event_ledger.seen: an event identity must not be counted twice`,
-`goal_run.obligations.owed_replies: must be a list of non-empty strings`, or
-`goal_run.unknown_effects.pr13-merge: a resolved unknown effect needs evidence`.
+`goal_run.obligations.owed_replies: must be a list of non-empty strings`,
+`goal_run.obligations.fix_batch_count: must equal the episode's fix_batches (2)`,
+`goal_run.obligations.defect_episode: ep-9 is not a recorded defect episode`, or
+`goal_run.custody.previous_lead_liveness: a takeover needs the previous lead verified ended`.
 
 ```yaml
 goal_run:
@@ -884,8 +886,8 @@ goal_run:
     consumed_allowances:
       - "fix-batch-1"
     worker_count: 1
-    defect_episode: 0
-    fix_batch_count: 1
+    defect_episode: null
+    fix_batch_count: 0
     owner_escalation: false
   custody:
     prior_session_id: lead-agent-id
@@ -893,6 +895,7 @@ goal_run:
     claim: null
     outcome: accept
     reason: null
+    previous_lead_liveness: null
   event_ledger:
     seen:
       - compaction-event-1

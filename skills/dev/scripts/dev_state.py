@@ -788,10 +788,14 @@ _GOAL_OBLIGATIONS_KEYS = (
 )
 _GOAL_OBLIGATION_STR_LISTS = ("children", "owed_replies", "evidence", "consumed_allowances")
 _GOAL_OBLIGATION_STRINGS = ("original_request", "responsible_party")
-_GOAL_OBLIGATION_COUNTS = ("worker_count", "defect_episode", "fix_batch_count")
-_GOAL_CUSTODY_KEYS = ("prior_session_id", "current_session_id", "claim", "outcome", "reason")
+_GOAL_OBLIGATION_COUNTS = ("worker_count",)
+_GOAL_CUSTODY_KEYS = (
+    "prior_session_id", "current_session_id", "claim", "outcome", "reason",
+    "previous_lead_liveness",
+)
 _GOAL_CUSTODY_CLAIMS = ("successor", "takeover")
 _GOAL_CUSTODY_OUTCOMES = ("accept", "invalid")
+_GOAL_CUSTODY_LIVENESS = ("live", "unknown", "ended")
 _GOAL_EVENT_LEDGER_KEYS = ("seen", "duplicates")
 _GOAL_UNKNOWN_EFFECT_KEYS = ("state", "blocked", "evidence")
 _GOAL_UNKNOWN_EFFECT_STATES = ("unknown", "resolved")
@@ -810,7 +814,11 @@ def _load_goal_recovery_module():
 
 
 def obligations_to_record(obligations) -> dict:
-    """Write an ``Obligations`` snapshot as the ledger's ``obligations`` map."""
+    """Write an ``Obligations`` snapshot as the ledger's ``obligations`` map.
+
+    ``defect_episode`` is written ``null``: the canonical episode id is a
+    ledger-only link the lead fills from the top-level ``defect_episodes``
+    record (the ``Obligations`` dataclass ordinal is not the id)."""
     recovery = _load_goal_recovery_module()
     if not isinstance(obligations, recovery.Obligations):
         raise TypeError("obligations_to_record takes a goal_recovery.Obligations")
@@ -822,15 +830,17 @@ def obligations_to_record(obligations) -> dict:
         "evidence": list(obligations.evidence),
         "consumed_allowances": list(obligations.consumed_allowances),
         "worker_count": obligations.worker_count,
-        "defect_episode": obligations.defect_episode,
+        "defect_episode": None,
         "fix_batch_count": obligations.fix_batch_count,
         "owner_escalation": obligations.owner_escalation,
     }
 
 
-def obligations_from_record(record):
-    """Rebuild an ``Obligations`` from a validated ``obligations`` map."""
-    _validate_goal_obligations(record)
+def obligations_from_record(record, defect_episodes=None):
+    """Rebuild an ``Obligations`` from a validated ``obligations`` map. The
+    canonical ``defect_episode`` id does not round-trip into the dataclass
+    ordinal (it is ledger-only), so the ordinal is left at its default 0."""
+    _validate_goal_obligations(record, defect_episodes or {})
     recovery = _load_goal_recovery_module()
     return recovery.Obligations(
         children=tuple(record["children"]),
@@ -840,7 +850,7 @@ def obligations_from_record(record):
         evidence=tuple(record["evidence"]),
         consumed_allowances=tuple(record["consumed_allowances"]),
         worker_count=record["worker_count"],
-        defect_episode=record["defect_episode"],
+        defect_episode=0,
         fix_batch_count=record["fix_batch_count"],
         owner_escalation=record["owner_escalation"],
     )
@@ -863,7 +873,36 @@ def event_ledger_from_record(record):
     )
 
 
-def _validate_goal_obligations(value) -> None:
+def parse_defect_episodes(text: str) -> dict:
+    """Return ``{episode_id: fix_batches}`` from the top-level ``defect_episodes``
+    list, the sole counter authority for fix batches. A ledger without the block
+    yields ``{}``; a block whose episodes lack a ``fix_batches`` records them with
+    ``None``, which the obligations cross-check then rejects."""
+    end = text.find("\n---\n")
+    frontmatter = text[4:end] if end != -1 else ""
+    episodes: dict = {}
+    current = None
+    in_block = False
+    for line in frontmatter.split("\n"):
+        if re.match(r"^defect_episodes:", line):
+            in_block = True
+            continue
+        if in_block:
+            if line and not line.startswith(" ") and not line.startswith("\t"):
+                break
+            stripped = line.strip()
+            m = re.match(r"^-\s*id:\s*(.+)$", stripped)
+            if m:
+                current = m.group(1).strip().strip('"').strip("'")
+                episodes[current] = None
+                continue
+            m = re.match(r"^fix_batches:\s*(\d+)$", stripped)
+            if m and current is not None:
+                episodes[current] = int(m.group(1))
+    return episodes
+
+
+def _validate_goal_obligations(value, defect_episodes) -> None:
     base = f"{GOAL_RUN_KEY}.obligations"
     if not isinstance(value, dict):
         raise GoalRunError(base, "must be a map")
@@ -871,7 +910,7 @@ def _validate_goal_obligations(value) -> None:
     for key in _GOAL_OBLIGATION_STR_LISTS:
         items = value[key]
         if not isinstance(items, list) or any(
-            not isinstance(i, str) or not i for i in items
+            not isinstance(i, str) or not i.strip() for i in items
         ):
             raise GoalRunError(f"{base}.{key}", "must be a list of non-empty strings")
     for key in _GOAL_OBLIGATION_STRINGS:
@@ -882,6 +921,24 @@ def _validate_goal_obligations(value) -> None:
             raise GoalRunError(f"{base}.{key}", "must be an integer >= 0")
     if not isinstance(value["owner_escalation"], bool):
         raise GoalRunError(f"{base}.owner_escalation", "must be true or false")
+    # The snapshot must link to the canonical defect-episode record, never keep a
+    # second counter. defect_episode names the episode id (or null); fix_batch_count
+    # must equal that episode's fix_batches (or 0 with no episode).
+    defect_episode = value["defect_episode"]
+    fix_batch_count = value["fix_batch_count"]
+    if defect_episode is None:
+        if not _is_count(fix_batch_count) or fix_batch_count != 0:
+            raise GoalRunError(f"{base}.fix_batch_count", "must be 0 when no defect episode is named")
+    elif not isinstance(defect_episode, str) or not defect_episode.strip():
+        raise GoalRunError(f"{base}.defect_episode", "must be an episode id or null")
+    elif defect_episode not in defect_episodes:
+        raise GoalRunError(f"{base}.defect_episode", f"{defect_episode} is not a recorded defect episode")
+    else:
+        canonical = defect_episodes[defect_episode]
+        if not _is_count(fix_batch_count) or fix_batch_count != canonical:
+            raise GoalRunError(
+                f"{base}.fix_batch_count", f"must equal the episode's fix_batches ({canonical})"
+            )
 
 
 def _validate_goal_custody(value, recovery) -> None:
@@ -898,6 +955,9 @@ def _validate_goal_custody(value, recovery) -> None:
     outcome = value["outcome"]
     if outcome not in _GOAL_CUSTODY_OUTCOMES:
         raise GoalRunError(f"{base}.outcome", "must be 'accept' or 'invalid'")
+    liveness = value["previous_lead_liveness"]
+    if liveness is not None and liveness not in _GOAL_CUSTODY_LIVENESS:
+        raise GoalRunError(f"{base}.previous_lead_liveness", "must be 'live', 'unknown', 'ended' or null")
     result = recovery.classify_lineage(
         value["prior_session_id"], value["current_session_id"], claim
     )
@@ -905,6 +965,19 @@ def _validate_goal_custody(value, recovery) -> None:
         raise GoalRunError(f"{base}.outcome", "does not match classify_lineage")
     if not result.may_proceed and value["reason"] != result.reason:
         raise GoalRunError(f"{base}.reason", "does not match classify_lineage")
+    if outcome == "accept" and _nonempty(value["reason"]):
+        raise GoalRunError(f"{base}.reason", "must be null or empty when outcome is accept")
+    # Fail closed on a lead change: custody may only be accepted when the previous
+    # lead is verified ended (its live state read from `agent list`). A same-session
+    # resume needs no liveness; a takeover with a live, unknown or absent liveness
+    # blocks.
+    prior = value["prior_session_id"]
+    current = value["current_session_id"]
+    is_takeover = prior is not None and prior != current
+    if is_takeover and outcome == "accept" and liveness != "ended":
+        raise GoalRunError(
+            f"{base}.previous_lead_liveness", "a takeover needs the previous lead verified ended"
+        )
 
 
 def _validate_goal_event_ledger(value) -> None:
@@ -976,14 +1049,14 @@ def _validate_goal_unknown_effects(value) -> None:
                 )
 
 
-def _validate_goal_recovery_records(block, goal_run) -> None:
+def _validate_goal_recovery_records(block, goal_run, defect_episodes) -> None:
     """Validate the L6 recovery keys. Absent or all-null means a pre-L6 block and
     returns without importing goal_recovery.py."""
     if all(block.get(key) is None for key in _GOAL_RECOVERY_KEYS):
         return
     recovery = _load_goal_recovery_module()
     if block.get("obligations") is not None:
-        _validate_goal_obligations(block["obligations"])
+        _validate_goal_obligations(block["obligations"], defect_episodes)
     if block.get("custody") is not None:
         _validate_goal_custody(block["custody"], recovery)
     if block.get("event_ledger") is not None:
@@ -994,14 +1067,16 @@ def _validate_goal_recovery_records(block, goal_run) -> None:
         _validate_goal_unknown_effects(block["unknown_effects"])
 
 
-def validate_goal_run(block) -> None:
+def validate_goal_run(block, defect_episodes=None) -> None:
     """Validate a goal-run block (a plain dict). Raises ``GoalRunError``.
 
     The assignment fields are checked by goal_run.normalize_entry and must equal
     the normalized ``Assignment.to_dict()``; the policy by goal_run.apply_policy;
     the counters against goal_run.RunCounters' fields plus the two ledger-only
-    counters ``usage_measured`` and ``gv_retries_used``; and the optional grant
-    and gate records against goal_authority.py (Issue #194, lane L4)."""
+    counters ``usage_measured`` and ``gv_retries_used``; the optional grant and
+    gate records against goal_authority.py (Issue #194, lane L4); and the optional
+    recovery records against goal_recovery.py (Issue #196, lane L6), with the
+    obligations snapshot cross-checked against the canonical ``defect_episodes``."""
     if not isinstance(block, dict):
         raise GoalRunError(GOAL_RUN_KEY, "must be a map")
     for key in block:
@@ -1048,7 +1123,7 @@ def validate_goal_run(block) -> None:
 
     _validate_goal_counters(block.get("counters"), block["fixed_issues"], goal_run)
     _validate_goal_authority_records(block, goal_run, applied.value)
-    _validate_goal_recovery_records(block, goal_run)
+    _validate_goal_recovery_records(block, goal_run, defect_episodes or {})
 
 
 def validate_goal_run_text(text: str, data: dict) -> None:
@@ -1065,7 +1140,7 @@ def validate_goal_run_text(text: str, data: dict) -> None:
     if len(headers) == 1 and headers[0].strip() in ("null", "~"):
         return
     try:
-        validate_goal_run(parse_goal_run_block(text))
+        validate_goal_run(parse_goal_run_block(text), parse_defect_episodes(text))
     except GoalRunError as exc:
         fail(str(exc))
     except Exception as exc:  # fail closed, never a traceback
