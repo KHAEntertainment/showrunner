@@ -12,6 +12,7 @@ and fails closed on any parse or profile error.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import math
 import re
 import sys
@@ -441,7 +442,7 @@ _GOAL_GRANT_KEYS = (
 _GOAL_AUTHORIZED_BY_KEYS = ("who", "at", "instruction")
 _GOAL_MERGE_LEDGER_KEYS = (
     "run_id", "consumed", "slots_used", "revoked_at", "grant_in_force",
-    "halted", "halt_ref", "reopen_issues", "cleared_halts",
+    "halted", "halt_ref", "reopen_issues", "halt_history", "cleared_halts",
 )
 _GOAL_GATE_EVIDENCE_KEYS = ("checked_head", "outcome", "failures", "checked_at")
 # The gate names goal_authority.check_gates reports in detail["failures"].
@@ -452,6 +453,7 @@ _GOAL_GATE_NAMES = (
 _GOAL_GATE_OUTCOMES = ("accept", "blocked")
 _GOAL_DELEGATED_KEYS = ("gate", "decision", "reasoning", "evidence_pointer", "reversal_path")
 _GOAL_PR_KEY_RE = re.compile(r"^[1-9][0-9]*$")
+_GOAL_QUALIFIED_ISSUE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$")
 
 
 def _load_goal_authority_module():
@@ -481,9 +483,33 @@ def _closed_map(value, base: str, keys: tuple, label: str, optional=()) -> None:
             raise GoalRunError(f"{base}.{key}", "missing required field")
 
 
+def _qualified_issue_list(value, path: str) -> list:
+    """Type-check an Issue list at this boundary, before any hashing or
+    set membership: a list of unique qualified ``OWNER/REPO#N`` strings."""
+    if not isinstance(value, list):
+        raise GoalRunError(path, "must be a list of qualified OWNER/REPO#N strings")
+    for item in value:
+        if not isinstance(item, str) or not _GOAL_QUALIFIED_ISSUE_RE.match(item):
+            raise GoalRunError(path, "each item must be a qualified OWNER/REPO#N string")
+    if len(set(value)) != len(value):
+        raise GoalRunError(path, "must not repeat an Issue")
+    return value
+
+
+def _string_list(value, path: str) -> None:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise GoalRunError(path, "must be a list of strings")
+
+
 def _validate_goal_grant(grant, block, authority) -> None:
     base = f"{GOAL_RUN_KEY}.grant"
     _closed_map(grant, base, _GOAL_GRANT_KEYS, "grant", optional=("merge_method",))
+    if grant["eligible_issues"] is not None:
+        if grant["eligible_issues"] == []:
+            raise GoalRunError(f"{base}.eligible_issues", "invalid_field")
+        _qualified_issue_list(grant["eligible_issues"], f"{base}.eligible_issues")
+    if grant["excluded_actions"] is not None:
+        _string_list(grant["excluded_actions"], f"{base}.excluded_actions")
     auth = grant["authorized_by"]
     if isinstance(auth, dict):
         for key in auth:
@@ -550,13 +576,29 @@ def _validate_goal_merge_ledger(record, grant, block, authority) -> None:
     if not halted and halt_ref is not None:
         raise GoalRunError(f"{base}.halt_ref", "must be null when not halted")
 
-    reopen = record["reopen_issues"]
     scope = set(block["fixed_issues"])
-    if not isinstance(reopen, list) or len(set(map(str, reopen))) != len(reopen):
-        raise GoalRunError(f"{base}.reopen_issues", "must be a list of unique Issues")
+    reopen = _qualified_issue_list(record["reopen_issues"], f"{base}.reopen_issues")
     for issue in reopen:
         if issue not in scope:
             raise GoalRunError(f"{base}.reopen_issues", f"{issue} is not in fixed_issues")
+
+    # Post-merge failure evidence (D2 item 9). halt_history (ledger-only) keeps
+    # every failure reference with its Issue; cleared_halts (ledger-only) keeps
+    # the triage ref each clear_halt was given. A halt is lifted only by
+    # clear_halt with a triage ref, so a failure on record that is no longer
+    # halted must have a nonempty triage entry, or the clear was premature.
+    history = record["halt_history"]
+    if not isinstance(history, dict):
+        raise GoalRunError(f"{base}.halt_history", "must be a map of halt ref to Issue")
+    for ref, issue in history.items():
+        if not isinstance(issue, str) or not _GOAL_QUALIFIED_ISSUE_RE.match(issue):
+            raise GoalRunError(f"{base}.halt_history", f"{ref} must map to a qualified OWNER/REPO#N string")
+        if issue not in reopen:
+            raise GoalRunError(f"{base}.halt_history", f"{ref} names {issue}, which is not in reopen_issues")
+    recorded_issues = set(history.values())
+    for issue in reopen:
+        if issue not in recorded_issues:
+            raise GoalRunError(f"{base}.reopen_issues", f"{issue} has no failure in halt_history")
 
     cleared = record["cleared_halts"]
     if not isinstance(cleared, dict):
@@ -564,6 +606,19 @@ def _validate_goal_merge_ledger(record, grant, block, authority) -> None:
     for ref, triage in cleared.items():
         if not _nonempty(triage):
             raise GoalRunError(f"{base}.cleared_halts", f"{ref} needs a triage ref")
+        if ref not in history:
+            raise GoalRunError(f"{base}.cleared_halts", f"{ref} is not in halt_history")
+    if halted:
+        if halt_ref not in history:
+            raise GoalRunError(f"{base}.halt_ref", f"{halt_ref} is not in halt_history")
+        if halt_ref in cleared:
+            raise GoalRunError(f"{base}.cleared_halts", f"{halt_ref} is still halted")
+    else:
+        for ref in history:
+            if ref not in cleared:
+                raise GoalRunError(
+                    f"{base}.cleared_halts", f"{ref} was cleared without triage evidence"
+                )
 
 
 def _validate_goal_gate_evidence(evidence, goal_run, policy) -> None:
@@ -587,6 +642,8 @@ def _validate_goal_gate_evidence(evidence, goal_run, policy) -> None:
             raise GoalRunError(f"{path}.failures", "must be empty when outcome is accept")
         if outcome == "blocked" and not failures:
             raise GoalRunError(f"{path}.failures", "must name a gate when outcome is blocked")
+        if not isinstance(entry["checked_at"], str):
+            raise GoalRunError(f"{path}.checked_at", "must be a strict UTC ISO 8601 time")
         _goal_utc(goal_run, policy, entry["checked_at"], f"gate_evidence.{pr}.checked_at")
 
 
@@ -618,10 +675,23 @@ def _validate_goal_authority_records(block, goal_run, policy) -> None:
         _validate_goal_delegated_records(block["delegated_records"], authority)
 
 
-def merge_ledger_to_record(ledger, cleared_halts=None) -> dict:
-    """Write a goal_authority ``MergeLedger`` as the ledger's ``merge_ledger``
-    map. ``cleared_halts`` (halt ref -> triage ref) is ledger-only: clear_halt
-    returns the triage ref in its detail, and the lead keeps it here."""
+@dataclasses.dataclass(frozen=True)
+class MergeLedgerState:
+    """A goal_authority ``MergeLedger`` plus the two ledger-only maps the
+    ``merge_ledger`` record keeps beside it: ``halt_history`` (halt ref ->
+    Issue) and ``cleared_halts`` (halt ref -> triage ref). The helpers below
+    carry all three together, so a rebuild never drops triage evidence."""
+
+    ledger: object
+    halt_history: dict = dataclasses.field(default_factory=dict)
+    cleared_halts: dict = dataclasses.field(default_factory=dict)
+
+
+def merge_ledger_to_record(state: MergeLedgerState) -> dict:
+    """Write a ``MergeLedgerState`` as the ledger's ``merge_ledger`` map."""
+    if not isinstance(state, MergeLedgerState):
+        raise TypeError("merge_ledger_to_record takes a MergeLedgerState")
+    ledger = state.ledger
     return {
         "run_id": ledger.run_id,
         "consumed": {str(pr): sha for pr, sha in ledger.consumed},
@@ -631,15 +701,17 @@ def merge_ledger_to_record(ledger, cleared_halts=None) -> dict:
         "halted": ledger.halted,
         "halt_ref": ledger.halt_ref,
         "reopen_issues": list(ledger.reopen_issues),
-        "cleared_halts": dict(cleared_halts or {}),
+        "halt_history": dict(state.halt_history),
+        "cleared_halts": dict(state.cleared_halts),
     }
 
 
-def merge_ledger_from_record(record):
-    """Rebuild a goal_authority ``MergeLedger`` from a ``merge_ledger`` map,
-    before each decide_merge / record_merge call."""
+def merge_ledger_from_record(record) -> MergeLedgerState:
+    """Rebuild a ``MergeLedgerState`` from a validated ``merge_ledger`` map,
+    before each decide_merge / record_merge call. Both ledger-only maps are
+    required and carried through, never defaulted."""
     authority = _load_goal_authority_module()
-    return authority.MergeLedger(
+    ledger = authority.MergeLedger(
         run_id=record["run_id"],
         consumed=tuple((int(pr), sha) for pr, sha in record["consumed"].items()),
         revoked_at=record["revoked_at"],
@@ -648,6 +720,45 @@ def merge_ledger_from_record(record):
         reopen_issues=tuple(record["reopen_issues"]),
         grant_in_force=record["grant_in_force"],
     )
+    return MergeLedgerState(ledger, dict(record["halt_history"]), dict(record["cleared_halts"]))
+
+
+def merge_ledger_with(state: MergeLedgerState, result):
+    """Carry a goal_authority result's new ``MergeLedger`` (record_merge,
+    revoke_grant, carry_grant) into the state. A refused result is returned
+    unchanged; an accepted one carries the new state as its ``value``."""
+    if not result.may_proceed:
+        return result
+    return dataclasses.replace(result, value=dataclasses.replace(state, ledger=result.value))
+
+
+def merge_ledger_record_failure(state: MergeLedgerState, issue, ref):
+    """``record_post_merge_failure`` that also records ``ref`` -> ``issue`` in
+    ``halt_history``. A reused ref is refused (``duplicate_halt_ref``)."""
+    authority = _load_goal_authority_module()
+    result = authority.record_post_merge_failure(state.ledger, issue, ref)
+    if not result.may_proceed:
+        return result
+    if ref in state.halt_history:
+        return dataclasses.replace(result, outcome="invalid", reason="duplicate_halt_ref",
+                                   value=None, detail={"halt_ref": ref})
+    history = dict(state.halt_history)
+    history[ref] = issue
+    return dataclasses.replace(result, value=MergeLedgerState(result.value, history, dict(state.cleared_halts)))
+
+
+def merge_ledger_clear_halt(state: MergeLedgerState, triage_ref):
+    """``clear_halt`` that records ``triage_ref`` against every halt ref not
+    yet cleared, so the evidence survives the next write."""
+    authority = _load_goal_authority_module()
+    result = authority.clear_halt(state.ledger, triage_ref)
+    if not result.may_proceed:
+        return result
+    cleared = dict(state.cleared_halts)
+    if state.ledger.halted:
+        for ref in state.halt_history:
+            cleared.setdefault(ref, triage_ref)
+    return dataclasses.replace(result, value=MergeLedgerState(result.value, dict(state.halt_history), cleared))
 
 
 def validate_goal_run(block) -> None:

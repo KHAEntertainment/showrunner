@@ -748,7 +748,7 @@ a number.
 | Field | Meaning |
 |---|---|
 | `grant` | The D2 bounded grant shown in the approval message, checked by `validate_grant`: `run_id` (equals `run`), `host`, `repository` (equals `repo`), `base`, `eligible_issues` (nonempty, unique, qualified, and within `fixed_issues`: nothing outside the frozen set becomes eligible), `max_merges` (positive), `expires_at` (absolute, timezone-qualified), `authorized_by` (`who`, `at`, `instruction`: the owner's words), `excluded_actions`, optional `merge_method` (default `squash`). `null` when the owner chose per-push confirmation. |
-| `merge_ledger` | The `MergeLedger`: `run_id` (equals `grant.run_id`), `consumed` (PR number → merge SHA, one per successful merge), `slots_used` (equals the number of `consumed` entries, never above `grant.max_merges`), `revoked_at` (`null`, or the timezone-qualified time of a user stop; then `grant_in_force` is `false`), `grant_in_force`, `halted` and `halt_ref` (a post-merge failure halts automatic merges and names its reference; `null` when not halted), `reopen_issues` (Issues flagged for reopening, within `fixed_issues`), and the ledger-only `cleared_halts` (halt ref → the triage ref `clear_halt` was given; a cleared halt without a triage ref fails). Requires `grant`. |
+| `merge_ledger` | The `MergeLedger`: `run_id` (equals `grant.run_id`), `consumed` (PR number → merge SHA, one per successful merge), `slots_used` (equals the number of `consumed` entries, never above `grant.max_merges`), `revoked_at` (`null`, or the timezone-qualified time of a user stop; then `grant_in_force` is `false`), `grant_in_force`, `halted` and `halt_ref` (a post-merge failure halts automatic merges and names its reference; `null` when not halted), `reopen_issues` (Issues flagged for reopening, within `fixed_issues`), and two ledger-only maps: `halt_history` (every post-merge failure ref → its Issue; each `reopen_issues` entry has one) and `cleared_halts` (halt ref → the triage ref `clear_halt` was given). Every `halt_history` ref other than a current halt must have a nonempty `cleared_halts` entry: a halt reset by hand without triage evidence fails as `goal_run.merge_ledger.cleared_halts: <ref> was cleared without triage evidence`. Write it only through `merge_ledger_to_record` / `merge_ledger_from_record` and the `merge_ledger_record_failure` / `merge_ledger_clear_halt` helpers in `scripts/dev_state.py`, which carry both maps. Requires `grant`. |
 | `gate_evidence` | PR number → the last `check_gates` result for that PR: `checked_head`, `outcome` (`accept` or `blocked`), `failures` (the failing gate names, empty on `accept`), `checked_at` (strict UTC). `decide_merge` refuses a result checked at another head. |
 | `delegated_records` | Record id → one D7.2 control record, checked by `validate_delegated_record`: `gate` (a delegated gate such as `technical_ask_disposition` or `comment_decisions`), `decision`, `reasoning`, `evidence_pointer`, `reversal_path`. A protected gate, or one whose value depends on an unresolved decision, fails. |
 
@@ -836,6 +836,7 @@ goal_run:
     halted: false
     halt_ref: null
     reopen_issues: []
+    halt_history: {}
     cleared_halts: {}
   gate_evidence:
     "41":
