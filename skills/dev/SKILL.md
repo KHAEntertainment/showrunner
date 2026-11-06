@@ -123,6 +123,7 @@ Classify the request, explain your reasoning to the user, get confirmation, then
 | **Emergency Hotfix** | Live incident requiring immediate fix, cannot wait for scheduling | Phase 2 (express) → 3 → 3.5 (per risk tier) → 4 → 5, **run rebase scan after merge** |
 | **Architectural Change** | Requirements overturn existing architecture decisions (e.g. replacing auth system, rewriting core module) | Phase 1.5 → 2 (with change impact assessment) → 3 → 3.5 (per risk tier) → 4 → 5 |
 | **Refactoring** | Changing internal structure without adding new external behavior | Phase 1.5 (lite, no research) → 2 (refactor mode) → 3 (**forced serial**: refactor before features that depend on it) → 3.5 (per risk tier) → 4 → 5 |
+| **Goal Run** | Explicitly approved goal: a plan, PRD, Issue or milestone resolved to a nonempty fixed set of qualified Issues (`OWNER/REPO#N`) | `phases/goal.md` (arm, frozen scope, D3 bounds) → each frozen Issue then follows its own row above, 3.5 (per risk tier) → 4 → 5 |
 
 **Risk tier (applies to every path above, Emergency Hotfix included):** whether Phase 3.5 runs is decided by the diff's risk tier, not by the request type and not by diff size. The tier floors are defined once, in `${CLAUDE_SKILL_DIR}/phases/phase3.5.md` (Risk Tiers); this table only mirrors each tier's Phase 3.5 value, and `scripts/validate_skill.py` fails when the two disagree.
 

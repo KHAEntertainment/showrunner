@@ -25,6 +25,7 @@ REQUIRED = {
     "phases/phase4.md",
     "phases/phase5.md",
     "phases/repository-context.md",
+    "phases/goal.md",
     "reply-contract.md",
     "research.md",
     "agents/report-back.md",
@@ -45,6 +46,9 @@ REQUIRED = {
     "scripts/resolve_repository.py",
     "scripts/workspace_debt.py",
     "scripts/locate_pinned_skill.py",
+    "scripts/goal_run.py",
+    "scripts/goal_authority.py",
+    "scripts/goal_recovery.py",
     "graft.md",
 }
 

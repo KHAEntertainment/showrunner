@@ -3444,7 +3444,7 @@ class RiskTierTests(unittest.TestCase):
         # #107: no path omits Phase 3.5 and none lists it unconditionally.
         router = _markdown_section(self.read("SKILL.md"), "## Phase 0 — Entry Router")
         paths = self.validator().router_path_cells(router)
-        self.assertEqual(len(paths), 6)
+        self.assertEqual(len(paths), 7)
         for request_type, path in paths.items():
             with self.subTest(path=request_type):
                 self.assertEqual(path.count("3.5 (per risk tier)"), 1)
