@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "skills" / "dev"
 
 RESEARCH = SKILL / "research.md"
+AB_RECORD = ROOT / "docs" / "v2.2" / "research-ab-record.md"
 RESEARCHER = SKILL / "agents" / "researcher.md"
 PHASE15 = SKILL / "phases" / "phase1.5.md"
 TEMPLATE = SKILL / "templates" / "TECHNICAL_PLAN_TEMPLATE.md"
@@ -136,8 +137,30 @@ class ResearchContentTests(unittest.TestCase):
         )
         self.assertIn("cause `usage_error`", text)
 
-    def test_proposed_pin_label(self) -> None:
-        self.assertIn("the owner confirms it before C2 is used", _read(RESEARCH))
+    def test_confirmed_pin_label(self) -> None:
+        text = _read(RESEARCH)
+        self.assertIn("The pin below is **confirmed by the owner**", text)
+        self.assertIn("C2 may activate against this pin.", text)
+
+    def test_confirmed_pin_cites_the_owner_ruling(self) -> None:
+        self.assertIn("`ruling-207-pin-2026-11-05`", _read(RESEARCH))
+
+    def test_repin_or_drift_still_falls_back_with_pin_unconfirmed(self) -> None:
+        text = _read(RESEARCH)
+        self.assertIn(
+            "Precondition: C2 runs only once the pin is owner-confirmed.", text
+        )
+        self.assertIn("a new pin, or after drift until re-confirmed", text)
+        self.assertIn("cause `pin_unconfirmed`", text)
+
+    def test_confirmation_did_not_change_the_pin_values(self) -> None:
+        text = _read(RESEARCH)
+        self.assertIn("**skill**: `advise-project-approach`", text)
+        self.assertIn("**commit**: none", text)
+        self.assertIn(
+            "sha256:2386030e843dd13158bf7fb7e129715718bf36c2e29c73e3f9249fc22404896c",
+            text,
+        )
 
     def test_evidence_order_repository_and_primary_docs_first(self) -> None:
         self.assertIn("Repository and primary documentation first", _read(RESEARCH))
@@ -199,6 +222,113 @@ class ResearchContentTests(unittest.TestCase):
         self.assertIn("unresolved questions", text)
 
 
+class ResearchAbRecordTests(unittest.TestCase):
+    """The three-effort A/B value evidence record (M2 charter §2 criterion 4)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.text = _read(AB_RECORD)
+
+    def test_cites_the_sdp_a_b_value_gate(self) -> None:
+        self.assertIn("SDP l.81", self.text)
+        self.assertIn(
+            "Run the A/B value gate over three real planning efforts before superiority claims/promotion.",
+            self.text,
+        )
+
+    def test_cites_charter_criterion_4(self) -> None:
+        self.assertIn("§2, criterion 4", self.text)
+        self.assertIn(
+            "Three-real-effort A/B value evidence recorded before any superiority/promotion claim",
+            self.text,
+        )
+
+    def test_cites_the_owner_rulings(self) -> None:
+        self.assertIn("`ruling-207-pin-2026-11-05`", self.text)
+        self.assertIn("`ruling-207-ab-u1-2026-11-05`", self.text)
+        self.assertIn(
+            "It supersedes `ruling-207-ab-efforts-2026-11-05`", self.text
+        )
+
+    def test_no_claim_until_all_three_efforts_are_recorded(self) -> None:
+        self.assertIn(
+            "No superiority or promotion claim is made until all three efforts are recorded",
+            self.text,
+        )
+
+    def test_arms_are_defined(self) -> None:
+        self.assertIn("C1 built-in research only", self.text)
+        self.assertIn("C1 + C2 pinned provider", self.text)
+
+    def test_each_arm_records_locator_and_sc5_result(self) -> None:
+        self.assertIn("its locator result", self.text)
+        self.assertIn("its SC-5 result", self.text)
+
+    def test_metric_columns_are_named(self) -> None:
+        for column in (
+            "date",
+            "plan_ref (origin / approved revision)",
+            "consequential misses",
+            "repeated or low-value questions",
+            "rounds",
+            "wall time",
+            "user burden (owner review minutes)",
+            "C2 locator + result",
+            "evidence links",
+            "recorder",
+        ):
+            with self.subTest(column=column):
+                self.assertIn(column, self.text)
+
+    def test_three_named_effort_sections(self) -> None:
+        for heading in (
+            "## 5. Effort 1 — U1 unified CLI",
+            "## 6. Effort 2 — U1 workspace panel",
+            "## 7. Effort 3 — U1 Scout tool",
+        ):
+            with self.subTest(heading=heading):
+                self.assertIn(heading, self.text)
+
+    def test_each_effort_is_research_only_over_the_u1_outline(self) -> None:
+        self.assertEqual(
+            3,
+            self.text.count(
+                "research only over the existing U1 outline (the foreman epic artifact "
+                "`u1-binary-components-phase`)"
+            ),
+        )
+        self.assertIn(
+            "nothing designed or built, the U1 page not edited, no U1 Issues filed",
+            self.text,
+        )
+
+    def test_owner_reviews_blind_before_the_key_is_revealed(self) -> None:
+        self.assertIn(
+            "The owner reviews both outputs per effort blind (labelled X/Y), and the A/B key is revealed after review.",
+            self.text,
+        )
+
+    def test_effort_sections_do_not_name_the_plans(self) -> None:
+        for token in ("M3", "M4", "completion-verifier"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, self.text)
+
+    def test_every_effort_starts_pending(self) -> None:
+        self.assertEqual(3, self.text.count("**Status: pending**"))
+
+    def test_recording_rule(self) -> None:
+        self.assertIn("Measured values only.", self.text)
+        self.assertIn('"not run" and "unknown" stay explicit', self.text)
+        self.assertIn(
+            "A C2 fallback is recorded as a fallback, never as a B-arm result.",
+            self.text,
+        )
+
+    def test_comparison_stays_empty_until_three_of_three(self) -> None:
+        self.assertIn("## 8. Comparison", self.text)
+        self.assertIn("Empty until 3/3.", self.text)
+
+
 class MutationTests(unittest.TestCase):
     """Each key-sentence check must actually read the file: stripping the
     sentence from a copy flips its check to false."""
@@ -224,7 +354,10 @@ class MutationTests(unittest.TestCase):
         (RESEARCH, "A locator fallback is recorded as `not_available`"),
         (RESEARCH, "parse stdout as JSON only when it is present and valid"),
         (RESEARCH, "cause `usage_error`"),
-        (RESEARCH, "the owner confirms it before C2 is used"),
+        (RESEARCH, "The pin below is **confirmed by the owner**"),
+        (RESEARCH, "C2 may activate against this pin."),
+        (RESEARCH, "`ruling-207-pin-2026-11-05`"),
+        (RESEARCH, "a new pin, or after drift until re-confirmed"),
         (RESEARCH, "Repository and primary documentation first"),
         (RESEARCH, "templates never become the user script"),
         (RESEARCH, "are not default and never auto-run"),
@@ -242,6 +375,32 @@ class MutationTests(unittest.TestCase):
         (RESEARCHER, "You are given: the mode (C1 or C2)"),
         (TEMPLATE, "provider name and pin"),
         (TEMPLATE, "unresolved questions"),
+        (RESEARCH, "The pin below is **confirmed by the owner**"),
+        (RESEARCH, "C2 may activate against this pin."),
+        (RESEARCH, "`ruling-207-pin-2026-11-05`"),
+        (RESEARCH, "a new pin, or after drift until re-confirmed"),
+        (AB_RECORD, "No superiority or promotion claim is made until all three efforts are recorded"),
+        (AB_RECORD, "C1 built-in research only"),
+        (AB_RECORD, "C1 + C2 pinned provider"),
+        (AB_RECORD, "its locator result"),
+        (AB_RECORD, "its SC-5 result"),
+        (AB_RECORD, "plan_ref (origin / approved revision)"),
+        (AB_RECORD, "consequential misses"),
+        (AB_RECORD, "repeated or low-value questions"),
+        (AB_RECORD, "user burden (owner review minutes)"),
+        (AB_RECORD, "C2 locator + result"),
+        (AB_RECORD, "evidence links"),
+        (AB_RECORD, "recorder"),
+        (AB_RECORD, "## 5. Effort 1 — U1 unified CLI"),
+        (AB_RECORD, "## 6. Effort 2 — U1 workspace panel"),
+        (AB_RECORD, "## 7. Effort 3 — U1 Scout tool"),
+        (AB_RECORD, "research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`)"),
+        (AB_RECORD, "The owner reviews both outputs per effort blind (labelled X/Y), and the A/B key is revealed after review."),
+        (AB_RECORD, "**Status: pending**"),
+        (AB_RECORD, "Measured values only."),
+        (AB_RECORD, '"not run" and "unknown" stay explicit'),
+        (AB_RECORD, "A C2 fallback is recorded as a fallback, never as a B-arm result."),
+        (AB_RECORD, "Empty until 3/3."),
     )
 
     def test_removing_each_key_sentence_is_detected(self) -> None:
