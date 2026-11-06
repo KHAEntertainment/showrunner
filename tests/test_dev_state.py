@@ -787,5 +787,53 @@ class TestGoalRunFixBatch1(unittest.TestCase):
                 )
 
 
+
+class TestGoalRunFixBatch2(unittest.TestCase):
+    """PR #226 fix batch 2: M1 closed top level, L1 missing-field message."""
+
+    def assert_named_failure(self, block: dict, expected: str):
+        with self.assertRaises(dev_state.GoalRunError) as raised:
+            dev_state.validate_goal_run(block)
+        self.assertEqual(str(raised.exception), expected)
+        code, _, stderr = run_validator(ledger_with(render_goal_run(block)))
+        self.assertEqual(code, 1)
+        self.assertIn(f"FAIL: {expected}", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_m1_unknown_top_level_key_fails(self):
+        block = armed_block()
+        block["zz_typo_field"] = "x"
+        self.assert_named_failure(block, "goal_run.zz_typo_field: unknown goal_run field")
+
+    def test_m1_allowed_keys_match_the_template_example(self):
+        example = goal_example()
+        documented = set(re.findall(r"^  ([a-z_]+):", example, re.M))
+        allowed = set(dev_state._GOAL_ASSIGNMENT_KEYS) | set(dev_state._GOAL_RUN_STATE_KEYS)
+        self.assertEqual(documented, allowed)
+
+    def test_l1_omitted_contract_refs_is_missing_required_field(self):
+        block = armed_block()
+        del block["contract_refs"]
+        self.assert_named_failure(block, "goal_run.contract_refs: missing required field")
+
+    def test_l1_present_but_different_keeps_mismatch_message(self):
+        block = armed_block()
+        block["contract_refs"] = ["SC-1@v1"]
+        self.assert_named_failure(
+            block, "goal_run.contract_refs: does not match the normalized assignment"
+        )
+
+    def test_valid_ledgers_still_pass(self):
+        for content in (
+            TEMPLATE.read_text(),
+            REAL_SHAPE_PRE_L2_LEDGER,
+            ledger_with(goal_example()),
+            ledger_with(render_goal_run(armed_block())),
+        ):
+            code, stdout, stderr = run_validator(content)
+            self.assertEqual(code, 0, stderr)
+            self.assertIn("OK:", stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

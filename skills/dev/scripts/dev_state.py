@@ -184,6 +184,9 @@ _GOAL_ASSIGNMENT_KEYS = (
     "repo", "run", "mode", "lead", "plan_ref", "source", "approval_revision",
     "fixed_issues", "coordinator", "charter_revision", "contract_refs",
 )
+# Run-state keys the template documents beside the assignment keys. The top
+# level of a goal_run block is closed: these plus _GOAL_ASSIGNMENT_KEYS.
+_GOAL_RUN_STATE_KEYS = ("approval_time", "next_wake_at", "paused", "policy", "counters")
 _GOAL_POLICY_KEYS = ("run_time_hours", "dispatch_cap_per_issue", "gv_retries", "spend_cap")
 _GOAL_COUNTER_KEYS = (
     "usage_measured", "spend", "gv_retries_used",
@@ -425,6 +428,9 @@ def validate_goal_run(block) -> None:
     counters ``usage_measured`` and ``gv_retries_used``."""
     if not isinstance(block, dict):
         raise GoalRunError(GOAL_RUN_KEY, "must be a map")
+    for key in block:
+        if key not in _GOAL_ASSIGNMENT_KEYS and key not in _GOAL_RUN_STATE_KEYS:
+            raise GoalRunError(f"{GOAL_RUN_KEY}.{key}", "unknown goal_run field")
     goal_run = _load_goal_run_module()
 
     entry = {key: block[key] for key in _GOAL_ASSIGNMENT_KEYS if key in block}
@@ -434,7 +440,9 @@ def validate_goal_run(block) -> None:
         path = f"{GOAL_RUN_KEY}.{field}" if field else GOAL_RUN_KEY
         raise GoalRunError(path, normalized.reason)
     for key, expected in normalized.value.to_dict().items():
-        if block.get(key) != expected:
+        if key not in block:
+            raise GoalRunError(f"{GOAL_RUN_KEY}.{key}", "missing required field")
+        if block[key] != expected:
             raise GoalRunError(
                 f"{GOAL_RUN_KEY}.{key}", "does not match the normalized assignment"
             )
