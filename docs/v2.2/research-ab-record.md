@@ -60,7 +60,7 @@ No blogs, forums or aggregators in either arm. If arm B's provider reaches beyon
 
 Scope: research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`): nothing designed or built, the U1 page not edited, no U1 Issues filed.
 
-source set and revisions: showrunner `1f9c65d`; U1 outline `artifacts/u1-binary-components-phase` sha256 `c7522cdd…335e` (74 lines); primary-source scope = official docs and public repositories with their own docs. Source overreach (disclosed, not filtered): arm A — v2.2 plan + epic artifacts (u1-cli-issue-draft, runtime-manifest, scout-tool, migration-safety-runner) + tracker #153/#181; arm B — tracker #153/#181/#182/#184; provider SKILL.md (expected for C2).
+source set and revisions: showrunner `1f9c65d`; U1 outline `artifacts/u1-binary-components-phase` sha256 `c7522cdd…335e` (74 lines); primary-source scope = official docs and public repositories with their own docs. Source overreach (disclosed, not filtered): arm A — v2.2 plan + epic artifacts (u1-cli-issue-draft, runtime-manifest, scout-tool, migration-safety-runner) + tracker #153/#181; arm B — tracker #153/#181/#182/#184; provider SKILL.md (expected for C2). Blinding: no arm-naming lines needed stripping; host frontmatter hidden at render only.
 
 **Status: recorded — inconclusive**
 
@@ -75,7 +75,7 @@ Owner review: not judged; the owner could not assess either note, because no not
 
 Scope: research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`): nothing designed or built, the U1 page not edited, no U1 Issues filed.
 
-source set and revisions: showrunner `1f9c65d`; U1 outline `artifacts/u1-binary-components-phase` sha256 `c7522cdd…335e` (74 lines); primary-source scope = official docs and public repositories with their own docs. Source overreach (disclosed, not filtered): arm A — local non-public agent-dashboard checkout @23e5396; v2.2 plan; v2.1.2 panel decision + critique briefing; 3687337d final deliverable. arm B — v2.2 plan + v2.1.2 panel artifacts + 3687337d design/debate artifacts; saw the agent-dashboard checkout exists, did not read it.
+source set and revisions: showrunner `1f9c65d`; U1 outline `artifacts/u1-binary-components-phase` sha256 `c7522cdd…335e` (74 lines); primary-source scope = official docs and public repositories with their own docs. Source overreach (disclosed, not filtered): arm A — local non-public agent-dashboard checkout @23e5396; v2.2 plan; v2.1.2 panel decision + critique briefing; 3687337d final deliverable. arm B — v2.2 plan + v2.1.2 panel artifacts + 3687337d design/debate artifacts; saw the agent-dashboard checkout exists, did not read it. Blinding: no arm-naming lines needed stripping; host frontmatter hidden at render only.
 
 **Status: recorded — inconclusive**
 
@@ -90,7 +90,7 @@ Owner review: not judged; the owner could not assess either note, because no not
 
 Scope: research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`): nothing designed or built, the U1 page not edited, no U1 Issues filed.
 
-source set and revisions: showrunner `1f9c65d`; U1 outline `artifacts/u1-binary-components-phase` sha256 `c7522cdd…335e` (74 lines); primary-source scope = official docs and public repositories with their own docs. Source overreach (disclosed, not filtered): arm A — tracker #153/#104; did NOT read the d4441475 package (its own gap 1). arm B — filename-only `ls`/`find` of ~/housekeeping/scout-tool (no file opened). Both arms — scout-tool record + its post-2.2-handoff, allowed as outline context by a lead clarification sent equally to both arms.
+source set and revisions: showrunner `1f9c65d`; U1 outline `artifacts/u1-binary-components-phase` sha256 `c7522cdd…335e` (74 lines); primary-source scope = official docs and public repositories with their own docs. Source overreach (disclosed, not filtered): arm A — tracker #153/#104; did NOT read the d4441475 package (its own gap 1). arm B — filename-only `ls`/`find` of ~/housekeeping/scout-tool (no file opened). Both arms — scout-tool record + its post-2.2-handoff, allowed as outline context by a lead clarification sent equally to both arms. Blinding: no arm-naming lines needed stripping; host frontmatter hidden at render only.
 
 **Status: recorded — inconclusive**
 
