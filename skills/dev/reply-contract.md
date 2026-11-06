@@ -34,6 +34,8 @@ Some content is surfaced first and in full, regardless of the cap:
 
 These are surfaced first, ahead of any other content in the same reply, and never trimmed to fit the routine-turn word target.
 
+**Goal-run merges under a D2 grant (SDP D2 item 6).** In a goal run, a valid bounded grant in force counts as the confirmation this section requires for a merge: when `decide_merge` in `${CLAUDE_SKILL_DIR}/scripts/goal_authority.py` returns `accept` for a PR at its reviewed head, the lead merges without asking again. The lead sends the user a notice for each merge and each failure, surfaced first like the items above, and waits for no acknowledgement. Without a grant in force (no grant, a `confirm_each` result, or outside a goal run), the confirmation above stands. The grant covers merges only, never a force-push, deletion or bypass.
+
 ## 4. Carve-out — the cap counts prose, not required structured artifacts
 
 The cap counts prose, not required structured artifacts. Where a Phase explicitly requires an artifact to reach the user in full, that artifact is emitted whole and the cap applies only to the sentences the lead adds around it. Named exemptions:

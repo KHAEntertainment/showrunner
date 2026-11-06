@@ -99,6 +99,7 @@ Only then choose how to handle blocking work:
 
 - **DELEGATE-FIX**: a blocking finding has a clear fix, performed by a Worker Agent in its assigned worktree.
 - **ASK**: resolving a potentially blocking finding requires clarification of intent, interface semantics, permissions, or tradeoffs; batch these questions.
+- **ASK in a goal run (D7.2 item 3; outside a goal run the ASK rule above stands).** A technical ASK (an engineering question) is not sent to the user: the lead resolves it with the **Adversarial Second Opinion** below and records the disposition as a D7.2 control record with `gate: technical_ask_disposition` in `goal_run.delegated_records`, checked by `validate_delegated_record` from `${CLAUDE_SKILL_DIR}/scripts/goal_authority.py`. A product ASK (priority, scope or acceptance, or any question whose kind is unclear) stays with the user (`product_ask_disposition`, protected): work that depends on it waits, independent work continues.
 
 An easy fix is not necessarily blocking. Record advisory findings with a rationale
 and follow-up location in the existing debt records or issue tracker.
@@ -208,6 +209,7 @@ Must give one explicit rating:
   → **after fixes, run Phase 3.5 (QA) + Phase 4 (Review) using Review after fixes below**
 
 - **COMMENT**: questions that don't block the merge (decide after user confirmation)
+  → in a goal run (D7.2 item 3): a technical comment is decided by the lead with a second opinion and recorded as a D7.2 control record with `gate: comment_decisions` in `goal_run.delegated_records`, checked by `validate_delegated_record`; a product comment still waits for user confirmation
 
 ---
 
@@ -257,6 +259,25 @@ Every fix batch is counted on a defect episode, so a remediation loop is bounded
 Merge in dependency order: infrastructure Issue PRs merge first; dependent PRs wait until prerequisites are merged.
 
 Update `PROJECT_CONTEXT.md` after all PRs are merged through a docs-only worktree/PR (completed features list, current status).
+
+### Goal runs: bounded merge grant (D2)
+
+This subsection applies only inside a goal run (`${CLAUDE_SKILL_DIR}/phases/goal.md`). Outside one, Phase 4 merge behavior is unchanged. In a goal run, merges stay protected (gate `merge`); the only exception is a D2 bounded grant checked by `decide_merge` from `${CLAUDE_SKILL_DIR}/scripts/goal_authority.py`. A reviewer's APPROVE alone never merges, and neither do autonomous mode, plan freeze, prior runs or repository settings. Call the module the way goal.md calls `goal_run.py`, and persist every result in the `goal_run` block (`grant`, `merge_ledger`, `gate_evidence`): rebuild the `MergeLedger` with `merge_ledger_from_record` and write it back with `merge_ledger_to_record` from `${CLAUDE_SKILL_DIR}/scripts/dev_state.py`, then validate the ledger.
+
+1. **No grant.** When `goal_run.grant` is `null` (the owner chose per-push confirmation, or the project sets it), every merge uses per-push confirmation bound to the reviewed head, exactly as outside a goal run.
+2. **Gates at the current head.** After the APPROVE rating and the last-moment checks (re-read head, base, checks and destination; `.dev.json` pre-write verification), call `check_gates` for the PR at its current `headRefOid`. Record its `checked_head`, `outcome`, failing gate names and `checked_at` in `gate_evidence`.
+3. **Decide.** Call `decide_merge(grant, ledger, request, now, gates, mode)`. `request` carries `run_id`, `host`, `repository`, `base`, `pr`, `head`, `reviewed_head`, every closing Issue in `closing_issues`, `head_match_available`, and in managed mode the coordinator's `foreman_grant` for this PR and head. Its outcomes:
+   - `accept`: merge without per-push confirmation, bound to the head: `rtk gh pr merge <PR> --repo github.com/<repository> --<merge_method> --match-head-commit <match_head_commit>`, using the returned values.
+   - `confirm_each`: no bounded authority for this merge (`missing_field`, `invalid_field`, `grant_expired`, `cap_reached`, `unlisted_closing_issue`, `no_eligible_closing_issue`, `head_changed`, `no_head_match`, `binding_changed`, `grant_run_mismatch`, `grant_revoked`, `grant_not_in_force`, `review_level_missing`, `now_missing`). Fall back to per-push confirmation for this PR at this head. A missing review level affects only this merge; the grant stays in force for the rest.
+   - `blocked`: (`gates_not_satisfied`, `stale_gate_result`, `gates_not_evaluated`, `post_merge_failure_halt`) do not merge. Per-push confirmation never overrides a blocked gate.
+   - `invalid`: (`malformed_input`, `foreman_grant_missing`, `unknown_mode`) stop and repair the input it names.
+4. **Record the merge.** Call `record_merge(ledger, event)` with `pr`, `outcome` (`merged` or `failed`) and the `merge_sha`. Only a merge with its SHA consumes a slot; replaying the same PR and merge SHA consumes nothing. Write `merge_ledger` before any other step, then run the post-merge sections below as usual.
+5. **Post-merge failure.** When acceptance or merged-tree checks fail, call `record_post_merge_failure(ledger, issue, ref)`: every remaining automatic merge halts (`blocked` / `post_merge_failure_halt`) and the Issue is reopened as usual. Non-merge work continues (`check_action`). Only `clear_halt(ledger, triage_ref)` after triage lifts the halt; record the triage ref in `merge_ledger.cleared_halts`.
+6. **Revocation.** A user stop revokes the grant: call `revoke_grant(ledger, at)` and write it before the next merge. Later merges get `confirm_each` / `grant_revoked`.
+7. **Lifetime.** Call `carry_grant(grant, ledger, transition, custody_passed)` on a transition: `restart` and `compaction` of the same run keep the grant, `takeover` keeps it only when the custody check passed, and another run never inherits it. The grant ends at run end or `expires_at` and never renews. Adding Issues, raising the cap or extending expiry needs fresh owner authority.
+8. **Notices.** Send the user a notice for each merge and each failure. No acknowledgement is awaited for a merge the grant already authorized (`${CLAUDE_SKILL_DIR}/reply-contract.md` § 3).
+
+Every other Phase 4 gate, the external-review gate and the exclusions (external-review bypass, force-push, tags, releases, destination overrides) still apply. A grant bypasses no review.
 
 ---
 
