@@ -1,0 +1,55 @@
+{
+  "description": "Handoff note classification cases for #196 L5 (AC-07). Each case names the note_status, pause and ledger-checkpoint availability and the expected admission outcome.",
+  "cases": [
+    {
+      "name": "current-note-restores",
+      "note_status": "current",
+      "paused": false,
+      "checkpoint_available": false,
+      "expected_outcome": "restored_then_current_state_check"
+    },
+    {
+      "name": "stale-note-over-pause-rejected",
+      "note_status": "stale",
+      "paused": true,
+      "checkpoint_available": true,
+      "expected_outcome": "resume_overrides_pause",
+      "expected_reject": true
+    },
+    {
+      "name": "missing-note-ledger-fallback",
+      "note_status": "missing",
+      "paused": false,
+      "checkpoint_available": true,
+      "expected_outcome": "fallback_ledger_recovery",
+      "expected_continuity": "fallback",
+      "expected_degradation": "no_note"
+    },
+    {
+      "name": "failed-note-ledger-fallback",
+      "note_status": "failed",
+      "paused": false,
+      "checkpoint_available": true,
+      "expected_outcome": "fallback_ledger_recovery",
+      "expected_continuity": "fallback",
+      "expected_degradation": "failed_note"
+    },
+    {
+      "name": "emergency-no-note-ledger-fallback",
+      "note_status": "emergency_no_note",
+      "paused": false,
+      "checkpoint_available": true,
+      "expected_outcome": "fallback_ledger_recovery",
+      "expected_continuity": "fallback",
+      "expected_degradation": "no_note"
+    },
+    {
+      "name": "missing-note-no-checkpoint-unavailable",
+      "note_status": "missing",
+      "paused": false,
+      "checkpoint_available": false,
+      "expected_outcome": "recovery_evidence_unavailable",
+      "expected_reject": true
+    }
+  ]
+}
