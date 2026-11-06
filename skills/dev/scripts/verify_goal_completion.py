@@ -10,7 +10,7 @@ records the result as sole ledger writer.
 Usage::
 
     verify_goal_completion.py --ledger .agent/dev-state.md [--purpose final]
-        [--owner-account LOGIN] [--marker TEXT] [--approved-revision DIGEST]
+        [--marker TEXT] [--approved-revision DIGEST]
         [--invoker-role ROLE] [--invoker-id ID] [--invoker-harness HARNESS]
         [--consumer-context CONTEXT] [--hook-cap-exhausted]
         [--supersedes RESULT_ID ...] [--result-id ID] [--ledger-ref REF]
@@ -29,18 +29,29 @@ Outcome classes. Each reason code carries one class:
   closed, a PR not merged, the wrong merge SHA, base or repository, a merge not
   reachable from the destination, a withdrawn integration, a failed post-merge
   gate, ``criteria_verdict: unmet``, an Issue with no PR record, proof of a kind
-  D4.4 never accepts, or a human criterion awaiting owner acceptance.
+  D4.4 never accepts, or a ``human`` criterion (``evaluator_unsupported``).
 * ``inconclusive``: missing, unreadable, stale or ambiguous evidence. Examples:
   a read failing after three tries, an API error or rate limit, a missing PR
   record in a multi-PR mapping, an absent or pending post-merge record, a stale
-  criteria or source revision, a suspected unrecorded revert, a mismatched
-  marker, or a missing owner account for a human criterion.
+  criteria or source revision, a suspected unrecorded revert, or a mismatched
+  marker.
 * ``advisory``: recorded, never blocking. Examples: a revert scan that could
   not run, hook-cap exhaustion, or an open Issue under ``purpose: readiness``.
 
 A ``not_complete`` reason outranks an ``inconclusive`` one. Neither the lead's
 marker nor its summary is ever read as proof, and no prior result is reused:
 every call re-reads the repository.
+
+Human evaluator (owner ruling 2026-11-06, ruling-no-github-accept). This
+amends SDP D4.4's human row for v2.2; the SDP text is not edited. v2.2 has no
+GitHub ``/accept`` command and no owner-account setting: the owner signs off in
+chat, which GV cannot read. A criterion whose evaluator is ``human`` is
+therefore unsupported. It is ``not_complete`` under ``purpose: final`` and
+``not_ready`` under ``purpose: readiness`` (``evaluator_unsupported``, detail
+``{criterion, evaluator: human, version: v2.2}``), and never verifies. ``human``
+stays in ``EVALUATOR_TYPES`` so such a record is still read, not malformed. GV
+never lists Issue comments; the only comment it reads is an internal review
+lane's own evidence comment, by id.
 
 Test proof binding (D4.4, GV reading accepted by the lead and foreman). A
 ``test`` criterion is proved by the CI job attempt its post-merge
@@ -213,7 +224,6 @@ _HEX_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _DIGEST_RE = re.compile(r"^sha256:([0-9a-f]{4,64})$")
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _ENDPOINT_RE = re.compile(r"^repos/[A-Za-z0-9_.\-/?=&:.@\[\]%+]+$")
-_ACCEPT_RE = re.compile(r"^/accept\s+(\S+)\s*$")
 _REVERT_RE = re.compile(r"This reverts commit ([0-9a-fA-F]{7,40})")
 # GitHub's UI revert PR, squash-merged: "Reverts OWNER/REPO#N".
 _REVERT_PR_RE = re.compile(r"^Reverts ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)\s*$", re.MULTILINE)
@@ -987,10 +997,9 @@ def _skill_revision():
 
 
 class _Evaluation:
-    def __init__(self, reader, purpose, owner_account, assignment, goal, blocks):
+    def __init__(self, reader, purpose, assignment, goal, blocks):
         self.reader = reader
         self.purpose = purpose
-        self.owner = owner_account.lower() if isinstance(owner_account, str) and owner_account else None
         self.assignment = assignment
         self.goal = goal
         self.blocks = blocks
@@ -1680,7 +1689,9 @@ class _Evaluation:
                 self.criterion(line, INCONCLUSIVE, "evaluator_unassigned")
                 continue
             if etype == "human":
-                self.check_human(line, parts)
+                # Owner ruling 2026-11-06 (no GitHub /accept in v2.2): unsupported, never verified.
+                self.criterion(line, NOT_COMPLETE, "evaluator_unsupported", criterion=cid,
+                               evaluator="human", version="v2.2")
                 continue
             proving = [ctx for prq, ctx in sorted(self.prs.items())
                        if cid in (ctx["record"].get("criteria_ids") or [])]
@@ -1919,64 +1930,9 @@ class _Evaluation:
             return None
         return data if isinstance(data, dict) else None
 
-    def check_human(self, line, parts):
-        cid = line["id"]
-        if self.owner is None:
-            self.criterion(line, INCONCLUSIVE, "owner_account_unavailable")
-            return
-        target = self.parent if self.parent is not None else (self.issues[0] if len(self.issues) == 1 else None)
-        target_parts = _split_issue(target)
-        if target_parts is None or target_parts[0] != self.repo:
-            self.criterion(line, INCONCLUSIVE, "acceptance_target_unreadable", target=target)
-            return
-        approved_at = self.criterion_approved_at()
-        if approved_at is None:
-            self.criterion(line, INCONCLUSIVE, "approval_time_unknown")
-            return
-        comments = self.read(f"acceptance:{target}",
-                             f"repos/{self.repo}/issues/{target_parts[1]}/comments?per_page=100",
-                             criteria=[cid], paginate=True)
-        if comments is None:
-            line["state"] = "inconclusive"
-            line["reason_code"] = "read_failed"
-            return
-        ignored = []
-        for comment in comments if isinstance(comments, list) else []:
-            if not isinstance(comment, dict):
-                continue
-            body = comment.get("body") or ""
-            for text in body.splitlines():
-                match = _ACCEPT_RE.match(text.strip())
-                if not match:
-                    continue
-                named = match.group(1)
-                named_parts = _criterion_parts(named)
-                author = _login(comment.get("user"))
-                posted = _parse_utc(comment.get("created_at"))
-                if named != cid:
-                    if named_parts and named_parts[0] == parts[0]:
-                        ignored.append({"why": "superseded_revision", "named": named, "author": author})
-                    continue
-                if author != self.owner:
-                    ignored.append({"why": "non_owner", "author": author})
-                elif posted is None or posted <= approved_at:
-                    ignored.append({"why": "before_current_revision_approval", "author": author})
-                else:
-                    line.update({"state": "met", "reason_code": "ok", "accepted_proof": {
-                        "command": f"/accept {cid}", "author": author, "issue": target,
-                        "created_at": comment.get("created_at"),
-                        "comment": comment.get("html_url") or comment.get("id")}})
-                    return
-        self.criterion(line, NOT_COMPLETE, "awaiting_owner_acceptance", ignored=ignored)
-
-    def criterion_approved_at(self):
-        amendment = (self.parent_record or {}).get("amendment")
-        if isinstance(amendment, dict) and amendment.get("to") == self.cref:
-            return _parse_utc(amendment.get("at"))
-        return _parse_utc(self.goal.get("approval_time"))
 
 
-def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, owner_account=None, runner=None, sleep=None,
+def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, runner=None, sleep=None,
              now=None, ledger_ref=DEFAULT_LEDGER_REF, invoker=None, consumer_context=None,
              supersedes=(), marker=None, approved_revision=None, hook_cap_exhausted=False,
              result_id=None) -> Verification:
@@ -2034,7 +1990,7 @@ def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, owner_account=None, runner=N
                 value = None
         blocks[key] = value
 
-    run = _Evaluation(reader, purpose, owner_account, assignment, goal, blocks)
+    run = _Evaluation(reader, purpose, assignment, goal, blocks)
     run.ref = ledger_ref
     run.reasons.extend(reasons_pre)
     for key, message in block_failures:
@@ -2153,7 +2109,6 @@ def _build_parser():
     parser = _Parser(description="Goal completion verifier (completion-result-v1). Read-only.")
     parser.add_argument("--ledger", required=True, help="path to the Dev ledger (read only)")
     parser.add_argument("--purpose", default=PURPOSE_FINAL, choices=sorted(VOCABULARY))
-    parser.add_argument("--owner-account", help="owner GitHub login for /accept commands")
     parser.add_argument("--marker", help="the lead's turn-end marker text (never proof)")
     parser.add_argument("--approved-revision", help="current approved plan revision")
     parser.add_argument("--invoker-role")
@@ -2177,7 +2132,7 @@ def main(argv=None, runner=None, sleep=None, now=None) -> int:
     else:
         try:
             result = evaluate(
-                text, purpose=args.purpose, owner_account=args.owner_account, runner=runner,
+                text, purpose=args.purpose, runner=runner,
                 sleep=sleep, now=now, ledger_ref=args.ledger_ref,
                 invoker={"role": args.invoker_role, "id": args.invoker_id, "harness": args.invoker_harness},
                 consumer_context=args.consumer_context, supersedes=args.supersedes,

@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import copy
 import importlib.util
+import inspect
 import io
 import json
 import re
@@ -70,6 +71,13 @@ BASE_LEDGER = json.loads((FIXTURES / "base_ledger.json").read_text(encoding="utf
 BASE_GH = json.loads((FIXTURES / "base_github.json").read_text(encoding="utf-8"))
 BASE_LEDGER.pop("_comment")
 BASE_GH.pop("_comment")
+# Owner ruling 2026-11-06 (ruling-no-github-accept: no GitHub /accept in v2.2). The base
+# positive no longer carries the human criterion AC-4 or the Issue-comment listing that held
+# its /accept; GV never reads that listing now. The fixture files are left as they were.
+# HUMAN_AC4 is the removed criterion, re-added by the tests that need a human criterion.
+HUMAN_AC4 = next(c for c in BASE_LEDGER["parent_acceptance"][0]["criteria"] if c["id"] == "AC-4@9f3c")
+BASE_LEDGER["parent_acceptance"][0]["criteria"].remove(HUMAN_AC4)
+ACCEPT_COMMENTS = BASE_GH.pop(COMMENTS_EP)
 
 ALL_ARGV = []
 
@@ -253,7 +261,6 @@ def scenario(mutate_ledger=None, mutate_gh=None, actions=True, **kwargs):
         mutate_gh(responses)
     runner = FakeRunner(responses)
     sleeps = []
-    kwargs.setdefault("owner_account", OWNER)
     kwargs.setdefault("now", NOW)
     result = gv.evaluate(render(data), runner=runner, sleep=sleeps.append, **kwargs)
     return result, runner, sleeps
@@ -314,6 +321,16 @@ def internal_lane(data):
 def add_lane_comment(responses):
     responses[LANE_COMMENT_EP] = {"id": 991, "issue_url": f"https://api.github.com/repos/{REPO}/issues/10",
                                   "body": "Review lane report for 4e683b4: no material findings."}
+
+
+def with_human(data):
+    """Re-add the human criterion AC-4 that the 2026-11-06 ruling took out of the base."""
+    parent(data)["criteria"].append(copy.deepcopy(HUMAN_AC4))
+
+
+def human_only(data):
+    with_human(data)
+    only_criteria(data, "AC-4@9f3c")
 
 
 def only_criteria(data, *ids):
@@ -407,6 +424,7 @@ class TestPackagingBoundary(unittest.TestCase):
         scenario(mutate_gh=lambda g: g.update({ISSUE_EP: Failing([(1, "", "HTTP 500")] * 3)}))
         self.assertTrue(ALL_ARGV)
         # L195-2a: the GitHub Actions run-attempt and jobs reads are in the pinned set.
+        scenario(with_human, mutate_gh=lambda g: g.update({COMMENTS_EP: ACCEPT_COMMENTS}))
         endpoints = {argv[-1] for argv in ALL_ARGV}
         for run in (123, 130):
             self.assertIn(actions_ep(run, 1), endpoints)
@@ -418,6 +436,23 @@ class TestPackagingBoundary(unittest.TestCase):
                 self.assertNotIn(token, FORBIDDEN_GH_FLAGS, argv)
                 self.assertNotIn(token, FORBIDDEN_WORDS, argv)
             self.assertLessEqual(set(argv[4:-1]), {"--paginate"}, argv)
+
+    def test_ac1_no_argv_reads_issue_comments_for_accept(self):
+        # Ruling 2026-11-06 (no GitHub /accept in v2.2): GV never lists an Issue's comments.
+        result, runner, _ = scenario(with_human, mutate_gh=lambda g: g.update({COMMENTS_EP: ACCEPT_COMMENTS}))
+        self.assertEqual(result.outcome, "not_complete")
+        listing = re.compile(r"/issues/[0-9]+/comments")
+        self.assertFalse([a for a in runner.calls if listing.search(a[-1])], runner.calls)
+        scenario()
+        scenario(internal_lane, add_lane_comment)  # the one comment read left: a review lane's, by id
+        self.assertFalse([a for a in ALL_ARGV if listing.search(a[-1])])
+        # No literal in the module spells the /accept command or a comment-listing endpoint.
+        literals = [c.value for c in self._constants() if isinstance(c.value, str)]
+        for text in literals:
+            self.assertNotIn("/accept", text)
+            self.assertNotIn("/comments?", text)
+        self.assertFalse(hasattr(gv, "_ACCEPT_RE"))
+        self.assertFalse(hasattr(gv._Evaluation, "check_human"))
 
     def test_ac1_read_shape_refuses_write_flags_and_methods(self):
         for flag in FORBIDDEN_GH_FLAGS:
@@ -503,7 +538,7 @@ class TestBlockReader(unittest.TestCase):
             with self.assertRaises(gv.LedgerError):
                 gv.read_block(f"---\n{bad}---\n", "pull_requests")
         runner = FakeRunner(copy.deepcopy(BASE_GH))
-        result = gv.evaluate(broken, runner=runner, sleep=lambda s: None, owner_account=OWNER, now=NOW)
+        result = gv.evaluate(broken, runner=runner, sleep=lambda s: None, now=NOW)
         self.assertEqual(result.outcome, "inconclusive")
         self.assertIn("ledger_block_unreadable", codes(result))
         self.assertIn("ledger:pull_requests", [u["read"] for u in result.record["unread_inputs"]])
@@ -533,7 +568,7 @@ class TestResultRecord(unittest.TestCase):
         self.assertTrue(record["repository_facts"]["pull_requests"][0]["reachable_from_destination"])
         self.assertEqual(record["repository_facts"]["closed_issues"], [{"issue": ISSUE, "state": "closed"}])
         self.assertEqual(record["repository_facts"]["integrated_acceptance"]["record"], "parent_acceptance")
-        self.assertEqual([c["state"] for c in record["criteria"]], ["met"] * 4)
+        self.assertEqual([c["state"] for c in record["criteria"]], ["met"] * 3)  # ruling 2026-11-06: AC-4 (human) left the base
         self.assertEqual(record["reason_codes"], [])
         self.assertEqual(record["producer"]["recorded_by"], "lead")
         self.assertEqual(record["producer"]["consumer_context"], "lead-final")
@@ -676,18 +711,11 @@ class TestRequiredCases(unittest.TestCase):
             for item in parent(d)["criteria"]:
                 item["id"] = item["id"].replace("@9f3c", "@b17e")
 
-        def without_human(d):
-            mutate(d)
-            parent(d)["criteria"].pop(3)
-        result, _, _ = scenario(without_human)
+        result, _, _ = scenario(mutate)  # the base has no human criterion now (ruling 2026-11-06)
         # Fix batch 1 (B3): the PR record's criteria_ref now contradicts the parent's: not_complete.
         self.assertOutcome(result, "not_complete", "criteria_ref_mismatch")
         self.assertIn("criteria_revision_stale", codes(result))
         self.assertEqual(line(result, "AC-1@b17e")["state"], "inconclusive")
-        # The human criterion's only /accept names the superseded revision.
-        human, _, _ = scenario(mutate)
-        self.assertOutcome(human, "not_complete", "awaiting_owner_acceptance")
-        self.assertIn("criteria_revision_stale", codes(human))
 
     def test_l352_stale_source_revision(self):
         result, _, _ = scenario(approved_revision="sha256:" + "3" * 64)
@@ -785,15 +813,15 @@ class TestRequiredCases(unittest.TestCase):
         self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["conclusion"], "success")
         self.assertEqual(line(result, "AC-2@9f3c")["accepted_proof"]["kind"], "external")
         self.assertEqual(line(result, "AC-3@9f3c")["accepted_proof"]["revision"], "4e683b4")
-        self.assertEqual(line(result, "AC-4@9f3c")["accepted_proof"]["command"], "/accept AC-4@9f3c")
-        self.assertEqual([line(result, f"AC-{n}@9f3c")["evaluator"] for n in range(1, 5)],
-                         ["test", "independent_reviewer", "demonstration", "human"])
+        # Ruling 2026-11-06: the human mode is not an evidence mode in v2.2 (see the human tests below).
+        self.assertEqual([line(result, f"AC-{n}@9f3c")["evaluator"] for n in range(1, 4)],
+                         ["test", "independent_reviewer", "demonstration"])
 
     def test_l352_missing_required_reviewer_or_human_decision(self):
         result, _, _ = scenario(lambda d: pm(d)["criteria"].pop(1))
         self.assertOutcome(result, "inconclusive", "post_merge_criterion_missing")
-        human, _, _ = scenario(mutate_gh=lambda g: g.update({COMMENTS_EP: []}))
-        self.assertOutcome(human, "not_complete", "awaiting_owner_acceptance")
+        human, _, _ = scenario(with_human)
+        self.assertOutcome(human, "not_complete", "evaluator_unsupported")
 
     def test_l352_evaluator_mismatch(self):
         result, _, _ = scenario(lambda d: pr(d)["criteria"][0]["evaluator"].update(type="demonstration"))
@@ -837,23 +865,30 @@ class TestRequiredCases(unittest.TestCase):
         error = gv.evaluate("not a ledger", runner=FakeRunner({}), sleep=lambda s: None)
         self.assertEqual((error.kind, error.exit_code), ("error", 2))
 
-    def test_l352_human_criterion_without_acceptance_command(self):
-        result, _, _ = scenario(mutate_gh=lambda g: g.update({COMMENTS_EP: [
-            {"id": 6, "user": {"login": OWNER}, "body": "looks good", "created_at": "2099-01-03T00:00:00Z"}]}))
-        self.assertOutcome(result, "not_complete", "awaiting_owner_acceptance")
+    # Ruling 2026-11-06 (no GitHub /accept in v2.2): these two replace the l.352 human cases
+    # (no /accept command, non-owner /accept, superseded-revision /accept).
+
+    def test_l352_human_criterion_is_unsupported_under_final(self):
+        # Even a perfect owner /accept on the Issue is never read and never proof.
+        result, runner, _ = scenario(with_human, mutate_gh=lambda g: g.update({COMMENTS_EP: ACCEPT_COMMENTS}))
+        self.assertOutcome(result, "not_complete", "evaluator_unsupported")
+        self.assertEqual(result.exit_code, gv.EXIT_NOT_COMPLETE)
         self.assertEqual(line(result, "AC-4@9f3c")["state"], "unmet")
+        self.assertIsNone(line(result, "AC-4@9f3c")["accepted_proof"])
+        reason = next(r for r in result.record["reason_codes"] if r["code"] == "evaluator_unsupported")
+        self.assertEqual(reason["detail"], {"criterion": "AC-4@9f3c", "evaluator": "human", "version": "v2.2"})
+        self.assertEqual(reason["class"], "not_complete")
+        self.assertEqual(runner.count(COMMENTS_EP), 0)
+        self.assertEqual(gv.read_result(result.record)[0], "accept")  # a readable record, not malformed
 
-    def test_l352_acceptance_from_non_owner_account(self):
-        result, _, _ = scenario(mutate_gh=lambda g: g[COMMENTS_EP][0]["user"].update(login="lead-bot"))
-        self.assertOutcome(result, "not_complete", "awaiting_owner_acceptance")
-        reason = next(r for r in result.record["reason_codes"] if r["code"] == "awaiting_owner_acceptance")
-        self.assertEqual(reason["detail"]["ignored"][0]["why"], "non_owner")
-
-    def test_l352_acceptance_naming_superseded_criterion_revision(self):
-        result, _, _ = scenario(mutate_gh=lambda g: g[COMMENTS_EP][0].update(body="/accept AC-4@1111"))
-        self.assertOutcome(result, "not_complete", "awaiting_owner_acceptance")
-        reason = next(r for r in result.record["reason_codes"] if r["code"] == "awaiting_owner_acceptance")
-        self.assertEqual(reason["detail"]["ignored"][0]["why"], "superseded_revision")
+    def test_l352_human_criterion_is_unsupported_under_readiness(self):
+        result, runner, _ = scenario(with_human, purpose="readiness")
+        self.assertEqual((result.outcome, result.exit_code), ("not_ready", gv.EXIT_NOT_COMPLETE))
+        self.assertIn("evaluator_unsupported", codes(result))
+        reason = next(r for r in result.record["reason_codes"] if r["code"] == "evaluator_unsupported")
+        self.assertEqual(reason["detail"], {"criterion": "AC-4@9f3c", "evaluator": "human", "version": "v2.2"})
+        self.assertEqual(runner.count(COMMENTS_EP), 0)
+        self.assertIn("human", gv.EVALUATOR_TYPES)
 
     def test_l352_implementing_worker_offered_as_independent_reviewer(self):
         def mutate(d):
@@ -881,7 +916,7 @@ class TestFloor(unittest.TestCase):
         data = render(BASE_LEDGER)
         runner = FakeRunner(answered())
         for _ in range(2):
-            self.assertEqual(gv.evaluate(data, runner=runner, sleep=lambda s: None, owner_account=OWNER,
+            self.assertEqual(gv.evaluate(data, runner=runner, sleep=lambda s: None,
                                          now=NOW).outcome, "verified")
         for endpoint in (ISSUE_EP, PR_EP, COMPARE_EP):
             self.assertEqual(runner.count(endpoint), 2, endpoint)
@@ -988,35 +1023,23 @@ class TestProofTable(unittest.TestCase):
         self.assertEqual(result.outcome, "verified")
         self.assertEqual(line(result, "AC-2@9f3c")["accepted_proof"]["kind"], "internal_lane")
 
-    def test_d44_human_summary_informal_comment_or_panel_ack_not_accepted(self):
-        comments = [
-            {"id": 7, "user": {"login": OWNER}, "body": "LGTM, AC-4 accepted", "created_at": "2099-01-03T00:00:00Z"},
-            {"id": 8, "user": {"login": OWNER}, "body": "panel acknowledged AC-4@9f3c", "created_at": "2099-01-03T00:00:00Z"},
-            {"id": 9, "user": {"login": "lead-agent"}, "body": "Summary: owner accepted AC-4", "created_at": "2099-01-03T00:00:00Z"},
-        ]
-        result, _, _ = scenario(mutate_gh=lambda g: g.update({COMMENTS_EP: comments}))
-        self.assertRejected(result, "awaiting_owner_acceptance", "AC-4@9f3c")
+    # Ruling 2026-11-06: the four D4.4 /accept-mechanics tests (informal comment or panel ack,
+    # acceptance before approval, missing owner account, acceptance after an amendment) are
+    # removed with the mechanism. This one replaces them: no comment shape, timing or amendment
+    # makes a human criterion verify, and no owner setting exists to be missing.
 
-    def test_d44_acceptance_posted_before_the_current_revision_approval(self):
-        result, _, _ = scenario(mutate_gh=lambda g: g[COMMENTS_EP][0].update(created_at="2098-12-31T00:00:00Z"))
-        self.assertRejected(result, "awaiting_owner_acceptance", "AC-4@9f3c")
-
-    def test_d44_owner_account_missing_is_inconclusive_only_for_human_criteria(self):
-        result, _, _ = scenario(owner_account=None)
-        self.assertEqual(result.outcome, "inconclusive")
-        self.assertIn("owner_account_unavailable", codes(result))
-        no_human, runner, _ = scenario(lambda d: parent(d)["criteria"].pop(3), owner_account=None)
-        self.assertEqual(no_human.outcome, "verified")
-        self.assertEqual(runner.count(COMMENTS_EP), 0)
-
-    def test_d44_amended_criterion_needs_acceptance_after_the_amendment(self):
+    def test_d44_human_criterion_never_verifies_whatever_the_issue_comments_say(self):
         def amend(d):
+            with_human(d)
             parent(d)["amendment"] = {"from": "sha256:9f3c", "to": parent(d)["criteria_ref"], "changed": ["AC-4"],
                                       "approved_by": "owner", "recorded_by": "lead", "at": "2099-01-03T12:00:00Z"}
-        result, _, _ = scenario(amend)
-        self.assertRejected(result, "awaiting_owner_acceptance", "AC-4@9f3c")
-        later, _, _ = scenario(amend, lambda g: g[COMMENTS_EP][0].update(created_at="2099-01-03T13:00:00Z"))
-        self.assertEqual(later.outcome, "verified")
+        later = [dict(ACCEPT_COMMENTS[0], created_at="2099-01-03T13:00:00Z")]
+        for name, mutate, comments in (("base", with_human, ACCEPT_COMMENTS), ("after_amendment", amend, later)):
+            with self.subTest(name):
+                result, runner, _ = scenario(mutate, lambda g, c=comments: g.update({COMMENTS_EP: c}))
+                self.assertRejected(result, "evaluator_unsupported", "AC-4@9f3c")
+                self.assertEqual(runner.count(COMMENTS_EP), 0)
+        self.assertNotIn("owner_account", inspect.signature(gv.evaluate).parameters)
 
 
 # --- Fix batch 1 regressions (PR #237 review B1-B6, QA M1-M3, Low) ------------------
@@ -1210,14 +1233,17 @@ class TestFixBatch1(unittest.TestCase):
     def test_b5_unexpected_compare_response_is_inconclusive(self):
         for body in ([], {}, {"status": "unexpected"}, "behind"):
             with self.subTest(body=body):
-                result, _, _ = scenario(lambda d: only_criteria(d, "AC-4@9f3c"),
+                # Ruling 2026-11-06: the goal is now demonstration-only (AC-3), not human-only (AC-4),
+                # so the floor fact alone decides the outcome, as before.
+                result, _, _ = scenario(lambda d: only_criteria(d, "AC-3@9f3c"),
                                         lambda g, b=body: g.update({COMPARE_EP: b}))
                 self.assertNotVerified(result, "inconclusive", "unreadable_floor_fact")
                 self.assertIsNone(result.record["repository_facts"]["pull_requests"][0]["reachable_from_destination"])
 
     def test_b5_human_only_goal_still_verifies_with_confirmed_floor(self):
-        result, _, _ = scenario(lambda d: only_criteria(d, "AC-4@9f3c"))
-        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        # Ruling 2026-11-06: a human-only goal no longer verifies; the floor is still confirmed.
+        result, _, _ = scenario(human_only)
+        self.assertNotVerified(result, "not_complete", "evaluator_unsupported")
         self.assertTrue(result.record["repository_facts"]["pull_requests"][0]["reachable_from_destination"])
 
     # B6: the reader checks every container's shape --------------------------------------
@@ -2296,9 +2322,13 @@ class TestRetries(unittest.TestCase):
         self.assertEqual(result.record["unread_inputs"][0]["cause"], "unparseable_output")
 
     def test_d3_paginated_pages_are_joined(self):
-        pages = json.dumps([]) + "\n" + json.dumps(BASE_GH[COMMENTS_EP])
-        result, _, _ = scenario(mutate_gh=lambda g: g.update({COMMENTS_EP: Failing([(0, pages, "")])}))
+        # Ruling 2026-11-06: the comment listing is no longer read; the revert scan is the
+        # remaining paginated list read, so the two-page join is exercised there.
+        pages = json.dumps([]) + "\n" + json.dumps(BASE_GH[REVERT_EP])
+        result, runner, _ = scenario(mutate_gh=lambda g: g.update({REVERT_EP: Failing([(0, pages, "")])}))
         self.assertEqual(result.outcome, "verified")
+        self.assertEqual(runner.count(REVERT_EP), 1)
+        self.assertNotIn("revert_scan_unavailable", advisory(result))
 
 
 # --- AC8: exit codes and the command line -------------------------------------------
@@ -2317,16 +2347,29 @@ class TestCommandLine(unittest.TestCase):
         return code, out.getvalue()
 
     def test_ac8_cli_exit_codes_match_the_recorded_outcome(self):
-        code, out = self._main(["--ledger", "{ledger}", "--owner-account", OWNER])
-        self.assertEqual((code, json.loads(out)["outcome"]), (0, "verified"))
-        code, out = self._main(["--ledger", "{ledger}", "--owner-account", OWNER, "--purpose", "readiness"])
-        self.assertEqual((code, json.loads(out)["outcome"]), (4, "evidence_ready"))
         code, out = self._main(["--ledger", "{ledger}"])
+        self.assertEqual((code, json.loads(out)["outcome"]), (0, "verified"))
+        code, out = self._main(["--ledger", "{ledger}", "--purpose", "readiness"])
+        self.assertEqual((code, json.loads(out)["outcome"]), (4, "evidence_ready"))
+        # Ruling 2026-11-06: a missing owner account no longer exists as an inconclusive cause;
+        # an unreadable floor fact (the compare read) stands in for the inconclusive exit.
+        unreadable = answered()
+        unreadable.pop(COMPARE_EP)
+        code, out = self._main(["--ledger", "{ledger}"], responses=unreadable)
         self.assertEqual((code, json.loads(out)["outcome"]), (3, "inconclusive"))
         data = copy.deepcopy(BASE_LEDGER)
         pm(data)["criteria_verdict"] = "unmet"
-        code, out = self._main(["--ledger", "{ledger}", "--owner-account", OWNER], data=data)
+        code, out = self._main(["--ledger", "{ledger}"], data=data)
         self.assertEqual((code, json.loads(out)["outcome"]), (1, "not_complete"))
+
+    def test_ac8_owner_account_flag_is_a_usage_error(self):
+        # Ruling 2026-11-06: --owner-account is removed; passing it is an argparse usage error.
+        for args in (["--ledger", "{ledger}", "--owner-account", OWNER], ["--owner-account", OWNER]):
+            with self.subTest(args=args):
+                with redirect_stdout(io.StringIO()), mock.patch("sys.stderr", io.StringIO()):
+                    with self.assertRaises(SystemExit) as raised:
+                        gv.main(args, runner=FakeRunner({}))
+                self.assertEqual(raised.exception.code, 2)
 
     def test_ac8_usage_and_internal_errors_never_return_success(self):
         with redirect_stdout(io.StringIO()), mock.patch("sys.stderr", io.StringIO()):
@@ -2363,7 +2406,7 @@ class TestOffline(unittest.TestCase):
                 mock.patch.object(subprocess, "run", side_effect=AssertionError("process")) as run, \
                 mock.patch.object(subprocess, "Popen", side_effect=AssertionError("process")) as popen:
             result, _, _ = scenario()
-            TestCommandLine()._main(["--ledger", "{ledger}", "--owner-account", OWNER])
+            TestCommandLine()._main(["--ledger", "{ledger}"])
         self.assertEqual(result.outcome, "verified")
         for patched in (connect, create, run, popen):
             patched.assert_not_called()
