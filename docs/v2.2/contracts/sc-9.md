@@ -37,7 +37,7 @@
 
 - `top_level` — the adapter covers the top-level session
 - `child` — the adapter covers the child session
-- `excluded` — the adapter does not cover that session: an excluded session, or handoff missing or degraded so that no note was produced for it
+- `excluded` — the adapter excludes that session from coverage
 
 `event_accounting.result` — how the event was counted (l.477 step 3, "count the actual event once"; l.548):
 
@@ -58,9 +58,9 @@
 
 The five rejections named at l.548 map onto these lists: `resume_overrides_pause`, `duplicate_compaction_count` (in `event_accounting.result`), `authority_renewed_by_activity`, `unknown_effect_replay` and `compaction_counts_as_rotation`.
 
-**A missing note is not a rejection.** Handoff that is missing or degraded still allows the run: the lead recovers from the ledger checkpoint under the resume admission order and reports `continuity: fallback` (l.471; H1 l.486), so `fallback_ledger_recovery` is the outcome whenever a usable ledger checkpoint exists. An emergency compaction that produced no note is recorded the same way — it is the reason the note is missing, not a separate rejection — so its outcome is `fallback_ledger_recovery`. Only when neither a usable note nor a usable ledger checkpoint exists does `recovery_evidence_unavailable` apply.
+**A missing note is not a rejection.** Handoff that is missing or degraded still allows the run: the lead recovers from the ledger checkpoint under the resume admission order and reports `continuity: fallback` (l.471; H1 l.486), so `fallback_ledger_recovery` is the outcome whenever a usable ledger checkpoint exists. A missing or failed note is reported through `degradation` together with `fallback_ledger_recovery`; it does not change `coverage`, which keeps the source's own top-level/child/excluded classification (l.475). An emergency compaction that produced no note is recorded the same way — it is the reason the note is missing, not a separate rejection — so its outcome is `fallback_ledger_recovery`. Only when neither a usable note nor a usable ledger checkpoint exists does `recovery_evidence_unavailable` apply.
 
-**Accepted example.** Restored context followed by current-state checks (l.548); a checkpoint reference to a current note; and a missing or degraded handoff recovered from the ledger checkpoint (`continuity: fallback`).
+**Accepted example.** Restored context followed by current-state checks (l.548); a checkpoint reference to a current note; and a missing or degraded handoff — no usable note — recovered from the ledger checkpoint (`continuity: fallback`, l.471; H1 l.486).
 
 **Rejected example.** Stale note overriding a pause; duplicate compaction count; authority renewal; unknown-effect replay; compact-as-rotation (l.548); and a recovery with no authoritative evidence at all.
 

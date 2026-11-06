@@ -80,10 +80,15 @@
       "model": "synthetic-family-a:synthetic-model-a",
       "route_source": "none"
     },
+    "implementer_identity": {
+      "agent_id": "synthetic-agent-019",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a"
+    },
     "report_ref": "synthetic-report-020"
   },
   "expected_outcome": "reject",
-  "expected_reason": "Rejected: the QA evidence is recorded for a head other than the record's head — the entry's optional `head` names `sha256:…0021` while the record's `head` is `sha256:…0020`. This is the only reason for rejection — every other part of the record is valid: the QA gate is `required` and carries its evaluator and report reference, the independent-review gate is `required` and carries its evaluator, its report reference and a recorded identity that meets the different-family route, the review entry carries no `head` and is therefore read as applying to the record's head, all six Foreman checklist marks are present and valid, and the post-merge record and lane-upkeep gates are documented skips (SC-4 rejected example, SDP l.543).",
+  "expected_reason": "Rejected: the QA evidence is recorded for a head other than the record's head — the entry's optional `head` names `sha256:…0021` while the record's `head` is `sha256:…0020`. This is the only reason for rejection — every other part of the record is valid: the QA gate is `required` and carries its evaluator and report reference, the independent-review gate is `required` and carries its evaluator, its report reference and a recorded identity that meets the different-family route against the recorded implementer, the review entry carries no `head` and is therefore read as applying to the record's head, all six Foreman checklist marks are present and valid, and the post-merge record and lane-upkeep gates are documented skips (SC-4 rejected example, SDP l.543).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",

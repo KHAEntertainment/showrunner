@@ -73,10 +73,15 @@
       "model": "synthetic-family-a:synthetic-model-a",
       "route_source": "none"
     },
+    "implementer_identity": {
+      "agent_id": "synthetic-agent-001",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a"
+    },
     "report_ref": "synthetic-report-002"
   },
   "expected_outcome": "reject",
-  "expected_reason": "Rejected: the mandatory QA gate applies (`gate_applicability` is `qa_required`) and no QA evidence is recorded. This is the only reason for rejection — every other part of the record is valid: the independent-review gate is `required` and carries its evaluator, its report reference and a recorded identity that meets the different-family route, all six Foreman checklist marks are present and valid, the workflow/policy revision, run/lane/head and report reference are present, and the post-merge record and lane-upkeep gates are documented skips (SC-4 rejected example, SDP l.543; D2 l.240).",
+  "expected_reason": "Rejected: the mandatory QA gate applies (`gate_applicability` is `qa_required`) and no QA evidence is recorded. This is the only reason for rejection — every other part of the record is valid: the independent-review gate is `required` and carries its evaluator, its report reference and a recorded identity that meets the different-family route against the recorded implementer, all six Foreman checklist marks are present and valid, the workflow/policy revision, run/lane/head and report reference are present, and the post-merge record and lane-upkeep gates are documented skips (SC-4 rejected example, SDP l.543; D2 l.240).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",

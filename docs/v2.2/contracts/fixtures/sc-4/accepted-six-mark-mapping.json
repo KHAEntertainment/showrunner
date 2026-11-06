@@ -77,14 +77,19 @@
     "evaluator": "synthetic-lead-011",
     "evaluator_identity": {
       "agent_id": "synthetic-agent-010",
-      "harness": "synthetic-harness-a",
-      "model": "synthetic-family-a:synthetic-model-a",
+      "harness": "synthetic-harness-b",
+      "model": "synthetic-family-b:synthetic-model-b",
       "route_source": "none"
+    },
+    "implementer_identity": {
+      "agent_id": "synthetic-agent-009",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a"
     },
     "report_ref": "synthetic-report-010"
   },
   "expected_outcome": "accept",
-  "expected_reason": "Accepted: all six Foreman checklist marks are mapped to their Dev applicability — the workflow phase is reported, the acceptance lane is met by current-head QA at the record's head, the independent review is required and met by a reviewer recorded from a different model family, the seat receipts are carried by the record's evaluator and its recorded identity, and the post-merge record and lane upkeep are documented skips (SC-4 accepted example, SDP l.543; STATUS_UPDATE.md l.26–l.34; D2 l.262–l.269).",
+  "expected_reason": "Accepted: all six Foreman checklist marks are mapped to their Dev applicability — the workflow phase is reported, the acceptance lane is met by current-head QA at the record's head, the independent review is required and met by a reviewer recorded from a different model family, the seat receipts are carried by the record's evaluator and its recorded identity, and the post-merge record and lane upkeep are documented skips (SC-4 accepted example, SDP l.543; STATUS_UPDATE.md l.26–l.34; D2 l.262–l.269). The reviewer's model family (`synthetic-family-b`) is compared with the implementer's (`synthetic-family-a`), never with the conformance evaluator's — the lead's own family is `synthetic-family-b` too, and it is not the basis of the comparison.",
   "retained_source": {
     "path": "~/.claude/skills/foreman-showrunner/templates/STATUS_UPDATE.md",
     "revision_or_digest": "sha256:596358538eecdb6f410d5f2c3e70b8c64cb507d484d84e4cd09a9cea6394d4c4",
