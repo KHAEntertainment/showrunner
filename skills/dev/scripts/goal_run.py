@@ -57,8 +57,8 @@ Reason codes (``Result.reason``) are part of the interface. Arming-refusal codes
 ``empty_issue_set``, ``cross_repo_issue``, ``bare_ambiguous_issue_id``,
 ``duplicate_issue``, ``non_pr_goal``, ``managed_missing_bindings``,
 ``unsupported_major_version``, ``malformed_input``, ``missing_required_field``,
-``approval_revision_mismatch``, ``source_revision_missing``,
-``source_revision_mismatch``, ``machine_specific_path``,
+``approval_revision_mismatch``, ``source_locator_missing``,
+``source_revision_missing``, ``source_revision_mismatch``, ``machine_specific_path``,
 ``missing_resolved_issues``. Guard codes: ``managed_to_standalone``,
 ``standalone_to_managed``, ``mode_change``, ``scope_growth``. Bounds codes:
 ``goal_widening``, ``coordinator_loosening``, ``coordinator_in_standalone``,
@@ -407,8 +407,10 @@ def normalize_entry(entry, resolved_issues=None) -> Result:
         return _invalid("approval_revision_mismatch")
     if "@" not in source:
         return _invalid("source_revision_missing")
-    source_revision = source.rsplit("@", 1)[1].strip()
-    if source_revision != approval_revision:
+    source_locator, source_revision = source.rsplit("@", 1)
+    if not source_locator.strip():
+        return _invalid("source_locator_missing")
+    if source_revision.strip() != approval_revision:
         return _invalid("source_revision_mismatch")
 
     if kind == "milestone":

@@ -699,6 +699,14 @@ class FixBatch1Tests(unittest.TestCase):
         self.assertEqual(result.outcome, "invalid")
         self.assertEqual(result.reason, "source_revision_mismatch")
 
+        for bad_source in ("@%s" % _SHA_B, "   @%s" % _SHA_B):
+            with self.subTest(source=bad_source):
+                e = _entry()
+                e["source"] = bad_source
+                result = gr.arm(e)
+                self.assertEqual(result.outcome, "invalid")
+                self.assertEqual(result.reason, "source_locator_missing")
+
     def test_f3_extension_rejects_invalid_values(self):
         spend_policy = gr.apply_policy(goal={"spend_cap": 10.0}).value
         for field, policy in (
