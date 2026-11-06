@@ -343,6 +343,16 @@ class ResearchAbRecordTests(unittest.TestCase):
     def test_each_effort_records_its_source_set_and_revisions(self) -> None:
         self.assertEqual(
             3,
+            self.text.count("source set and revisions: showrunner `1f9c65d`"),
+        )
+        self.assertEqual(
+            3,
+            self.text.count(
+                "Blinding: no arm-naming lines needed stripping; host frontmatter hidden at render only."
+            ),
+        )
+        self.assertEqual(
+            0,
             self.text.count(
                 "source set and revisions: not run — record the showrunner repo "
                 "revision, the U1 outline revision and the primary-source scope here"
@@ -354,8 +364,9 @@ class ResearchAbRecordTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token, self.text)
 
-    def test_every_effort_starts_pending(self) -> None:
-        self.assertEqual(3, self.text.count("**Status: pending**"))
+    def test_every_effort_is_recorded_inconclusive(self) -> None:
+        self.assertEqual(3, self.text.count("**Status: recorded — inconclusive**"))
+        self.assertEqual(0, self.text.count("**Status: pending**"))
 
     def test_recording_rule(self) -> None:
         self.assertIn("Measured values only.", self.text)
@@ -365,9 +376,37 @@ class ResearchAbRecordTests(unittest.TestCase):
             self.text,
         )
 
-    def test_comparison_stays_empty_until_three_of_three(self) -> None:
+    def test_comparison_is_inconclusive(self) -> None:
         self.assertIn("## 8. Comparison", self.text)
-        self.assertIn("Empty until 3/3.", self.text)
+        self.assertNotIn("Empty until 3/3.", self.text)
+        comparison = self.text.split("## 8. Comparison", 1)[1].split("## 9.", 1)[0]
+        self.assertIn("inconclusive", comparison)
+        self.assertIn(
+            "The record makes no claim either way about C2's value: not superior, not inferior.",
+            comparison,
+        )
+        self.assertIn(
+            "C2 stays optional and is not promoted, made default or made a dependency.",
+            comparison,
+        )
+        self.assertIn("ruling-207-ab-inconclusive-2026-11-06", comparison)
+
+    def test_owner_judgement_columns_not_judged(self) -> None:
+        self.assertEqual(
+            18,
+            self.text.count(
+                "not judged: owner could not assess; no note matched the owner's "
+                "intended shape for the component "
+                "(ruling-207-ab-inconclusive-2026-11-06)"
+            ),
+        )
+
+    def test_not_an_input_to_u1(self) -> None:
+        self.assertIn("**Not an input to U1.**", self.text)
+        self.assertIn(
+            "No U1 design, plan, Issue or decision may cite or rely on them",
+            self.text,
+        )
 
 
 class MutationTests(unittest.TestCase):
@@ -438,17 +477,18 @@ class MutationTests(unittest.TestCase):
         (AB_RECORD, "research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`)"),
         (AB_RECORD, "they run inside M2: no work slated for another milestone is fetched and pulled in here"),
         (AB_RECORD, "The owner reviews both outputs per effort blind (labelled X/Y), and the A/B key is revealed after review."),
-        (AB_RECORD, "**Status: pending**"),
+        (AB_RECORD, "**Status: recorded — inconclusive**"),
         (AB_RECORD, "Measured values only."),
         (AB_RECORD, '"not run" and "unknown" stay explicit'),
         (AB_RECORD, "A C2 fallback is recorded as a fallback, never as a B-arm result."),
-        (AB_RECORD, "Empty until 3/3."),
+        (AB_RECORD, "The record makes no claim either way about C2's value: not superior, not inferior."),
+        (AB_RECORD, "**Not an input to U1.**"),
         (AB_RECORD, "Both arms use the same source set"),
         (AB_RECORD, "official docs and public repositories with their own docs"),
         (AB_RECORD, "No blogs, forums or aggregators in either arm"),
         (AB_RECORD, "If arm B's provider reaches beyond that scope, the record says so and the output is not filtered"),
         (AB_RECORD, "Each effort's evidence records the source set and its revisions"),
-        (AB_RECORD, "source set and revisions: not run — record the showrunner repo revision, the U1 outline revision and the primary-source scope here"),
+        (AB_RECORD, "Blinding: no arm-naming lines needed stripping; host frontmatter hidden at render only."),
         (AB_RECORD, "Before the review page goes out, only the provenance lines that would name the arm are stripped, and the record says that this was done."),
     )
 
