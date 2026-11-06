@@ -220,10 +220,55 @@ def make_verbatim(data):
     entry.update({"tested_vs_merged": "same", "action": "applies_verbatim",
                   "gate_result": "applies_verbatim"})
     entry.pop("run")
+    # Fixture-only (fix batch 1): a verbatim merge has no rerun, so its proof is the head run 123.
+    pr(data)["ci_runs"] = [r for r in pr(data)["ci_runs"] if r["run"] != 130]
+    for item in entry["criteria"] + entry["checks"]:
+        if item["id"] in ("AC-1@9f3c", "build"):
+            item.update(evidence_ref="run 123 attempt 1", basis="reused",
+                        justification="merged tree equals tested tree")
 
 
 def _set(mapping, **values):
     mapping.update(values)
+
+
+LANE_COMMENT_EP = f"repos/{REPO}/issues/comments/991"
+LANE_COMMENT_URL = "https://github.com/OWNER/synthetic-repo/pull/10#issuecomment-991"
+
+
+def internal_lane(data):
+    pr(data)["criteria"][1]["evaluator"]["id"] = "reviewer-lane-1"
+    pr(data)["review"]["evidence_ref"] = {"comment": LANE_COMMENT_URL,
+                                          "snapshot": "evidence/10/review-4e683b4.txt"}
+
+
+def add_lane_comment(responses):
+    responses[LANE_COMMENT_EP] = {"id": 991, "issue_url": f"https://api.github.com/repos/{REPO}/issues/10",
+                                  "body": "Review lane report for 4e683b4: no material findings."}
+
+
+def only_criteria(data, *ids):
+    """Keep only the named criteria, consistently, in the parent, PR and post-merge sets."""
+    parent(data)["criteria"] = [c for c in parent(data)["criteria"] if c["id"] in ids]
+    pr(data)["criteria"] = [c for c in pr(data)["criteria"] if c["id"] in ids]
+    pr(data)["criteria_ids"] = [c for c in pr(data)["criteria_ids"] if c in ids]
+    pm(data)["criteria"] = [c for c in pm(data)["criteria"] if c["id"] in ids]
+
+
+def local_fallback(data, check_env="host:mac-1", approved=True):
+    run = {"run": "local-7", "job": "build", "attempt": 1, "executor": "host:mac-1",
+           "definition_ref": {"ref": ".github/workflows/ci.yml#build", "rev": "2ab2b59"},
+           "tested_subject": {"sha": "d44f1e0", "kind": "head"}, "environment": "host:mac-1",
+           "conclusion": "success", "observed_at": "2099-01-02T00:25:00Z"}
+    if approved:
+        run["fallback_approved_by"] = OWNER
+    pr(data)["ci_runs"] = [r for r in pr(data)["ci_runs"] if r["run"] != 130] + [run]
+    pm(data)["run"] = {k: run[k] for k in ("run", "job", "attempt", "tested_subject", "conclusion")}
+    pm(data)["run"].update({k: run[k] for k in ("executor", "fallback_approved_by") if k in run})
+    for item in pm(data)["criteria"] + pm(data)["checks"]:
+        if item["id"] in ("AC-1@9f3c", "build"):
+            item["evidence_ref"] = "run local-7 attempt 1"
+    pr(data)["checks"][0].update(environment=check_env, executor="host:mac-1")
 
 
 # --- AC1: packaging and mutation boundary -------------------------------------
@@ -561,7 +606,9 @@ class TestRequiredCases(unittest.TestCase):
             mutate(d)
             parent(d)["criteria"].pop(3)
         result, _, _ = scenario(without_human)
-        self.assertOutcome(result, "inconclusive", "criteria_revision_stale")
+        # Fix batch 1 (B3): the PR record's criteria_ref now contradicts the parent's: not_complete.
+        self.assertOutcome(result, "not_complete", "criteria_ref_mismatch")
+        self.assertIn("criteria_revision_stale", codes(result))
         self.assertEqual(line(result, "AC-1@b17e")["state"], "inconclusive")
         # The human criterion's only /accept names the superseded revision.
         human, _, _ = scenario(mutate)
@@ -862,10 +909,8 @@ class TestProofTable(unittest.TestCase):
         self.assertRejected(open_finding, "unresolved_material_finding", "AC-2@9f3c")
 
     def test_d44_internal_review_lane_with_retained_evidence(self):
-        def mutate(d):
-            pr(d)["criteria"][1]["evaluator"]["id"] = "reviewer-lane-1"
-            pr(d)["review"]["evidence_ref"] = "lane report retained at evidence/10/review.txt"
-        result, _, _ = scenario(mutate)
+        # Fixture-only (fix batch 1, B4): the retained review is now a resolvable PR comment.
+        result, _, _ = scenario(internal_lane, add_lane_comment)
         self.assertEqual(result.outcome, "verified")
         self.assertEqual(line(result, "AC-2@9f3c")["accepted_proof"]["kind"], "internal_lane")
 
@@ -898,6 +943,281 @@ class TestProofTable(unittest.TestCase):
         self.assertRejected(result, "awaiting_owner_acceptance", "AC-4@9f3c")
         later, _, _ = scenario(amend, lambda g: g[COMMENTS_EP][0].update(created_at="2099-01-03T13:00:00Z"))
         self.assertEqual(later.outcome, "verified")
+
+
+# --- Fix batch 1 regressions (PR #237 review B1-B6, QA M1-M3, Low) ------------------
+# Each test reproduces a false `verified` seen at 6df0a07 and asserts the fixed outcome.
+
+
+class TestFixBatch1(unittest.TestCase):
+    def assertNotVerified(self, result, outcome, code):
+        self.assertEqual(result.outcome, outcome, result.record.get("reason_codes"))
+        self.assertIn(code, codes(result), result.record.get("reason_codes"))
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(gv.read_result(result.record)[0], "accept", gv.read_result(result.record))
+
+    # B1 + M1: the test proof is the criterion's own named run -------------------------
+
+    def test_b1_failed_criterion_run_beside_a_passing_other_job_never_verifies(self):
+        def mutate(d):
+            pr(d)["ci_runs"].append({
+                "run": 999, "job": "lint", "attempt": 2,
+                "definition_ref": {"ref": ".github/workflows/ci.yml#lint", "rev": "5e5e5e5"},
+                "tested_subject": {"sha": "d44f1e0", "kind": "head"}, "environment": "ubuntu-latest",
+                "conclusion": "failure", "observed_at": "2099-01-02T00:30:00Z"})
+            pr(d)["checks"].append({"id": "lint", "definition_ref": {"ref": ".github/workflows/ci.yml#lint",
+                                                                     "rev": "5e5e5e5"},
+                                    "executor": "ci", "tested_subject": "d44f1e0", "environment": "ci",
+                                    "outcome": "fail", "evidence_ref": "run 999 attempt 2",
+                                    "observed_at": "2099-01-02T00:30:00Z"})
+            pr(d)["criteria"][0]["evidence_ref"] = "run 999 attempt 2"
+            pm(d)["criteria"][0]["evidence_ref"] = "run 999 attempt 2"
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "not_complete", "run_not_success")
+        self.assertEqual(line(result, "AC-1@9f3c")["state"], "unmet")
+        unrecorded, _, _ = scenario(lambda d: pm(d)["criteria"][0].update(evidence_ref="run 999 attempt 2"))
+        self.assertNotVerified(unrecorded, "inconclusive", "ci_run_unrecorded")
+
+    def test_b1_criterion_naming_a_check_must_be_proved_by_that_check(self):
+        def mutate(d):
+            pr(d)["checks"].append({"id": "lint", "definition_ref": {"ref": ".github/workflows/ci.yml#lint",
+                                                                     "rev": "5e5e5e5"},
+                                    "executor": "ci", "tested_subject": "d44f1e0", "environment": "ci",
+                                    "outcome": "pass", "evidence_ref": "run 998 attempt 1",
+                                    "observed_at": "2099-01-02T00:30:00Z"})
+            pr(d)["criteria"][0]["evaluator"]["id"] = "lint"
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "not_complete", "test_run_for_other_check")
+
+    def test_m1_missing_attempt_is_inconclusive(self):
+        result, _, _ = scenario(lambda d: pm(d)["criteria"][0].update(evidence_ref="run 130"))
+        self.assertNotVerified(result, "inconclusive", "ci_identity_incomplete")
+
+        def unrecorded_attempt(d):
+            pr(d)["ci_runs"][1].pop("attempt")
+            pm(d)["run"].pop("attempt")
+        both, _, _ = scenario(unrecorded_attempt)
+        self.assertNotVerified(both, "inconclusive", "ci_identity_incomplete")
+
+    def test_m1_missing_criterion_evidence_ref_is_inconclusive(self):
+        result, _, _ = scenario(lambda d: pm(d)["criteria"][0].pop("evidence_ref"))
+        self.assertNotVerified(result, "inconclusive", "criterion_evidence_missing")
+        pre, _, _ = scenario(lambda d: pr(d)["criteria"][0].pop("evidence_ref"))
+        self.assertNotVerified(pre, "inconclusive", "criterion_evidence_missing")
+
+    def test_m1_missing_check_environment_is_inconclusive(self):
+        result, _, _ = scenario(lambda d: pr(d)["checks"][0].pop("environment"))
+        self.assertNotVerified(result, "inconclusive", "check_environment_missing")
+
+    # M2: the environment rule ----------------------------------------------------------
+
+    def test_m2_ci_runner_spelling_verifies(self):
+        result, _, _ = scenario(lambda d: pr(d)["checks"][0].update(environment="ci:ubuntu-latest"))
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["check_environment"], "ci:ubuntu-latest")
+
+    def test_m2_runner_first_token_matches_template_descriptors(self):
+        for descriptor in ("ubuntu-latest, python 3.x",
+                           "ubuntu-latest / node 22 / prisma generate, tsc --noEmit, eslint, vitest run"):
+            with self.subTest(descriptor):
+                def mutate(d, env=descriptor):
+                    pr(d)["checks"][0]["environment"] = "ci:ubuntu-latest"
+                    pr(d)["ci_runs"][1]["environment"] = env
+                result, _, _ = scenario(mutate)
+                self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertIsNone(gv._environment_verdict("ci:ubuntu-latest", {"environment": "ubuntu-latest, python 3.x"},
+                                                  False))
+        self.assertIsNone(gv._environment_verdict("ci:ubuntu-latest", {"environment": "ubuntu-latest / node 22 / x"},
+                                                  False))
+
+    def test_m2_runner_prefix_is_not_a_match(self):
+        def mutate(d):
+            pr(d)["checks"][0]["environment"] = "ci:ubuntu-latest"
+            pr(d)["ci_runs"][1]["environment"] = "ubuntu-latest-arm"
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "not_complete", "environment_mismatch")
+
+    def test_m2_other_runner_never_verifies(self):
+        result, _, _ = scenario(lambda d: pr(d)["checks"][0].update(environment="ci:macos-latest"))
+        self.assertNotVerified(result, "not_complete", "environment_mismatch")
+
+    def test_m2_runner_check_without_run_descriptor_is_inconclusive(self):
+        def mutate(d):
+            pr(d)["checks"][0]["environment"] = "ci:ubuntu-latest"
+            pr(d)["ci_runs"][1].pop("environment")
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "inconclusive", "run_environment_missing")
+
+    def test_m2_approved_local_fallback_verifies(self):
+        result, _, _ = scenario(local_fallback)
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        proof = line(result, "AC-1@9f3c")["accepted_proof"]
+        self.assertEqual(proof["fallback"], {"executor": "host:mac-1", "approved_by": OWNER})
+        self.assertEqual(proof["run"]["run"], "local-7")
+
+    def test_m2_local_fallback_on_a_mismatched_environment_never_verifies(self):
+        result, _, _ = scenario(lambda d: local_fallback(d, check_env="host:other-box"))
+        self.assertNotVerified(result, "not_complete", "environment_mismatch")
+
+    def test_m2_host_check_without_fallback_approval_never_verifies(self):
+        result, _, _ = scenario(lambda d: local_fallback(d, approved=False))
+        self.assertNotVerified(result, "not_complete", "local_run_without_fallback")
+
+    def test_m2_named_environment_is_never_test_proof(self):
+        result, _, _ = scenario(lambda d: pr(d)["checks"][0].update(environment="preview-vps"))
+        self.assertNotVerified(result, "not_complete", "environment_not_test_proof")
+
+    def test_m2_local_fallback_never_satisfies_a_ci_check(self):
+        result, _, _ = scenario(lambda d: local_fallback(d, check_env="ci"))
+        self.assertNotVerified(result, "not_complete", "environment_mismatch")
+
+    # B2: the prior gate must have passed, whatever the evaluators ----------------------
+
+    def test_b2_failed_prior_gate_blocks_a_demonstration_only_goal(self):
+        for conclusion in ("cancelled", "failure", "skipped"):
+            with self.subTest(conclusion):
+                def mutate(d, c=conclusion):
+                    make_verbatim(d)
+                    only_criteria(d, "AC-3@9f3c")
+                    pr(d)["ci_runs"][0]["conclusion"] = c
+                result, _, _ = scenario(mutate)
+                self.assertNotVerified(result, "not_complete", "prior_gate_not_success")
+
+    def test_b2_demonstration_only_goal_with_a_passing_gate_verifies(self):
+        def mutate(d):
+            make_verbatim(d)
+            only_criteria(d, "AC-3@9f3c")
+        result, _, _ = scenario(mutate)
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+
+    def test_b2_failed_post_merge_check_blocks(self):
+        result, _, _ = scenario(lambda d: pm(d)["checks"][0].update(outcome="fail"))
+        self.assertNotVerified(result, "not_complete", "post_merge_check_failed")
+
+    # B3: the combined records describe the same revisions -----------------------------
+
+    def test_b3_pr_criteria_ref_contradicting_the_parent_never_verifies(self):
+        result, _, _ = scenario(lambda d: pr(d).update(criteria_ref="sha256:b17e" + "0" * 60))
+        self.assertNotVerified(result, "not_complete", "criteria_ref_mismatch")
+        reason = next(r for r in result.record["reason_codes"] if r["code"] == "criteria_ref_mismatch")
+        self.assertEqual(reason["detail"]["records"], [f"{PR}.criteria_ref", f"parent_acceptance/{ISSUE}.criteria_ref"])
+
+    def test_b3_unrelated_assurance_or_integration_revision_never_verifies(self):
+        result, _, _ = scenario(lambda d: pr(d)["assurance"].update(revision="0abc123"))
+        self.assertNotVerified(result, "not_complete", "assurance_revision_mismatch")
+        integrated, _, _ = scenario(lambda d: pr(d)["integrated"]["current"].update(revision="0abc123"))
+        self.assertNotVerified(integrated, "not_complete", "integration_revision_mismatch")
+
+    def test_b3_noncurrent_or_unintegrated_contribution_never_verifies(self):
+        stale, _, _ = scenario(lambda d: parent(d)["contributions"][0]["assurance"].update(current=False))
+        self.assertNotVerified(stale, "not_complete", "contribution_assurance_not_current")
+        loose, _, _ = scenario(lambda d: parent(d)["contributions"][0].update(integrated=None))
+        self.assertNotVerified(loose, "not_complete", "contribution_not_integrated")
+        other, _, _ = scenario(lambda d: parent(d)["contributions"][0].update(integrated="0abc123"))
+        self.assertNotVerified(other, "not_complete", "contribution_integration_mismatch")
+
+    # B4: internal review evidence must resolve ------------------------------------------
+
+    def test_b4_nonexistent_internal_review_evidence_is_inconclusive(self):
+        def missing(d):
+            internal_lane(d)
+            pr(d)["review"]["evidence_ref"] = "evidence/does-not-exist.txt"
+        result, _, _ = scenario(missing)
+        self.assertNotVerified(result, "inconclusive", "review_evidence_unresolvable")
+        unread, _, _ = scenario(internal_lane)  # the comment read returns 404
+        self.assertNotVerified(unread, "inconclusive", "read_failed")
+        self.assertIn(f"review-evidence:{PR}/comment-991", [u["read"] for u in unread.record["unread_inputs"]])
+
+    def test_b4_internal_review_evidence_on_another_pr_never_verifies(self):
+        result, _, _ = scenario(internal_lane, lambda g: g.update({LANE_COMMENT_EP: {
+            "id": 991, "issue_url": f"https://api.github.com/repos/{REPO}/issues/77"}}))
+        self.assertNotVerified(result, "not_complete", "review_evidence_for_other_pr")
+
+    # B5: an unreadable floor fact blocks success --------------------------------------
+
+    def test_b5_unexpected_compare_response_is_inconclusive(self):
+        for body in ([], {}, {"status": "unexpected"}, "behind"):
+            with self.subTest(body=body):
+                result, _, _ = scenario(lambda d: only_criteria(d, "AC-4@9f3c"),
+                                        lambda g, b=body: g.update({COMPARE_EP: b}))
+                self.assertNotVerified(result, "inconclusive", "unreadable_floor_fact")
+                self.assertIsNone(result.record["repository_facts"]["pull_requests"][0]["reachable_from_destination"])
+
+    def test_b5_human_only_goal_still_verifies_with_confirmed_floor(self):
+        result, _, _ = scenario(lambda d: only_criteria(d, "AC-4@9f3c"))
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertTrue(result.record["repository_facts"]["pull_requests"][0]["reachable_from_destination"])
+
+    # B6: the reader checks every container's shape --------------------------------------
+
+    def test_b6_reader_rejects_malformed_required_containers(self):
+        good, _, _ = scenario()
+        self.assertEqual(gv.read_result(good.record), ("accept", []))
+        for field_name in ("criteria", "plan_ref", "repository_facts", "consumed_inputs", "producer",
+                           "run_id", "result_id", "evidence_profile", "reason_codes", "supersedes"):
+            for value in ("not-a-container", 5):
+                if value == "not-a-container" and field_name in ("run_id", "result_id"):
+                    continue  # a string is the right shape for an identifier
+                with self.subTest(field=field_name, value=value):
+                    broken = copy.deepcopy(good.record)
+                    broken[field_name] = value
+                    self.assertEqual(gv.read_result(broken)[0], "unusable", gv.read_result(broken))
+        for path in (("pull_requests",), ("closed_issues",)):
+            broken = copy.deepcopy(good.record)
+            broken["repository_facts"][path[0]] = "x"
+            self.assertEqual(gv.read_result(broken)[0], "unusable")
+        unreachable = copy.deepcopy(good.record)
+        unreachable["repository_facts"]["pull_requests"][0]["reachable_from_destination"] = None
+        self.assertEqual(gv.read_result(unreachable)[0], "unusable")
+        opened = copy.deepcopy(good.record)
+        opened["repository_facts"]["closed_issues"][0]["state"] = "open"
+        self.assertEqual(gv.read_result(opened)[0], "unusable")
+
+    # M3: external review state -------------------------------------------------------
+
+    def test_m3_dismissed_or_changes_requested_review_never_verifies(self):
+        for state in ("DISMISSED", "CHANGES_REQUESTED", "PENDING"):
+            with self.subTest(state):
+                result, _, _ = scenario(mutate_gh=lambda g, s=state: g[REVIEW_EP].update(state=s))
+                self.assertNotVerified(result, "not_complete", "review_state_not_accepting")
+        approved, _, _ = scenario(mutate_gh=lambda g: g[REVIEW_EP].update(state="APPROVED"))
+        self.assertEqual(approved.outcome, "verified")
+
+    # Low: duplicate criterion IDs ---------------------------------------------------------
+
+    def test_low_duplicate_criterion_ids_never_verify(self):
+        result, _, _ = scenario(lambda d: parent(d)["criteria"].append(copy.deepcopy(parent(d)["criteria"][0])))
+        self.assertNotVerified(result, "not_complete", "duplicate_criterion_id")
+        good, _, _ = scenario()
+        doubled = copy.deepcopy(good.record)
+        doubled["criteria"].append(copy.deepcopy(doubled["criteria"][0]))
+        self.assertEqual(gv.read_result(doubled)[0], "unusable")
+
+    # Item 10: GitHub UI revert form ---------------------------------------------------------
+
+    def test_item10_ui_squash_revert_is_detected_and_never_upgrades(self):
+        revert = {"sha": "e5a0c3b" + "0" * 33,
+                  "commit": {"message": 'Revert "synthetic change" (#12)\n\nReverts OWNER/synthetic-repo#10'}}
+        result, _, _ = scenario(mutate_gh=lambda g: g[REVERT_EP].append(revert))
+        self.assertNotVerified(result, "inconclusive", "unrecorded_revert_suspected")
+        other = copy.deepcopy(revert)
+        other["commit"]["message"] = "Reverts OWNER/synthetic-repo#11"
+        unrelated, _, _ = scenario(mutate_gh=lambda g: g[REVERT_EP].append(other))
+        self.assertEqual(unrelated.outcome, "verified")
+        failing, _, _ = scenario(lambda d: _set(pm(d), criteria_verdict="unmet"),
+                                 lambda g: g[REVERT_EP].append(revert))
+        self.assertEqual(failing.outcome, "not_complete")
+
+    # Item 11: goal-level reason codes name their targets ---------------------------------------
+
+    def test_item11_goal_level_reason_codes_name_the_frozen_issue_set(self):
+        result, _, _ = scenario(approved_revision="sha256:" + "3" * 64, hook_cap_exhausted=True,
+                                marker="GOAL-COMPLETE: docs/other.md@sha256:" + "9" * 64)
+        for reason in result.record["reason_codes"]:
+            with self.subTest(reason["code"]):
+                self.assertTrue(reason["issues"] or reason["prs"] or reason["criteria"], reason)
+        stale = next(r for r in result.record["reason_codes"] if r["code"] == "source_revision_stale")
+        self.assertEqual(stale["issues"], [ISSUE])
 
 
 # --- AC7: D3 retries --------------------------------------------------------------

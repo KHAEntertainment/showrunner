@@ -35,6 +35,17 @@
           "conclusion": "success",
           "observed_at": "2099-01-01T12:00:00Z",
           "applicability": {"to": "4e683b4", "established": true}
+        },
+        {
+          "run": 130,
+          "job": "build",
+          "attempt": 1,
+          "definition_ref": {"ref": ".github/workflows/ci.yml#build", "rev": "2ab2b59"},
+          "tested_subject": {"sha": "d44f1e0", "kind": "head"},
+          "environment": "ubuntu-latest",
+          "conclusion": "success",
+          "observed_at": "2099-01-02T00:25:00Z",
+          "applicability": {"to": "d44f1e0", "established": true}
         }
       ],
       "checks": [
