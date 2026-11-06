@@ -584,9 +584,11 @@ def _validate_goal_merge_ledger(record, grant, block, authority) -> None:
 
     # Post-merge failure evidence (D2 item 9). halt_history (ledger-only) keeps
     # every failure reference with its Issue; cleared_halts (ledger-only) keeps
-    # the triage ref each clear_halt was given. A halt is lifted only by
-    # clear_halt with a triage ref, so a failure on record that is no longer
-    # halted must have a nonempty triage entry, or the clear was premature.
+    # the triage ref each clear_halt was given. A failure on record that is no
+    # longer halted must have a nonempty triage entry. This is a single-snapshot
+    # check: history is append-only and written only by the lead through
+    # merge_ledger_record_failure, and a coherent erasure of it is a breach of
+    # the single-writer rule that this validator cannot detect.
     history = record["halt_history"]
     if not isinstance(history, dict):
         raise GoalRunError(f"{base}.halt_history", "must be a map of halt ref to Issue")

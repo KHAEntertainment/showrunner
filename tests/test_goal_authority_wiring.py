@@ -443,7 +443,31 @@ class AC6D2CasesThroughTheDocumentedPath(unittest.TestCase):
             str(raised.exception),
             "goal_run.merge_ledger.cleared_halts: fail-1 was cleared without triage evidence",
         )
-        self.assertIn("A halt reset any other way fails ledger validation", MERGE_GRANT)
+        self.assertIn("the only permitted reset is `merge_ledger_clear_halt(state, triage_ref)`", MERGE_GRANT)
+
+    def test_halt_guarantee_is_the_narrow_trusted_writer_one(self):
+        """Fix batch 2 R2-B1 (lead ruling): validation is single-snapshot; the
+        docs claim no more than it checks."""
+        template = (DEV_DIR / "templates" / "DEV_STATE_TEMPLATE.md").read_text(encoding="utf-8")
+        state_src = (SCRIPTS / "dev_state.py").read_text(encoding="utf-8")
+        overclaims = (
+            "any other way fails ledger validation",
+            "no merge decision can follow",
+            "or the clear was premature",
+            "a halt reset by hand without triage evidence fails",
+        )
+        for label, text in (("phase4", PHASE4), ("goal", GOAL), ("reply", REPLY), ("external", EXTERNAL),
+                            ("template", template), ("dev_state", state_src)):
+            for claim in overclaims:
+                with self.subTest(doc=label, claim=claim):
+                    self.assertNotIn(claim, text)
+        for label, text in (("phase4", MERGE_GRANT), ("template", template)):
+            with self.subTest(doc=label):
+                self.assertRegex(text, r"only permitted (halt )?reset is `merge_ledger_clear_halt")
+                self.assertIn("Failure history is append-only and written only by the lead through "
+                              "`merge_ledger_record_failure`", text)
+                self.assertIn("Validation cannot detect a coherent erasure", text)
+                self.assertIn("breaches the single-writer rule and is not caught by the validator", text)
 
     def test_failing_gate_blocks_and_managed_needs_coordinator_grant(self):
         self.assert_documented(self.decide(gates=self.gates(external_review="pending")),
