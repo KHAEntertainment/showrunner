@@ -42,11 +42,42 @@ A ``not_complete`` reason outranks an ``inconclusive`` one. Neither the lead's
 marker nor its summary is ever read as proof, and no prior result is reused:
 every call re-reads the repository.
 
-Test proof binding (D4.4). The proving run of a ``test`` criterion is the
-post-merge ``run`` when the action is ``full_required_gate_rerun``. When the
-action is ``applies_verbatim``, it is the ``ci_runs`` entry whose
-``tested_subject.head`` matches the PR head. Its definition and environment are
-compared with the PR ``checks`` entry whose ``id`` equals the run's ``job``.
+Test proof binding (D4.4, GV reading accepted by the lead and foreman). A
+``test`` criterion is proved by the CI job attempt its post-merge
+``evidence_ref`` names (``run <id> attempt <n>`` or ``<run>/<job>/attempt-<n>``).
+That reference, and the post-merge ``run`` itself, resolve to the ``ci_runs``
+entry with the same (run, job, attempt); ``environment``, ``definition_ref`` and
+``conclusion`` come from that entry. No matching entry is ``inconclusive``
+(``ci_run_unrecorded``), and a reference without an attempt is
+``ci_identity_incomplete``. When one run id carries several jobs, the reference
+must name the job (``run <id> job <name> attempt <n>``); otherwise it is
+``evidence_ref_ambiguous``. The check is the PR ``checks`` entry whose ``id`` is
+the run's ``job``; its post-merge check must pass at the merge sha.
+
+Environment rule. A check's ``environment`` is an executor class; a ``ci_runs``
+``environment`` is a runtime descriptor. ``ci`` needs a recorded CI entry (any
+runner). ``ci:<runner>`` needs the entry's environment to name ``<runner>`` as
+its first non-empty token (split on whitespace, ``,`` and ``/``). ``host:<id>`` is valid only
+for an approved local fallback: the entry records ``executor`` and
+``fallback_approved_by``, and the executor is ``<id>`` or ``host:<id>``. A named
+environment (for example a preview) is never test proof. A missing check
+environment, or a missing runner descriptor where ``ci:<runner>`` needs one, is
+``inconclusive``. A different executor class or runner never verifies.
+``fallback_approved_by`` is GV's spelling; the template does not define it yet.
+
+Prior gate (B2). ``applies_verbatim`` needs the latest ``ci_runs`` attempt of
+every job at the PR head to have concluded ``success``, whatever the criterion
+evaluators are, and each of those tested subjects to be tree-equivalent to the
+merge commit.
+
+Consistency (B3). The PR record, the parent record and its contribution must
+agree on ``criteria_ref``, the head (assurance and integration revisions) and
+the merge sha, and the contribution must be current and integrated. A mismatch
+is ``not_complete``.
+
+Duplicate criterion IDs in the criteria set are ``not_complete``
+(``duplicate_criterion_id``); a reader treats a verified record carrying them as
+unusable.
 
 Ledger reading. The goal block is read by ``dev_state.parse_goal_run_block``
 and armed through ``goal_run.arm``. The evidence blocks (``pull_requests``,
@@ -125,7 +156,6 @@ _SOURCE_MISMATCHES = ("approval_revision_mismatch", "source_revision_mismatch")
 _FAILED_GATE_RESULTS = ("rerun_fail", "fail", "failed", "failure")
 _FAILED_CONCLUSIONS = ("failure", "cancelled", "skipped", "timed_out", "neutral",
                        "action_required", "stale", "startup_failure")
-_CI_ENVIRONMENTS = ("ci",)
 
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _ISSUE_RE = re.compile(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)$")
@@ -135,6 +165,15 @@ _BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _ENDPOINT_RE = re.compile(r"^repos/[A-Za-z0-9_.\-/?=&:.@\[\]%+]+$")
 _ACCEPT_RE = re.compile(r"^/accept\s+(\S+)\s*$")
 _REVERT_RE = re.compile(r"This reverts commit ([0-9a-fA-F]{7,40})")
+# GitHub's UI revert PR, squash-merged: "Reverts OWNER/REPO#N".
+_REVERT_PR_RE = re.compile(r"^Reverts ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)\s*$", re.MULTILINE)
+# A CI evidence_ref: "run 130 attempt 1 (...)" or "<run>/<job>/attempt-<n>".
+_RUN_REF_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)\b(?:\s+job\s+(?P<job>[^,()]+?))?"
+                         r"(?:\s+attempt\s+#?(?P<attempt>[0-9]+))?\b")
+_RUN_PATH_RE = re.compile(r"^(?P<run>[^/\s]+)/(?P<job>[^/]+)/attempt-(?P<attempt>[0-9]+)$")
+_COMMENT_REF_RE = re.compile(r"issuecomment-([0-9]+)")
+_REVIEW_REF_RE = re.compile(r"pullrequestreview-([0-9]+)")
+_ACCEPTING_REVIEW_STATES = ("APPROVED", "COMMENTED")
 _STRICT_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$")
 _BLOCK_KEY_RE = re.compile(r'^(?:"([^"]+)"|([A-Za-z0-9_][A-Za-z0-9_.\-/#@]*)):(?:\s+(.*))?$')
 
@@ -481,6 +520,48 @@ def _find(items, key, value):
     return None
 
 
+def _run_identity(evidence_ref):
+    """(run, job, attempt) named by a CI evidence reference, or None."""
+    if not isinstance(evidence_ref, str):
+        return None
+    text = evidence_ref.strip()
+    match = _RUN_PATH_RE.match(text) or _RUN_REF_RE.match(text)
+    if not match:
+        return None
+    job = match.group("job").strip() if match.group("job") else None
+    attempt = int(match.group("attempt")) if match.group("attempt") else None
+    return match.group("run"), job, attempt
+
+
+def _environment_verdict(check_env, entry, fallback):
+    """The D4.4 environment rule (see the module docstring). None when satisfied,
+    otherwise (cls, code, detail)."""
+    if not isinstance(check_env, str) or not check_env.strip():
+        return INCONCLUSIVE, "check_environment_missing", {}
+    check_env = check_env.strip()
+    run_env = entry.get("environment")
+    if check_env == "ci" or check_env.startswith("ci:"):
+        if fallback:
+            return NOT_COMPLETE, "environment_mismatch", {"check": check_env, "run": "local fallback"}
+        if check_env == "ci":
+            return None
+        if not isinstance(run_env, str) or not run_env.strip():
+            return INCONCLUSIVE, "run_environment_missing", {"check": check_env}
+        tokens = [t for t in re.split(r"[\s,/]+", run_env) if t]
+        runner = tokens[0] if tokens else None
+        if runner != check_env[3:].strip():
+            return NOT_COMPLETE, "environment_mismatch", {"check": check_env, "run": run_env}
+        return None
+    if check_env.startswith("host:"):
+        host = check_env[5:].strip()
+        if not fallback:
+            return NOT_COMPLETE, "local_run_without_fallback", {"check": check_env}
+        if entry.get("executor") not in (host, f"host:{host}"):
+            return NOT_COMPLETE, "environment_mismatch", {"check": check_env, "executor": entry.get("executor")}
+        return None
+    return NOT_COMPLETE, "environment_not_test_proof", {"check": check_env}
+
+
 def _login(value):
     if isinstance(value, dict):
         value = value.get("login")
@@ -572,55 +653,85 @@ def read_result(record):
             return "reject", ["cross_repo_goal"]
 
     reasons = []
-    reason_names = {r.get("code") for r in record.get("reason_codes") or [] if isinstance(r, dict)}
-    for name in ("result_id", "run_id", "plan_ref", "evidence_profile", "consumed_inputs",
-                 "repository_facts", "criteria", "producer"):
-        if name == "criteria" and record.get(name) == [] and outcome not in ("verified", "evidence_ready") \
-                and "criteria_unavailable" in reason_names:
+    reason_codes = record.get("reason_codes", [])
+    if not isinstance(reason_codes, list) or not all(isinstance(r, dict) for r in reason_codes):
+        return "unusable", ["malformed_container:reason_codes"]
+    reason_names = {r.get("code") for r in reason_codes}
+    success = outcome in ("verified", "evidence_ready")
+    shapes = {
+        "result_id": str, "run_id": str, "plan_ref": dict, "evidence_profile": str,
+        "consumed_inputs": list, "repository_facts": dict, "criteria": list, "producer": dict,
+    }
+    for name, kind in shapes.items():
+        value = record.get(name)
+        if name == "criteria" and value == [] and not success and "criteria_unavailable" in reason_names:
             continue  # a negative result that could not locate the criteria says so
-        if record.get(name) in (None, "", [], {}):
+        if value in (None, "", [], {}):
             reasons.append(f"missing_field:{name}")
+        elif not isinstance(value, kind):
+            reasons.append(f"malformed_container:{name}")
+    for name in ("supersedes", "unread_inputs"):
+        if name in record and not isinstance(record[name], list):
+            reasons.append(f"malformed_container:{name}")
+    if reasons:
+        return "unusable", reasons
     if not goal.get("frozen_at"):
         reasons.append("missing_field:goal.frozen_at")
-    plan_ref = record.get("plan_ref")
-    if isinstance(plan_ref, dict):
-        checked = goal_run._validate_plan_ref(plan_ref)
-        if not checked.ok:
-            reasons.append(f"invalid_plan_ref:{checked.reason}:{checked.detail.get('field', '')}")
-    if record.get("evidence_profile") not in (None, EVIDENCE_PROFILE):
+    checked = goal_run._validate_plan_ref(record["plan_ref"])
+    if not checked.ok:
+        reasons.append(f"invalid_plan_ref:{checked.reason}:{checked.detail.get('field', '')}")
+    if record.get("evidence_profile") != EVIDENCE_PROFILE:
         reasons.append("unknown_evidence_profile")
-    for item in record.get("consumed_inputs") or []:
+    for item in record["consumed_inputs"]:
         if not isinstance(item, dict) or not item.get("reference") or not item.get("digest") \
                 or not (item.get("revision") or item.get("recorded_at")):
             reasons.append("unidentifiable_consumed_input")
             break
-    facts = record.get("repository_facts")
-    if isinstance(facts, dict) and not _parse_utc(facts.get("observed_at")):
+    facts = record["repository_facts"]
+    if not _parse_utc(facts.get("observed_at")):
         reasons.append("repository_facts_without_observed_at")
-    producer = record.get("producer")
-    if isinstance(producer, dict):
-        if producer.get("recorded_by") != "lead":
-            reasons.append("not_recorded_by_lead")
-        if not producer.get("helper_revision"):
-            reasons.append("missing_field:producer.helper_revision")
-    criteria = record.get("criteria") if isinstance(record.get("criteria"), list) else []
+    fact_prs = facts.get("pull_requests")
+    fact_issues = facts.get("closed_issues")
+    if not isinstance(fact_prs, list) or not all(isinstance(p, dict) for p in fact_prs):
+        reasons.append("malformed_container:repository_facts.pull_requests")
+        fact_prs = []
+    if not isinstance(fact_issues, list) or not all(isinstance(i, dict) for i in fact_issues):
+        reasons.append("malformed_container:repository_facts.closed_issues")
+        fact_issues = []
+    producer = record["producer"]
+    if producer.get("recorded_by") != "lead":
+        reasons.append("not_recorded_by_lead")
+    if not producer.get("helper_revision"):
+        reasons.append("missing_field:producer.helper_revision")
+    criteria = record["criteria"]
+    ids = []
     for item in criteria:
         if not isinstance(item, dict) or not item.get("id") or not item.get("evaluator") \
                 or item.get("state") not in ("met", "unmet", "inconclusive"):
             reasons.append("malformed_criterion_line")
             break
+        ids.append(item.get("id"))
         if item.get("state") == "met" and not item.get("accepted_proof"):
             reasons.append(f"met_without_proof:{item.get('id')}")
-    blocking = [r for r in record.get("reason_codes") or []
-                if not (isinstance(r, dict) and r.get("blocking") is False)]
-    if outcome in ("verified", "evidence_ready"):
+    blocking = [r for r in reason_codes if r.get("blocking") is not False]
+    if success:
         if any(isinstance(i, dict) and i.get("state") != "met" for i in criteria):
             reasons.append("success_with_unmet_criterion")
+        if len(ids) != len(set(ids)):
+            reasons.append("success_with_duplicate_criterion_id")
         if blocking:
             reasons.append("success_with_blocking_reason")
+        if not fact_prs or any(p.get("reachable_from_destination") is not True or not p.get("merge_sha")
+                               for p in fact_prs):
+            reasons.append("success_without_confirmed_floor_fact")
+        states = {i.get("issue"): i.get("state") for i in fact_issues}
+        if any(issue not in states or states[issue] is None for issue in issues):
+            reasons.append("success_without_confirmed_floor_fact")
+        if outcome == "verified" and any(states.get(issue) != "closed" for issue in issues):
+            reasons.append("verified_with_open_issue")
     elif not blocking and not record.get("unread_inputs"):
         reasons.append("negative_outcome_without_reason")
-    return ("unusable", reasons) if reasons else ("accept", [])
+    return ("unusable", sorted(set(reasons))) if reasons else ("accept", [])
 
 
 # --- Evaluation -----------------------------------------------------------------
@@ -648,9 +759,12 @@ class _Reason:
     criteria: tuple = ()
     detail: dict = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self, default_issues=()) -> dict:
+        issues = list(self.issues)
+        if not issues and not self.prs and not self.criteria:
+            issues = list(default_issues)  # a goal-level reason affects the whole frozen set
         return {"code": self.code, "class": self.cls, "blocking": self.cls != ADVISORY,
-                "issues": list(self.issues), "prs": list(self.prs),
+                "issues": issues, "prs": list(self.prs),
                 "criteria": list(self.criteria), "detail": self.detail}
 
 
@@ -833,7 +947,10 @@ class _Evaluation:
                 continue
             state = data.get("state") if isinstance(data, dict) else None
             self.facts["closed_issues"].append({"issue": issue, "state": state})
-            if isinstance(data, dict) and data.get("pull_request"):
+            if state not in ("open", "closed"):
+                self.add("unreadable_floor_fact", INCONCLUSIVE, issues=[issue], read=f"issue:{issue}",
+                         response_type=type(data).__name__)
+            elif data.get("pull_request"):
                 self.add("not_an_issue", INCONCLUSIVE, issues=[issue])
             elif state != "closed":
                 if self.purpose == PURPOSE_READINESS:
@@ -874,6 +991,7 @@ class _Evaluation:
             return ctx
         if current.get("branch") != branch:
             self.add("wrong_base", NOT_COMPLETE, recorded=branch, integrated=current.get("branch"), **tag)
+        self.check_consistency(prq, rec, current, tag)
 
         entries = [e for e in rec.get("post_merge") or []
                    if isinstance(e, dict) and _sha_eq(e.get("merge_sha"), current.get("merge_sha"))]
@@ -926,14 +1044,17 @@ class _Evaluation:
             return ctx
 
         compare = self.read(f"reachability:{prq}", f"repos/{repo}/compare/{branch}...{merge}", **tag)
-        if isinstance(compare, dict):
-            reachable = compare.get("status") in ("behind", "identical")
-            fact["reachable_from_destination"] = reachable
-            if not reachable:
-                self.add("merge_not_reachable", NOT_COMPLETE, branch=branch,
-                         status=compare.get("status"), **tag)
-                return ctx
-        else:
+        if compare is None:
+            return ctx
+        status = compare.get("status") if isinstance(compare, dict) else None
+        if status not in ("behind", "identical", "ahead", "diverged"):
+            self.add("unreadable_floor_fact", INCONCLUSIVE, read=f"reachability:{prq}",
+                     response_type=type(compare).__name__, status=status, **tag)
+            return ctx
+        reachable = status in ("behind", "identical")
+        fact["reachable_from_destination"] = reachable
+        if not reachable:
+            self.add("merge_not_reachable", NOT_COMPLETE, branch=branch, status=status, **tag)
             return ctx
 
         if ctx["pm"] is not None and ctx["pm"].get("gate_result") == "applies_verbatim":
@@ -941,6 +1062,45 @@ class _Evaluation:
         self.scan_reverts(ctx, branch, tag)
         ctx["usable"] = True
         return ctx
+
+    def check_consistency(self, prq, rec, current, tag):
+        """B3: the records combined for acceptance describe the same revisions."""
+        head = rec.get("headRefOid")
+        if not _sha_eq(current.get("revision"), head):
+            self.add("integration_revision_mismatch", NOT_COMPLETE, recorded=current.get("revision"), head=head,
+                     records=[f"{prq}.integrated.current", f"{prq}.headRefOid"], **tag)
+        assurance = rec.get("assurance") or {}
+        if not _sha_eq(assurance.get("revision"), head):
+            self.add("assurance_revision_mismatch", NOT_COMPLETE, recorded=assurance.get("revision"), head=head,
+                     records=[f"{prq}.assurance", f"{prq}.headRefOid"], **tag)
+        if self.parent_record is None:
+            return
+        if rec.get("criteria_ref") != self.parent_record.get("criteria_ref"):
+            self.add("criteria_ref_mismatch", NOT_COMPLETE, pr_record=rec.get("criteria_ref"),
+                     parent_record=self.parent_record.get("criteria_ref"),
+                     records=[f"{prq}.criteria_ref", f"parent_acceptance/{self.parent}.criteria_ref"], **tag)
+        contribution = None
+        for item in self.parent_record.get("contributions") or []:
+            identity = _pr_identity(item.get("pr"), self.repo) if isinstance(item, dict) else None
+            if identity is not None and f"{identity[0]}#{identity[1]}" == prq:
+                contribution = item
+        if contribution is None:
+            return
+        records = [f"parent_acceptance/{self.parent}.contributions/{prq}", prq]
+        c_assurance = contribution.get("assurance") if isinstance(contribution.get("assurance"), dict) else {}
+        if not (c_assurance.get("outcome") == "pass" and c_assurance.get("current") is True):
+            self.add("contribution_assurance_not_current", NOT_COMPLETE, outcome=c_assurance.get("outcome"),
+                     current=c_assurance.get("current"), records=records, **tag)
+        elif not _sha_eq(c_assurance.get("revision"), head):
+            self.add("contribution_revision_mismatch", NOT_COMPLETE, recorded=c_assurance.get("revision"),
+                     head=head, records=records, **tag)
+        integrated = contribution.get("integrated")
+        merge = integrated.get("merge_sha") if isinstance(integrated, dict) else integrated
+        if merge in (None, "withdrawn"):
+            self.add("contribution_not_integrated", NOT_COMPLETE, integrated=integrated, records=records, **tag)
+        elif not _sha_eq(merge, current.get("merge_sha")):
+            self.add("contribution_integration_mismatch", NOT_COMPLETE, recorded=merge,
+                     merge=current.get("merge_sha"), records=records, **tag)
 
     def check_gate(self, ctx, rec, pm, current, tag):
         gate = pm.get("gate_result")
@@ -951,26 +1111,59 @@ class _Evaluation:
                 self.add("gate_record_inconsistent", INCONCLUSIVE, gate_result=gate,
                          action=pm.get("action"), tested_vs_merged=pm.get("tested_vs_merged"), **tag)
             else:
-                ctx["verbatim_run"] = self.verbatim_run(rec)
-                if ctx["verbatim_run"] is None:
-                    self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="no passing run at head", **tag)
+                runs = self.prior_gate_runs(rec)
+                ctx["gate_runs"] = runs
+                if not runs:
+                    self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="no gate run at head", **tag)
+                for run in runs:
+                    if run.get("conclusion") != "success":
+                        self.add("prior_gate_not_success", NOT_COMPLETE, job=run.get("job"), run=run.get("run"),
+                                 attempt=run.get("attempt"), conclusion=run.get("conclusion"), **tag)
         elif gate == "rerun_pass":
             run = pm.get("run")
             subject = (run or {}).get("tested_subject") or {}
+
+            def fail(code, cls, **detail):
+                ctx["rerun_failure"] = (cls, code, detail)
+                self.add(code, cls, **detail, **tag)
+
             if pm.get("action") != "full_required_gate_rerun" or not isinstance(run, dict):
-                self.add("gate_record_inconsistent", INCONCLUSIVE, gate_result=gate,
-                         action=pm.get("action"), **tag)
+                fail("gate_record_inconsistent", INCONCLUSIVE, gate_result=gate, action=pm.get("action"))
             elif run.get("conclusion") != "success":
-                self.add("post_merge_failed", NOT_COMPLETE, conclusion=run.get("conclusion"), **tag)
+                fail("post_merge_failed", NOT_COMPLETE, conclusion=run.get("conclusion"))
             elif not _sha_eq(subject.get("sha"), current.get("merge_sha")):
-                self.add("rerun_subject_mismatch", NOT_COMPLETE, tested=subject.get("sha"),
-                         merge=current.get("merge_sha"), **tag)
+                fail("rerun_subject_mismatch", NOT_COMPLETE, tested=subject.get("sha"),
+                     merge=current.get("merge_sha"))
+            elif run.get("run") is None and not self.is_fallback(run):
+                fail("local_run_without_fallback", NOT_COMPLETE)
+            else:
+                entry, why = self.resolve_ci_run(rec, run.get("run"), run.get("job"), run.get("attempt"))
+                tested = (entry or {}).get("tested_subject") or {}
+                if entry is None:
+                    fail(why, INCONCLUSIVE, run=run.get("run"), job=run.get("job"), attempt=run.get("attempt"))
+                elif entry.get("conclusion") != "success":
+                    fail("post_merge_failed", NOT_COMPLETE, conclusion=entry.get("conclusion"))
+                elif not _sha_eq(tested.get("sha"), current.get("merge_sha")):
+                    fail("rerun_subject_mismatch", NOT_COMPLETE, tested=tested.get("sha"),
+                         merge=current.get("merge_sha"))
+                elif run.get("environment") and run.get("environment") != entry.get("environment"):
+                    fail("environment_mismatch", NOT_COMPLETE, run=run.get("environment"),
+                         recorded=entry.get("environment"))
         elif gate in (None, "pending"):
             self.add("post_merge_pending", INCONCLUSIVE, **tag)
         elif gate in _FAILED_GATE_RESULTS:
             self.add("post_merge_failed", NOT_COMPLETE, gate_result=gate, **tag)
         else:
             self.add("gate_result_unknown", INCONCLUSIVE, gate_result=gate, **tag)
+
+        checks = pm.get("checks")
+        if not isinstance(checks, list) or not checks:
+            self.add("post_merge_checks_missing", INCONCLUSIVE, **tag)
+        for item in checks if isinstance(checks, list) else []:
+            failed = self.post_merge_entry(item, current.get("merge_sha"))
+            if failed:
+                self.add(failed[1].replace("criterion", "post_merge_check"), failed[0],
+                         check=(item or {}).get("id") if isinstance(item, dict) else None, **tag)
 
         verdict = pm.get("criteria_verdict")
         if verdict == "unmet":
@@ -987,35 +1180,89 @@ class _Evaluation:
         })
 
     @staticmethod
-    def verbatim_run(rec):
-        runs = [r for r in rec.get("ci_runs") or [] if isinstance(r, dict)
-                and _sha_eq(((r.get("tested_subject") or {}).get("head")), rec.get("headRefOid"))]
-        return runs[-1] if runs else None
+    def post_merge_entry(item, merge):
+        """Checks shared by post-merge checks and criteria. Returns (cls, code) or None."""
+        if not isinstance(item, dict):
+            return INCONCLUSIVE, "criterion_not_passed"
+        if item.get("outcome") == "fail":
+            return NOT_COMPLETE, "criterion_failed"
+        if item.get("outcome") != "pass":
+            return INCONCLUSIVE, "criterion_not_passed"
+        if not _sha_eq(item.get("at"), merge):
+            return NOT_COMPLETE, "proof_at_wrong_revision"
+        if item.get("basis") not in ("fresh", "reused") or (
+                item.get("basis") == "reused" and not item.get("justification")):
+            return INCONCLUSIVE, "reuse_without_basis"
+        return None
+
+    @staticmethod
+    def is_fallback(run):
+        return isinstance(run, dict) and bool(run.get("executor")) and bool(run.get("fallback_approved_by"))
+
+    @staticmethod
+    def prior_gate_runs(rec):
+        """The latest recorded attempt of every job that ran at the PR head."""
+        latest = {}
+        for run in rec.get("ci_runs") or []:
+            if not isinstance(run, dict):
+                continue
+            if not _sha_eq((run.get("tested_subject") or {}).get("head"), rec.get("headRefOid")):
+                continue
+            job = run.get("job")
+            attempt = run.get("attempt") if isinstance(run.get("attempt"), int) else -1
+            if job not in latest or attempt >= latest[job][0]:
+                latest[job] = (attempt, run)
+        return [run for _, run in latest.values()]
+
+    @staticmethod
+    def resolve_ci_run(rec, run_id, job, attempt):
+        """The ``ci_runs`` entry for (run, job, attempt), or (None, reason)."""
+        if run_id is None:
+            return None, "ci_run_unrecorded"
+        if attempt is None:
+            return None, "ci_identity_incomplete"
+        matches = [r for r in rec.get("ci_runs") or [] if isinstance(r, dict)
+                   and str(r.get("run")) == str(run_id) and (job is None or r.get("job") == job)]
+        if matches and all(r.get("attempt") is None for r in matches):
+            return None, "ci_identity_incomplete"
+        matches = [r for r in matches if str(r.get("attempt")) == str(attempt)]
+        if not matches:
+            return None, "ci_run_unrecorded"
+        if len(matches) > 1:
+            return None, "evidence_ref_ambiguous"
+        return matches[0], None
+
+    def tree_of(self, sha, tag):
+        data = self.read(f"tree:{sha}", f"repos/{self.repo}/commits/{sha}", **tag)
+        if not isinstance(data, dict):
+            return None
+        return ((data.get("commit") or {}).get("tree") or {}).get("sha") or None
 
     def check_tree_equivalence(self, ctx, rec, tag):
-        run = ctx["verbatim_run"]
-        if run is None:
+        runs = ctx.get("gate_runs") or []
+        if not runs:
             return
-        tested = _sha((run.get("tested_subject") or {}).get("sha"))
-        repo = self.repo
-        if tested is None:
-            self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="tested subject unrecorded", **tag)
-            return
-        left = self.read(f"tree:{tested}", f"repos/{repo}/commits/{tested}", **tag)
-        right = self.read(f"tree:{ctx['merge']}", f"repos/{repo}/commits/{ctx['merge']}", **tag)
-        trees = []
-        for data in (left, right):
-            tree = (((data or {}).get("commit") or {}).get("tree") or {}).get("sha") if isinstance(data, dict) else None
-            trees.append(tree)
-        if left is None or right is None:
-            return
-        if not trees[0] or not trees[1]:
-            self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="tree unreadable", **tag)
-            return
-        ctx["tree_equivalent"] = trees[0] == trees[1]
+        merge_tree = self.tree_of(ctx["merge"], tag)
+        verdicts = []
+        for run in runs:
+            tested = _sha((run.get("tested_subject") or {}).get("sha"))
+            if tested is None:
+                self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="tested subject unrecorded",
+                         job=run.get("job"), **tag)
+                verdicts.append(None)
+                continue
+            tested_tree = self.tree_of(tested, tag)
+            if tested_tree is None or merge_tree is None:
+                if tested_tree is not None or merge_tree is not None:
+                    self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="tree unreadable", **tag)
+                verdicts.append(None)
+                continue
+            verdicts.append(tested_tree == merge_tree)
+            if tested_tree != merge_tree:
+                self.add("tree_not_equivalent", NOT_COMPLETE, tested=tested, merge=ctx["merge"],
+                         job=run.get("job"), **tag)
+        ctx["tree_equivalent"] = all(v is True for v in verdicts) if verdicts else None
         self.facts["pull_requests"][-1]["tree_equivalent"] = ctx["tree_equivalent"]
-        if not ctx["tree_equivalent"]:
-            self.add("tree_not_equivalent", NOT_COMPLETE, tested=tested, merge=ctx["merge"], **tag)
 
     def scan_reverts(self, ctx, branch, tag):
         """Best effort (D4.3 item 2). It can only add a reason; it never upgrades."""
@@ -1032,11 +1279,13 @@ class _Evaluation:
             return
         for commit in commits if isinstance(commits, list) else []:
             message = ((commit or {}).get("commit") or {}).get("message") or ""
-            for match in _REVERT_RE.finditer(message):
-                if _sha_eq(match.group(1), ctx["merge"]):
-                    self.add("unrecorded_revert_suspected", INCONCLUSIVE,
-                             revert_commit=(commit or {}).get("sha"), **tag)
-                    return
+            hit = any(_sha_eq(m.group(1), ctx["merge"]) for m in _REVERT_RE.finditer(message))
+            hit = hit or any(m.group(1).lower() == self.repo.lower() and int(m.group(2)) == ctx["number"]
+                             for m in _REVERT_PR_RE.finditer(message))
+            if hit:
+                self.add("unrecorded_revert_suspected", INCONCLUSIVE,
+                         revert_commit=(commit or {}).get("sha"), **tag)
+                return
 
     # Criteria ---------------------------------------------------------------
 
@@ -1058,8 +1307,13 @@ class _Evaluation:
         self.lead_id = lead_id
         self.workers = workers
         self.workers_readable = workers_readable
+        seen = set()
         for item in items:
             cid = item.get("id") if isinstance(item, dict) else None
+            if cid in seen:
+                self.add("duplicate_criterion_id", NOT_COMPLETE, criteria=[cid])
+                continue
+            seen.add(cid)
             etype, eid = _evaluator(item)
             line = {"criteria_ref": cref, "id": cid, "evaluator": etype, "evaluator_id": eid,
                     "state": "inconclusive", "reason_code": None, "accepted_proof": None, "prs": []}
@@ -1126,17 +1380,10 @@ class _Evaluation:
         recorded_type = _evaluator(item)[0]
         if recorded_type is not None and recorded_type != etype:
             return NOT_COMPLETE, "evaluator_mismatch", {"assigned": etype, "recorded": recorded_type}
-        if item.get("outcome") == "fail":
-            return NOT_COMPLETE, "criterion_failed", {}
-        if item.get("outcome") != "pass":
-            return INCONCLUSIVE, "criterion_not_passed", {"outcome": item.get("outcome")}
-        if not _sha_eq(item.get("at"), ctx["merge"]):
-            return NOT_COMPLETE, "proof_at_wrong_revision", {"at": item.get("at")}
-        basis = item.get("basis")
-        if basis == "reused" and not item.get("justification"):
-            return INCONCLUSIVE, "reuse_without_basis", {}
-        if basis not in ("fresh", "reused"):
-            return INCONCLUSIVE, "reuse_without_basis", {"basis": basis}
+        failed = self.post_merge_entry(item, ctx["merge"])
+        if failed:
+            return failed[0], failed[1], {"outcome": item.get("outcome"), "at": item.get("at"),
+                                          "basis": item.get("basis")}
         return None
 
     def proof_test(self, cid, etype, ctx):
@@ -1144,50 +1391,66 @@ class _Evaluation:
         if failed:
             return failed[0], failed[1], None, failed[2]
         rec, pm = ctx["record"], ctx["pm"]
+        if pm.get("action") == "full_required_gate_rerun" and ctx.get("rerun_failure"):
+            cls, code, detail = ctx["rerun_failure"]  # the merged-tree run itself is not proof
+            return cls, code, None, detail
+        assigned = _find(rec.get("criteria"), "id", cid)
+        item = _find(pm.get("criteria"), "id", cid)
+        if not assigned.get("evidence_ref") or not item.get("evidence_ref"):
+            return INCONCLUSIVE, "criterion_evidence_missing", None, {}
+        identity = _run_identity(item.get("evidence_ref"))
+        if identity is None:
+            return INCONCLUSIVE, "evidence_ref_unbound", None, {"evidence_ref": item.get("evidence_ref")}
+        entry, why = self.resolve_ci_run(rec, *identity)
+        if entry is None:
+            return INCONCLUSIVE, why, None, {"run": identity[0], "job": identity[1], "attempt": identity[2]}
+        job = entry.get("job")
+        named = _evaluator(assigned)[1]
+        if _find(rec.get("checks"), "id", named) is not None and named != job:
+            return NOT_COMPLETE, "test_run_for_other_check", None, {"check": named, "run_job": job}
+        if entry.get("conclusion") != "success":
+            return NOT_COMPLETE, "run_not_success", None, {"conclusion": entry.get("conclusion"), "job": job}
+        subject = entry.get("tested_subject") or {}
         if pm.get("action") == "full_required_gate_rerun":
-            run = pm.get("run")
-            origin = _find(rec.get("ci_runs"), "job", (run or {}).get("job")) or {}
-            subject_ok = _sha_eq(((run or {}).get("tested_subject") or {}).get("sha"), ctx["merge"])
+            if not _sha_eq(subject.get("sha"), ctx["merge"]):
+                return NOT_COMPLETE, "test_subject_mismatch", None, {"tested": subject.get("sha")}
         else:
-            run = ctx["verbatim_run"]
-            origin = run or {}
-            subject_ok = ctx["tree_equivalent"] is True
-        if not isinstance(run, dict):
-            return INCONCLUSIVE, "test_run_missing", None, {}
-        if run.get("conclusion") != "success":
-            return NOT_COMPLETE, "run_not_success", None, {"conclusion": run.get("conclusion")}
-        if run.get("run") is None and not (run.get("executor") and run.get("fallback_approved_by")):
-            return NOT_COMPLETE, "local_run_without_fallback", None, {}
-        if not subject_ok:
-            return NOT_COMPLETE, "test_subject_mismatch", None, {}
-        if pm.get("action") != "full_required_gate_rerun":
-            applicability = origin.get("applicability")
+            if not _sha_eq(subject.get("head"), rec.get("headRefOid")) or _sha(subject.get("sha")) is None:
+                return NOT_COMPLETE, "test_subject_mismatch", None, {"tested": subject}
+            tested_tree = self.tree_of(_sha(subject.get("sha")), {"prs": [ctx["prq"]]})
+            merge_tree = self.tree_of(ctx["merge"], {"prs": [ctx["prq"]]})
+            if tested_tree is None or merge_tree is None:
+                return INCONCLUSIVE, "tree_equivalence_unverifiable", None, {}
+            if tested_tree != merge_tree:
+                return NOT_COMPLETE, "test_subject_mismatch", None, {"tested": subject.get("sha")}
+            applicability = entry.get("applicability")
             if not (isinstance(applicability, dict) and applicability.get("established") is True):
                 return INCONCLUSIVE, "applicability_not_established", None, {}
-        job = run.get("job") or origin.get("job")
         check = _find(rec.get("checks"), "id", job)
-        definition = run.get("definition_ref") or origin.get("definition_ref")
+        definition = entry.get("definition_ref")
         if check is None or not isinstance(definition, dict) or not isinstance(check.get("definition_ref"), dict):
             return INCONCLUSIVE, "definition_unbound", None, {"job": job}
         if (definition.get("ref"), definition.get("rev")) != (
                 check["definition_ref"].get("ref"), check["definition_ref"].get("rev")):
             return NOT_COMPLETE, "definition_mismatch", None, {"run": definition,
                                                               "check": check["definition_ref"]}
-        run_env = run.get("environment")
-        origin_env = origin.get("environment")
-        if run_env and origin_env and run is not origin and run_env != origin_env:
-            return NOT_COMPLETE, "environment_mismatch", None, {"run": run_env, "tested": origin_env}
-        check_env = check.get("environment")
-        if check_env in _CI_ENVIRONMENTS:
-            if run.get("run") is None:
-                return NOT_COMPLETE, "environment_mismatch", None, {"check": check_env, "run": "local"}
-        elif check_env and (run_env or origin_env) != check_env:
-            return NOT_COMPLETE, "environment_mismatch", None, {"check": check_env, "run": run_env or origin_env}
-        item = _find(pm.get("criteria"), "id", cid)
+        environment = _environment_verdict(check.get("environment"), entry, self.is_fallback(entry))
+        if environment is not None:
+            return environment[0], environment[1], None, environment[2]
+        pm_check = _find(pm.get("checks"), "id", job)
+        if pm_check is None:
+            return INCONCLUSIVE, "post_merge_check_missing", None, {"check": job}
+        failed = self.post_merge_entry(pm_check, ctx["merge"])
+        if failed:
+            return failed[0], failed[1].replace("criterion", "post_merge_check"), None, {"check": job}
         proof = {"conclusion": "success", "definition": definition,
-                 "tested_subject": run.get("tested_subject"),
-                 "run": {"run": run.get("run"), "job": job, "attempt": run.get("attempt")},
+                 "tested_subject": entry.get("tested_subject"),
+                 "run": {"run": entry.get("run"), "job": job, "attempt": entry.get("attempt")},
+                 "environment": entry.get("environment"), "check_environment": check.get("environment"),
                  "evidence_ref": item.get("evidence_ref"), "pr": ctx["prq"]}
+        if self.is_fallback(entry):
+            proof["fallback"] = {"executor": entry.get("executor"),
+                                 "approved_by": entry.get("fallback_approved_by")}
         return None, "ok", proof, {}
 
     def proof_demonstration(self, cid, etype, ctx):
@@ -1243,14 +1506,47 @@ class _Evaluation:
                 return NOT_COMPLETE, "reviewer_not_of_record", None, {"author": _login(data.get("user"))}
             if not _sha_eq(data.get("commit_id"), rec.get("headRefOid")):
                 return NOT_COMPLETE, "review_of_earlier_head", None, {"reviewed": data.get("commit_id")}
-            proof.update({"kind": "external", "review_id": review_id, "author": _login(data.get("user"))})
+            if data.get("state") not in _ACCEPTING_REVIEW_STATES:
+                return NOT_COMPLETE, "review_state_not_accepting", None, {"state": data.get("state")}
+            proof.update({"kind": "external", "review_id": review_id, "author": _login(data.get("user")),
+                          "state": data.get("state")})
             return None, "ok", proof, {}
         if reviewer != rec.get("reviewer_agent_id"):
             return NOT_COMPLETE, "reviewer_not_of_record", None, {"recorded": rec.get("reviewer_agent_id")}
         if not evidence:
             return INCONCLUSIVE, "review_evidence_missing", None, {}
-        proof.update({"kind": "internal_lane", "evidence_ref": evidence})
+        resolved = self.resolve_review_evidence(ctx, evidence)
+        if resolved[0] is not None:
+            return resolved[0], resolved[1], None, resolved[2]
+        proof.update({"kind": "internal_lane", "evidence_ref": evidence, "resolved": resolved[2]})
         return None, "ok", proof, {}
+
+    def resolve_review_evidence(self, ctx, evidence):
+        """B4: an internal lane's retained review must resolve through a GET read."""
+        texts = [evidence] if isinstance(evidence, str) else [
+            v for v in (evidence.values() if isinstance(evidence, dict) else []) if isinstance(v, str)]
+        for text in texts:
+            comment = _COMMENT_REF_RE.search(text)
+            review = _REVIEW_REF_RE.search(text)
+            if comment:
+                read_id = f"review-evidence:{ctx['prq']}/comment-{comment.group(1)}"
+                endpoint = f"repos/{self.repo}/issues/comments/{comment.group(1)}"
+            elif review:
+                read_id = f"review-evidence:{ctx['prq']}/review-{review.group(1)}"
+                endpoint = f"repos/{self.repo}/pulls/{ctx['number']}/reviews/{review.group(1)}"
+            else:
+                continue
+            try:
+                data = self.reader.read(read_id, endpoint)
+            except ReadFailed as exc:
+                return INCONCLUSIVE, "read_failed", {"read": read_id, "cause": exc.cause}
+            if not isinstance(data, dict) or not data.get("id"):
+                return INCONCLUSIVE, "review_evidence_unresolvable", {"read": read_id}
+            target = data.get("issue_url") or data.get("pull_request_url") or ""
+            if not re.search(rf"/(issues|pulls)/{ctx['number']}$", target):
+                return NOT_COMPLETE, "review_evidence_for_other_pr", {"read": read_id, "target": target}
+            return None, "ok", {"read": read_id, "id": data.get("id")}
+        return INCONCLUSIVE, "review_evidence_unresolvable", {"evidence_ref": evidence}
 
     def reader_read_review(self, ctx, review_id):
         try:
@@ -1422,6 +1718,14 @@ def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, owner_account=None, runner=N
     else:
         run.check_issues()
 
+    # B5: success needs every floor fact confirmed, whatever the criterion types.
+    floor_gaps = [p["pr"] for p in run.facts["pull_requests"]
+                  if p.get("reachable_from_destination") is not True or not p.get("merge_sha")]
+    if not run.facts["pull_requests"] or floor_gaps or any(
+            i.get("state") is None for i in run.facts["closed_issues"]):
+        if not any(r.cls != ADVISORY for r in run.reasons):
+            run.add("floor_fact_unconfirmed", INCONCLUSIVE, prs=floor_gaps, issues=run.issues)
+
     blocking = [r for r in run.reasons if r.cls != ADVISORY]
     if any(r.cls == NOT_COMPLETE for r in blocking):
         final = "not_complete"
@@ -1452,7 +1756,7 @@ def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, owner_account=None, runner=N
         "repository_facts": dict(run.facts, observed_at=observed_at),
         "criteria": run.lines,
         "outcome": outcome,
-        "reason_codes": [r.to_dict() for r in run.reasons],
+        "reason_codes": [r.to_dict(default_issues=assignment.fixed_issues) for r in run.reasons],
         "unread_inputs": [u for u in reader.unread if u.get("blocking")],
         "producer": {
             "helper": "skills/dev/scripts/verify_goal_completion.py",
