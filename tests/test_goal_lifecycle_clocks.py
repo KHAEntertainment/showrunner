@@ -5,17 +5,20 @@ nothing in the merged code stated it. This lane states it as procedure in
 ``phases/goal.md``, gives the Dev's own context-reset count one additive
 ledger home (``goal_run.context_resets``), and pins both with named tests
 AC1-AC5: ledger-compat, count validation, the duplicate compaction that adds
-no count, the doc assertions, and the diff scope.
+no count, the doc assertions, and goal.md's structure.
 
 ``goal_run.py``, ``goal_recovery.py`` and ``goal_authority.py`` are imported
-and called, never edited.
+and called, never edited. This file reads no git history and imports no other
+test module, so it holds under a shallow checkout and under any collection
+order: ``tests/test_goal_recovery.py`` replaces the ``sys.modules`` entry for
+``goal_recovery`` at import time, and a module that captured the earlier
+object would then fail an ``isinstance`` check against the newer one.
 """
 
 from __future__ import annotations
 
 import copy
 import re
-import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -26,8 +29,6 @@ SKILL_DIR = ROOT / "skills" / "dev"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-import goal_recovery  # noqa: E402
-
 from tests.test_dev_state import (  # noqa: E402
     armed_block,
     authority_block,
@@ -36,7 +37,6 @@ from tests.test_dev_state import (  # noqa: E402
     render_goal_run,
     run_validator,
 )
-from tests.test_goal_recovery_wiring import recovery_block  # noqa: E402
 import tests.test_dev_state as tds  # noqa: E402
 
 dev_state = tds.dev_state
@@ -44,25 +44,12 @@ dev_state = tds.dev_state
 GOAL_MD = SKILL_DIR / "phases" / "goal.md"
 TEMPLATE = SKILL_DIR / "templates" / "DEV_STATE_TEMPLATE.md"
 
-# The lane base. AC5 compares the three modules this lane must not touch, and
-# the goal.md diff, against exactly this revision.
-BASE_OID = "2b1170e3b8ecb14343dd221ece7f3b220764e33c"
-
 # A Foreman clock value field would name the orchestrator clock or one of its
 # prepare / retire / hard-stop values, or one of the two idle timers.
 FOREMAN_CLOCK_FIELD = re.compile(
     r"foreman|orchestrat|prepare|retire|hard_?stop|idle|timer|clock|timeout|deadline",
     re.I,
 )
-
-
-def _git(*args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(ROOT), *args], capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        raise AssertionError(f"git {' '.join(args)} failed: {result.stderr}")
-    return result.stdout
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -90,15 +77,64 @@ def _template_goal_run_section() -> str:
     )
 
 
+# The five L6 recovery records, written as literal ledger records. They are
+# literal on purpose: dev_state's own loader and another module can end up
+# holding different goal_recovery module objects (tests/test_goal_recovery.py
+# replaces the sys.modules entry at import time), so any call that isinstance-
+# checks a goal_recovery class - obligations_to_record - depends on import
+# order. Literal records have no module identity to disagree about.
+L6_OBLIGATIONS = {
+    "children": ["child-1"],
+    "owed_replies": ["reply-1"],
+    "original_request": "request-1",
+    "responsible_party": "lead-1",
+    "evidence": ["ev-1"],
+    "consumed_allowances": ["allow-1"],
+    "worker_count": 1,
+    "defect_episode": 0,
+    "defect_episode_ref": None,
+    "fix_batch_count": 0,
+    "owner_escalation": False,
+}
+L6_CUSTODY = {
+    "prior_session_id": "lead-1",
+    "current_session_id": "lead-1",
+    "claim": None,
+    "outcome": "accept",
+    "reason": None,
+    "previous_lead_liveness": None,
+}
+L6_EVENT_LEDGER = {"seen": ["evt-1"], "duplicates": {}}
+L6_RECOVERY_RECEIPTS = {
+    "compaction-event-1": {
+        "run": "goal-roundtrip",
+        "session": "lead-1",
+        "event": "compaction-event-1",
+        "adapter": "claude",
+        "version": "checkpoint-reference-v1",
+        "note_revision": "4f3c2a1",
+        "freshness": "2026-11-06T12:00:00Z",
+        "authoritative_refs": ["docs/plans/goal.md@4f3c2a1"],
+        "coverage": "top_level",
+        "degradation": None,
+        "event_accounting": {"result": "counted_once"},
+        "admission_outcome": "restored_then_current_state_check",
+    }
+}
+L6_UNKNOWN_EFFECTS = {
+    "pr42-merge": {"state": "unknown", "blocked": ["pr43-release"], "evidence": None},
+}
+
+
 def l6_block() -> dict:
     """The exact L6 25-key block: the L4 20-key block plus the five recovery
-    keys."""
+    keys, written as literal ledger records."""
     block = copy.deepcopy(authority_block())
-    recovery = recovery_block()
-    for key in (
-        "obligations", "custody", "event_ledger", "recovery_receipts", "unknown_effects",
-    ):
-        block[key] = copy.deepcopy(recovery[key])
+    block["obligations"] = copy.deepcopy(L6_OBLIGATIONS)
+    block["custody"] = copy.deepcopy(L6_CUSTODY)
+    block["event_ledger"] = copy.deepcopy(L6_EVENT_LEDGER)
+    block["recovery_receipts"] = copy.deepcopy(L6_RECOVERY_RECEIPTS)
+    block["unknown_effects"] = copy.deepcopy(L6_UNKNOWN_EFFECTS)
     return block
 
 
@@ -295,20 +331,30 @@ class TestContextResetCountValidation(unittest.TestCase):
 class TestDuplicateCompactionAddsNoCount(unittest.TestCase):
     """AC3: through goal_recovery.account_event, a first compaction is
     counted_once and a duplicate notice of it adds no count, so the documented
-    count rises by one only."""
+    count rises by one only.
+
+    The module comes from dev_state's own loader, never from a module-level
+    import, so this test uses the same goal_recovery object dev_state will
+    validate with, whatever order the suite is collected in."""
+
+    @staticmethod
+    def recovery():
+        return dev_state._load_goal_recovery_module()
 
     def test_first_compaction_is_counted_once(self):
-        ledger = goal_recovery.EventLedger(seen=(), duplicates={})
-        result = goal_recovery.account_event(ledger, "compaction-1", "compaction")
+        recovery = self.recovery()
+        ledger = recovery.EventLedger(seen=(), duplicates={})
+        result = recovery.account_event(ledger, "compaction-1", "compaction")
         self.assertEqual(result.outcome, "accept")
         self.assertEqual(result.detail["result"], "counted_once")
         self.assertTrue(result.detail["counted"])
         self.assertFalse(result.detail["duplicate"])
 
     def test_duplicate_notice_adds_no_count(self):
-        ledger = goal_recovery.EventLedger(seen=(), duplicates={})
-        first = goal_recovery.account_event(ledger, "compaction-1", "compaction")
-        second = goal_recovery.account_event(first.value, "compaction-1", "compaction")
+        recovery = self.recovery()
+        ledger = recovery.EventLedger(seen=(), duplicates={})
+        first = recovery.account_event(ledger, "compaction-1", "compaction")
+        second = recovery.account_event(first.value, "compaction-1", "compaction")
         self.assertEqual(second.outcome, "accept")
         self.assertFalse(second.detail["counted"])
         self.assertTrue(second.detail["duplicate"])
@@ -319,10 +365,11 @@ class TestDuplicateCompactionAddsNoCount(unittest.TestCase):
         self.assertEqual(counted, 1)
 
     def test_double_counted_identity_is_refused(self):
-        ledger = goal_recovery.EventLedger(
+        recovery = self.recovery()
+        ledger = recovery.EventLedger(
             seen=("compaction-1", "compaction-1"), duplicates={}
         )
-        result = goal_recovery.account_event(ledger, "compaction-1", "compaction")
+        result = recovery.account_event(ledger, "compaction-1", "compaction")
         self.assertEqual(result.outcome, "invalid")
         self.assertEqual(result.reason, "duplicate_compaction_count")
 
@@ -330,10 +377,11 @@ class TestDuplicateCompactionAddsNoCount(unittest.TestCase):
         """The documented rule: raise the count only on counted_once. Two
         notices of one compaction therefore record a count of 1, and that
         ledger validates."""
-        ledger = goal_recovery.EventLedger(seen=(), duplicates={})
+        recovery = self.recovery()
+        ledger = recovery.EventLedger(seen=(), duplicates={})
         count = 0
         for _notice in range(2):
-            result = goal_recovery.account_event(ledger, "compaction-1", "compaction")
+            result = recovery.account_event(ledger, "compaction-1", "compaction")
             ledger = result.value
             if result.detail["result"] == "counted_once" and result.detail["counted"]:
                 count += 1
@@ -433,58 +481,43 @@ class TestForemanClocksDistinctFrom112(unittest.TestCase):
         )
 
 
-class TestGoalMdDiffScope(unittest.TestCase):
-    """AC5: the goal.md diff is exactly the new section, and the three modules
-    this lane must not touch are unchanged."""
+class TestGoalMdLifecycleSection(unittest.TestCase):
+    """AC5: goal.md carries exactly one Lifecycle clocks section, sitting
+    immediately before the governance section, and the section names no
+    runtime call.
 
-    def test_goal_run_recovery_and_authority_are_unchanged(self):
-        for rel in (
-            "skills/dev/scripts/goal_run.py",
-            "skills/dev/scripts/goal_recovery.py",
-            "skills/dev/scripts/goal_authority.py",
-        ):
-            with self.subTest(path=rel):
-                self.assertEqual(
-                    Path(ROOT / rel).read_text(), _git("show", f"{BASE_OID}:{rel}")
-                )
+    These checks are history-free on purpose. A test pinned to a historical
+    base SHA breaks on a shallow checkout, and after the merge it runs on
+    every later main, where the diff keeps growing. The byte-identical-to-base
+    evidence for goal_run.py, goal_recovery.py and goal_authority.py is in the
+    PR body instead."""
 
-    def test_goal_md_diff_is_exactly_the_new_section(self):
-        base_text = _git("show", f"{BASE_OID}:skills/dev/phases/goal.md")
-        new_text = GOAL_MD.read_text()
-        base_sections = _sections(base_text)
-        new_sections = _sections(new_text)
-        self.assertEqual(len(new_sections), len(base_sections) + 1)
-        kept = [(h, b) for h, b in new_sections if h != "## Lifecycle clocks"]
-        self.assertEqual(kept, base_sections)
-        added = dict(new_sections)["## Lifecycle clocks"]
-        self.assertTrue(added.strip())
+    def setUp(self):
+        self.sections = _sections(GOAL_MD.read_text())
+
+    def test_exactly_one_lifecycle_clocks_heading(self):
+        headings = [heading for heading, _ in self.sections]
+        self.assertEqual(headings.count("## Lifecycle clocks"), 1)
+        self.assertNotIn("### Lifecycle clocks", headings)
+
+    def test_section_sits_immediately_before_the_governance_section(self):
+        headings = [heading for heading, _ in self.sections]
+        index = headings.index("## Lifecycle clocks")
         self.assertEqual(
-            new_text.count("## Lifecycle clocks"), 1
+            headings[index + 1], "## Where the existing Dev gates govern"
         )
 
-    def test_goal_md_diff_adds_lines_and_removes_none(self):
-        numstat = _git(
-            "diff", "--numstat", BASE_OID, "--", "skills/dev/phases/goal.md"
-        ).strip()
-        self.assertEqual(len(numstat.splitlines()), 1)
-        added, deleted, path = numstat.split("\t")
-        self.assertEqual(path, "skills/dev/phases/goal.md")
-        self.assertEqual(int(deleted), 0)
-        self.assertGreater(int(added), 0)
+    def test_section_is_not_empty(self):
+        self.assertTrue(_goal_lifecycle_section().strip())
 
-    def test_only_the_granted_paths_changed(self):
-        changed = _git("diff", "--name-only", BASE_OID).split()
-        untracked = _git("ls-files", "--others", "--exclude-standard").split()
-        self.assertEqual(
-            sorted(changed + untracked),
-            [
-                "skills/dev/phases/goal.md",
-                "skills/dev/scripts/dev_state.py",
-                "skills/dev/templates/DEV_STATE_TEMPLATE.md",
-                "tests/test_dev_state.py",
-                "tests/test_goal_lifecycle_clocks.py",
-            ],
-        )
+    def test_section_names_no_runtime_call(self):
+        section = _goal_lifecycle_section()
+        for name in ("goal_run", "goal_recovery", "goal_authority"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, section)
+        for token in re.findall(r"`([^`\n]+)`", section):
+            with self.subTest(token=token):
+                self.assertNotIn("(", token)
 
 
 if __name__ == "__main__":
