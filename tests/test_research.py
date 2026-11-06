@@ -314,6 +314,41 @@ class ResearchAbRecordTests(unittest.TestCase):
             self.text,
         )
 
+    def test_blinding_strips_only_arm_naming_provenance_lines(self) -> None:
+        self.assertIn(
+            "Before the review page goes out, only the provenance lines that would name the arm are stripped, and the record says that this was done.",
+            self.text,
+        )
+
+    def test_controlled_sources_rule(self) -> None:
+        text = self.text
+        self.assertIn("### Controlled sources", text)
+        self.assertIn("Both arms use the same source set", text)
+        self.assertIn("showrunner repo revision", text)
+        self.assertIn("U1 outline revision", text)
+        self.assertIn("primary-source scope", text)
+        self.assertIn(
+            "official docs and public repositories with their own docs", text
+        )
+        self.assertIn("No blogs, forums or aggregators in either arm", text)
+        self.assertIn(
+            "If arm B's provider reaches beyond that scope, the record says so and the output is not filtered",
+            text,
+        )
+        self.assertIn(
+            "Each effort's evidence records the source set and its revisions",
+            text,
+        )
+
+    def test_each_effort_records_its_source_set_and_revisions(self) -> None:
+        self.assertEqual(
+            3,
+            self.text.count(
+                "source set and revisions: not run — record the showrunner repo "
+                "revision, the U1 outline revision and the primary-source scope here"
+            ),
+        )
+
     def test_effort_sections_do_not_name_the_plans(self) -> None:
         for token in ("M3", "M4", "completion-verifier"):
             with self.subTest(token=token):
@@ -408,6 +443,13 @@ class MutationTests(unittest.TestCase):
         (AB_RECORD, '"not run" and "unknown" stay explicit'),
         (AB_RECORD, "A C2 fallback is recorded as a fallback, never as a B-arm result."),
         (AB_RECORD, "Empty until 3/3."),
+        (AB_RECORD, "Both arms use the same source set"),
+        (AB_RECORD, "official docs and public repositories with their own docs"),
+        (AB_RECORD, "No blogs, forums or aggregators in either arm"),
+        (AB_RECORD, "If arm B's provider reaches beyond that scope, the record says so and the output is not filtered"),
+        (AB_RECORD, "Each effort's evidence records the source set and its revisions"),
+        (AB_RECORD, "source set and revisions: not run — record the showrunner repo revision, the U1 outline revision and the primary-source scope here"),
+        (AB_RECORD, "Before the review page goes out, only the provenance lines that would name the arm are stripped, and the record says that this was done."),
     )
 
     def test_removing_each_key_sentence_is_detected(self) -> None:

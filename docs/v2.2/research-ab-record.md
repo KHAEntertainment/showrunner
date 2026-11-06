@@ -40,11 +40,24 @@ Each arm records **its locator result** (`present` / `not_available` / `drift` /
 - **"not run" and "unknown" stay explicit.** An effort that did not run, or a value that was not observed, is written as such — never left blank, never inferred from the other arm, and never back-filled later from memory. "unknown" is a recorded value, not a gap.
 - **A C2 fallback is recorded as a fallback, never as a B-arm result.** A `not_available` / `drift` / `error` locator verdict, or a provider fallback, is written in the C2 column as that fallback with its cause. It is never counted as a finding and never becomes a B-arm measurement.
 - **Blind review.** The owner reviews both outputs per effort blind (labelled X/Y), and the A/B key is revealed after review.
+- **Blinding.** Before the review page goes out, only the provenance lines that would name the arm are stripped, and the record says that this was done.
 - One row per arm per effort. The `arm` column names the row; the metric columns are exactly the ten named below, in the same order, in every effort table.
+
+### Controlled sources
+
+Both arms use the same source set, so the arms differ only in whether C2 runs:
+
+- **showrunner repo revision** — read-only; the same revision in both arms.
+- **U1 outline revision** — the same revision in both arms.
+- **primary-source scope** — official docs and public repositories with their own docs.
+
+No blogs, forums or aggregators in either arm. If arm B's provider reaches beyond that scope, the record says so and the output is not filtered. Each effort's evidence records the source set and its revisions.
 
 ## 5. Effort 1 — U1 unified CLI
 
 Scope: research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`): nothing designed or built, the U1 page not edited, no U1 Issues filed.
+
+source set and revisions: not run — record the showrunner repo revision, the U1 outline revision and the primary-source scope here
 
 **Status: pending**
 
@@ -57,6 +70,8 @@ Scope: research only over the existing U1 outline (the foreman epic artifact `u1
 
 Scope: research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`): nothing designed or built, the U1 page not edited, no U1 Issues filed.
 
+source set and revisions: not run — record the showrunner repo revision, the U1 outline revision and the primary-source scope here
+
 **Status: pending**
 
 | arm | date | plan_ref (origin / approved revision) | consequential misses | repeated or low-value questions | rounds | wall time | user burden (owner review minutes) | C2 locator + result | evidence links | recorder |
@@ -67,6 +82,8 @@ Scope: research only over the existing U1 outline (the foreman epic artifact `u1
 ## 7. Effort 3 — U1 Scout tool
 
 Scope: research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`): nothing designed or built, the U1 page not edited, no U1 Issues filed.
+
+source set and revisions: not run — record the showrunner repo revision, the U1 outline revision and the primary-source scope here
 
 **Status: pending**
 
@@ -84,4 +101,5 @@ Empty until 3/3. The comparison is written only when §5, §6 and §7 are each r
 - It does not claim that C2 is superior to C1, and it does not request that C2 be promoted, made default, or made a dependency of the research lane.
 - It does not run C3. C3 stays conditional on unresolved mechanism questions, C2 evidence and separate cost approval.
 - It does not design or build anything for U1, edit the U1 page, or file U1 Issues: each effort is research over the existing outline only.
+- It does not filter arm B's output when the provider reaches beyond the primary-source scope: the record discloses that it did.
 - It does not install anything, spend provider budget, or write a not-run effort up as a done one.
