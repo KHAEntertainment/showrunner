@@ -51,6 +51,7 @@ pull_requests: []
 parent_acceptance: []
 defect_episodes: []
 blockers: []
+goal_run: null
 run_id: null
 run_status: null
   one of: active, blocked, recovering, complete, standby
@@ -678,6 +679,114 @@ the lead did not author (the ones whose `kind: agent` `parentId` does
 not match this lead). The reply-contract cleanup line names inventory
 rows under `Still open` and gauge totals under the threshold debt
 line; merging them would make the line dishonest about ownership.
+
+## Goal run record schema (Issue #193)
+
+`goal_run` is optional and additive under `schema_version: 2`. It is `null`
+(or absent) unless an approved goal run is armed through
+`${CLAUDE_SKILL_DIR}/phases/goal.md`; a ledger without it validates exactly as
+before. The lead is the sole writer. `scripts/dev_state.py --validate` checks
+the block only when it is present and not `null`, and reports any malformed
+field as `goal_run.<field>: <reason>`.
+
+The block uses the ledger's YAML subset with a narrower shape: block maps,
+block lists of scalars, scalars, and the empty `[]` / `{}` forms. Quote an
+Issue id used as a map key (`"OWNER/REPO#N": 1`).
+
+**Frozen scope.** These keys are exactly `Assignment.to_dict()` from
+`scripts/goal_run.py` and must equal the normalized assignment:
+
+| Field | Meaning |
+|---|---|
+| `run` | Run id (the assignment's `run`). |
+| `mode` | `standalone` or `managed`. Never changes after arming. |
+| `repo` | `OWNER/REPO` the goal runs in. |
+| `fixed_issues` | Nonempty list of unique `OWNER/REPO#N` in `repo`, frozen at approval. A milestone entry stores the list resolved once at approval, never a live query. |
+| `source`, `approval_revision` | Revision-bound source (`path@revision`) and the approved revision it must match. |
+| `lead`, `plan_ref` | Lead identity and the approved plan reference (origin, revisions, approval authority and evidence, producer). |
+| `coordinator`, `charter_revision`, `contract_refs` | Managed-mode bindings; `null`, `null`, `[]` in standalone mode. |
+
+**Run state.**
+
+| Field | Meaning |
+|---|---|
+| `approval_time` | Strict UTC time of goal approval. D3 run time is measured from it; elapsed time is derived, not stored. |
+| `next_wake_at` | `null`, or the strict UTC wake time persisted with the top-level `next_action` before a sleep. A `WAKE` marker must match both. |
+| `paused` | `true` while the run is paused. A wake never overrides a pause. |
+
+**Run policy block (D7.2 item 4, D3).** `policy` holds the `BoundsPolicy`
+fields: `run_time_hours`, `dispatch_cap_per_issue`, `gv_retries`, `spend_cap`
+(`null` when no cap is set). It defaults from `PROJECT_CONTEXT.md` (D3 defaults
+when the project sets none), may only be narrowed by the goal, and in managed
+mode may only be tightened by the coordinator. Only the owner extends a limit;
+an extension rewrites `policy` and never touches `counters`.
+
+**D3 counters.** `counters` holds the `RunCounters` fields (`dispatch_counts`,
+`dispatch_request_ids` with each set written as a list, `request_issues`,
+`spend`) plus two ledger-only counters that goal_run.py does not model:
+
+| Field | Meaning |
+|---|---|
+| `dispatch_counts` | Agent dispatches per goal Issue (every worker, QA, reviewer, fix worker or substitute). Keys must be in `fixed_issues`; each count equals the number of request ids recorded for that Issue. |
+| `dispatch_request_ids` | Request ids counted per Issue; a repeated request id counts once. |
+| `request_issues` | Request id → the Issue it was counted under. |
+| `usage_measured` | Ledger-only. `true` when the harness reports usage. This is how the ledger keeps D3's "unknown, never 0": when `false`, `spend` must be `unknown`, and `0` fails as `goal_run.counters.spend: unmeasured usage must be unknown, never 0`. When `true`, `spend` is a finite number `>= 0`. |
+| `spend` | Measured usage, or `unknown`. Unknown usage never stops a run. |
+| `gv_retries_used` | Ledger-only. GV query retries used, an integer `>= 0` or `unknown`. Documented and validated only; GV and its retry bound are governed by the existing Dev gates until a GV lane lands. |
+
+Counters are monotonic. A compaction, wake, restart, lead change or extension
+never resets one.
+
+```yaml
+goal_run:
+  run: goal-2026-11-06-a
+  mode: standalone
+  repo: example-org/example-repo
+  source: docs/plans/goal.md@4f3c2a1
+  approval_revision: 4f3c2a1
+  fixed_issues:
+    - example-org/example-repo#12
+    - example-org/example-repo#13
+  lead:
+    agent_id: lead-agent-id
+    harness: claude
+    model: example-model
+  plan_ref:
+    origin: docs/plans/goal.md
+    source_revision: 4f3c2a1
+    approved_revision: 4f3c2a1
+    approval:
+      authority:
+        agent_id: owner
+      evidence:
+        reference: example-org/example-repo#11 approval comment
+        digest: sha256-example
+    producer:
+      session: planner-session-id
+      harness: claude
+  coordinator: null
+  charter_revision: null
+  contract_refs: []
+  approval_time: "2026-11-06T10:00:00Z"
+  next_wake_at: null
+  paused: false
+  policy:
+    run_time_hours: 24.0
+    dispatch_cap_per_issue: 8
+    gv_retries: 3
+    spend_cap: null
+  counters:
+    usage_measured: false
+    spend: unknown
+    gv_retries_used: 0
+    dispatch_counts:
+      "example-org/example-repo#12": 1
+    dispatch_request_ids:
+      "example-org/example-repo#12":
+        - request-1
+    request_issues:
+      request-1: "example-org/example-repo#12"
+```
 
 ## Recovery entries
 
