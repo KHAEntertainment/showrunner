@@ -1,0 +1,39 @@
+{
+  "_comment": "Synthetic GitHub REST responses for the GV base scenario, keyed by endpoint. The fake runner returns these. Nothing here reaches the network.",
+  "repos/OWNER/synthetic-repo/issues/1": {"number": 1, "state": "closed"},
+  "repos/OWNER/synthetic-repo/pulls/10": {
+    "number": 10,
+    "state": "closed",
+    "merged": true,
+    "merge_commit_sha": "d44f1e0ccccccccccccccccccccccccccccccccc",
+    "base": {"ref": "main", "repo": {"full_name": "OWNER/synthetic-repo"}},
+    "head": {"sha": "4e683b4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  },
+  "repos/OWNER/synthetic-repo/compare/main...d44f1e0ccccccccccccccccccccccccccccccccc": {"status": "behind"},
+  "repos/OWNER/synthetic-repo/commits?sha=main&since=2099-01-02T00:10:00Z&per_page=100": [
+    {"sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "commit": {"message": "Unrelated follow-up change"}}
+  ],
+  "repos/OWNER/synthetic-repo/pulls/10/reviews/2201": {
+    "id": 2201,
+    "user": {"login": "coderabbitai[bot]"},
+    "commit_id": "4e683b4aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "COMMENTED"
+  },
+  "repos/OWNER/synthetic-repo/issues/1/comments?per_page=100": [
+    {
+      "id": 5,
+      "user": {"login": "synthetic-owner"},
+      "body": "/accept AC-4@9f3c",
+      "created_at": "2099-01-03T00:00:00Z",
+      "html_url": "https://github.com/OWNER/synthetic-repo/issues/1#issuecomment-5"
+    }
+  ],
+  "repos/OWNER/synthetic-repo/commits/7a0b5d1": {
+    "sha": "7a0b5d1ddddddddddddddddddddddddddddddddd",
+    "commit": {"tree": {"sha": "ffffffffffffffffffffffffffffffffffffffff"}}
+  },
+  "repos/OWNER/synthetic-repo/commits/d44f1e0ccccccccccccccccccccccccccccccccc": {
+    "sha": "d44f1e0ccccccccccccccccccccccccccccccccc",
+    "commit": {"tree": {"sha": "ffffffffffffffffffffffffffffffffffffffff"}}
+  }
+}
