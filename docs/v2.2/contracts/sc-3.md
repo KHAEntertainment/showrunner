@@ -90,7 +90,7 @@ Meanings from the SDP only; spelling is Dev's (l.432).
 | `profile_version` | string | 1 | required | result-profile version; missing/unknown → `unknown` (l.445) |
 | `result_id` | string | 1 | required | result identifier |
 | `run_id` | string | 1 | required | the run |
-| `plan_ref` | reference + revision | 1 | required | plan reference (revision-qualified) |
+| `plan_ref` | record (SC-1 `plan_ref`) | 1 | required | the structured plan reference defined by the SC-1 `plan_ref` sub-table (`sc-1.md`): `origin`, `source_revision`, `approved_revision`, `approval.authority`, `approval.evidence`, `producer.session`, `producer.harness`, copied unchanged from the assignment; revision-qualified through `approved_revision` (SDP l.79, l.441) |
 | `goal.repository` | qualified identifier | 1 | required | the single repository |
 | `goal.parent` | tracker-qualified parent | 0..1 | conditional (managed parent acceptance; standalone may omit) | parent objective |
 | `goal.fixed_issues` | frozen qualified Issue set | 1..* | required | the frozen Issue set |

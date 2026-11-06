@@ -8,8 +8,24 @@
     "result_id": "synthetic-result-001",
     "run_id": "synthetic-run-008",
     "plan_ref": {
-      "ref": "docs/plans/2099-01-01-synthetic-plan.md",
-      "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      "origin": "docs/plans/2099-01-01-synthetic-plan.md",
+      "source_revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "approved_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "approval": {
+        "authority": {
+          "agent_id": "synthetic-owner",
+          "harness": "opencode",
+          "model": "deepseek:deepseek-v4-pro"
+        },
+        "evidence": {
+          "reference": "OWNER/synthetic-repo@0123456789abcdef0123456789abcdef01234567",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "producer": {
+        "session": "synthetic-session-008",
+        "harness": "opencode"
+      }
     },
     "goal": {
       "repository": "OWNER/synthetic-repo",
