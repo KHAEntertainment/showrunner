@@ -175,11 +175,73 @@ class Failing:
         return 0, json.dumps(self.value), ""
 
 
-def scenario(mutate_ledger=None, mutate_gh=None, **kwargs):
+def actions_ep(run, attempt):
+    return f"repos/{REPO}/actions/runs/{run}/attempts/{attempt}"
+
+
+def jobs_ep(run, attempt):
+    return actions_ep(run, attempt) + "/jobs?per_page=100"
+
+
+def _full(sha):
+    """The 40-hex form of a fixture short sha, as the Actions API reports it."""
+    for full in (HEAD, MERGE):
+        if isinstance(sha, str) and full.startswith(sha.lower()):
+            return full
+    return sha
+
+
+def synthesize_actions_answers(data, responses):
+    """Test-only (L195-2a): answer the two GitHub Actions reads for every CI
+    ``ci_runs`` entry the ledger records, AGREEING with the ledger. It exists so
+    the pre-existing scenarios, which are about other rules, keep their
+    outcomes now that GV confirms CI runs against the API. It can never prove
+    the confirmation itself: test_l195_2a_without_synthesis_the_read_is_unreadable
+    turns it off, and every L195-2a negative sets its endpoints explicitly
+    through mutate_gh, which runs after it and wins.
+
+    The head mapping is written out here (merge ref -> its ``head``, else the
+    subject's ``sha``), not taken from the module."""
+    grouped = {}
+    for rec in data.get("pull_requests") or []:
+        for entry in rec.get("ci_runs") or []:
+            if not isinstance(entry, dict) or gv._is_local(entry):
+                continue
+            attempt = entry.get("attempt")
+            if not isinstance(attempt, int) or isinstance(attempt, bool):
+                continue
+            subject = entry.get("tested_subject")
+            if isinstance(subject, dict):
+                head = subject.get("head") if subject.get("kind") == "merge_ref" else subject.get("sha")
+            else:
+                head = subject
+            grouped.setdefault((entry.get("run"), attempt), []).append((entry, head))
+    for (run, attempt), entries in grouped.items():
+        passed = all(e.get("conclusion") == "success" for e, _ in entries)
+        responses[actions_ep(run, attempt)] = {
+            "id": int(run), "run_attempt": attempt, "status": "completed",
+            "conclusion": "success" if passed else "failure",
+            "head_sha": _full(entries[0][1])}
+        responses[jobs_ep(run, attempt)] = {
+            "total_count": len(entries),
+            "jobs": [{"name": e.get("job"), "status": "completed", "conclusion": e.get("conclusion")}
+                     for e, _ in entries]}
+
+
+def answered(data=None):
+    """BASE_GH plus the synthesized Actions answers for ``data`` (default: the base ledger)."""
+    responses = copy.deepcopy(BASE_GH)
+    synthesize_actions_answers(data or BASE_LEDGER, responses)
+    return responses
+
+
+def scenario(mutate_ledger=None, mutate_gh=None, actions=True, **kwargs):
     data = copy.deepcopy(BASE_LEDGER)
     responses = copy.deepcopy(BASE_GH)
     if mutate_ledger:
         mutate_ledger(data)
+    if actions:
+        synthesize_actions_answers(data, responses)
     if mutate_gh:
         mutate_gh(responses)
     runner = FakeRunner(responses)
@@ -337,6 +399,11 @@ class TestPackagingBoundary(unittest.TestCase):
         scenario(mutate_ledger=make_verbatim)
         scenario(mutate_gh=lambda g: g.update({ISSUE_EP: Failing([(1, "", "HTTP 500")] * 3)}))
         self.assertTrue(ALL_ARGV)
+        # L195-2a: the GitHub Actions run-attempt and jobs reads are in the pinned set.
+        endpoints = {argv[-1] for argv in ALL_ARGV}
+        for run in (123, 130):
+            self.assertIn(actions_ep(run, 1), endpoints)
+            self.assertIn(jobs_ep(run, 1), endpoints)
         for argv in ALL_ARGV:
             self.assertEqual(tuple(argv[:4]), gv.GH_READ_PREFIX, argv)
             self.assertTrue(gv.is_read_argv(argv), argv)
@@ -805,7 +872,7 @@ class TestRequiredCases(unittest.TestCase):
 class TestFloor(unittest.TestCase):
     def test_d43_floor_reads_are_fresh_at_every_check(self):
         data = render(BASE_LEDGER)
-        runner = FakeRunner(copy.deepcopy(BASE_GH))
+        runner = FakeRunner(answered())
         for _ in range(2):
             self.assertEqual(gv.evaluate(data, runner=runner, sleep=lambda s: None, owner_account=OWNER,
                                          now=NOW).outcome, "verified")
@@ -1238,13 +1305,13 @@ def older_run_100(conclusion, observed_at="2099-01-01T01:00:00Z"):
     return run
 
 
-def rename_job(data, job):
+def rename_job(data, job, ref=None):
     for run in pr(data)["ci_runs"]:
         run["job"] = job
     pr(data)["checks"][0]["id"] = job
     pm(data)["checks"][0]["id"] = job
     pm(data)["run"]["job"] = job
-    pm(data)["criteria"][0]["evidence_ref"] = f"run 130 job {job} attempt 1"
+    pm(data)["criteria"][0]["evidence_ref"] = ref or f"run 130 job {job} attempt 1"
 
 
 class TestFixBatch2(unittest.TestCase):
@@ -1699,9 +1766,301 @@ class TestFixBatch3(unittest.TestCase):
                     self.assertEqual(text, ("130", job, 1))
 
     def test_r3f4_job_name_containing_an_attempt_clause_verifies_end_to_end(self):
-        result, _, _ = scenario(lambda d: rename_job(d, "build attempt 1 results"))
+        # L195-2a: the text form of this ref now holds two attempt clauses, so it is
+        # ambiguous_evidence_ref; the path form names the same job unambiguously and verifies.
+        job = "build attempt 1 results"
+        text, _, _ = scenario(lambda d: rename_job(d, job))
+        self.assertEqual(text.outcome, "inconclusive", text.record["reason_codes"])
+        self.assertIn("ambiguous_evidence_ref", codes(text))
+        result, _, _ = scenario(lambda d: rename_job(d, job, ref=f"130/{job}/attempt-1"))
         self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
-        self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["run"]["job"], "build attempt 1 results")
+        self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["run"]["job"], job)
+
+# --- L195-2a: GV hardening ----------------------------------------------------------
+
+ABSORBED_REF = "run 999 job build attempt 1 (retry attempt 2)"
+ABSORBED_JOB = "build attempt 1 (retry"  # what the greedy job group absorbs at 1f7fe8e
+
+
+def absorbed_suffix(data, ref=ABSORBED_REF):
+    """The PR #237 verify-only repro: a passing entry for the ABSORBED identity
+    (999, "build attempt 1 (retry", 2) with matching required and post-merge
+    checks, beside a failed (999, build, 1) entry. At 1f7fe8e the text ref
+    parses to the absorbed identity, so this ledger verifies there."""
+    build = pr(data)["ci_runs"][1]
+    pr(data)["ci_runs"] += [
+        dict(build, run=999, job=ABSORBED_JOB, attempt=2, observed_at="2099-01-02T00:40:00Z"),
+        dict(build, run=999, job="build", attempt=1, conclusion="failure", observed_at="2099-01-02T00:35:00Z")]
+    pr(data)["checks"].append(dict(pr(data)["checks"][0], id=ABSORBED_JOB))
+    pm(data)["checks"].append(dict(pm(data)["checks"][0], id=ABSORBED_JOB, evidence_ref=ref))
+    pr(data)["criteria"][0]["evidence_ref"] = ref
+    pm(data)["criteria"][0]["evidence_ref"] = ref
+
+
+def proof_on_run_131(data):
+    """Isolate the test_proof consumer: the test criterion cites run 131, which
+    no other consumer reads (the post-merge rerun stays run 130)."""
+    pr(data)["ci_runs"].append(dict(pr(data)["ci_runs"][1], run=131))
+    pm(data)["criteria"][0]["evidence_ref"] = "run 131 attempt 1"
+
+
+def prior_gate_lint_124(data):
+    """Isolate the prior_gate consumer: a verbatim merge whose prior gate also
+    governs a lint job on run 124, which no test criterion cites."""
+    make_verbatim(data)
+    head_run = pr(data)["ci_runs"][0]
+    pr(data)["ci_runs"].append(dict(head_run, run=124, job="lint",
+                                    definition_ref={"ref": ".github/workflows/ci.yml#lint", "rev": "5e5e5e5"}))
+    pr(data)["checks"].append(dict(pr(data)["checks"][0], id="lint",
+                                   definition_ref={"ref": ".github/workflows/ci.yml#lint", "rev": "5e5e5e5"},
+                                   evidence_ref="run 124 attempt 1"))
+
+
+# consumer -> (ledger mutation, run id the consumer alone reads, PR head_sha GitHub reports for it)
+CONSUMER_PATHS = {
+    "test_proof": (proof_on_run_131, 131, MERGE),
+    "prior_gate": (prior_gate_lint_124, 124, HEAD),
+    "post_merge_rerun": (None, 130, MERGE),
+}
+HTTP_500 = [(1, "", "HTTP 500")] * 3
+
+
+class TestGVHardening(unittest.TestCase):
+    tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+
+    def assertNotVerified(self, result, outcome, code):
+        self.assertEqual(result.kind, "result", result.record)
+        self.assertEqual(result.outcome, outcome, result.record.get("reason_codes"))
+        self.assertIn(code, codes(result), result.record.get("reason_codes"))
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(gv.read_result(result.record)[0], "accept", gv.read_result(result.record))
+
+    def reason(self, result, code):
+        return next(r for r in result.record["reason_codes"] if r["code"] == code)
+
+    def _functions(self):
+        for node in ast.walk(self.tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield node
+
+    # Item 1: an evidence_ref with more than one attempt clause ---------------------------------
+
+    def test_l195_2a_absorbed_suffix_repro_verified_at_base_and_is_ambiguous_now(self):
+        # The 1f7fe8e parse absorbs the first clause into the job name ...
+        self.assertEqual(gv._run_identity(ABSORBED_REF), ("999", ABSORBED_JOB, 2))
+        # ... and that absorbed identity is a passing, fully bound entry: named
+        # unambiguously (path form) it verifies, so the ledger WOULD verify at 1f7fe8e.
+        path_ref = f"999/{ABSORBED_JOB}/attempt-2"
+        control, _, _ = scenario(lambda d: absorbed_suffix(d, ref=path_ref))
+        self.assertEqual(control.outcome, "verified", control.record["reason_codes"])
+        self.assertEqual(line(control, "AC-1@9f3c")["accepted_proof"]["run"],
+                         {"run": 999, "job": ABSORBED_JOB, "attempt": 2})
+        # After the fix the text ref never verifies, whatever ci_runs hold.
+        result, _, _ = scenario(absorbed_suffix)
+        self.assertNotVerified(result, "inconclusive", "ambiguous_evidence_ref")
+        detail = self.reason(result, "ambiguous_evidence_ref")["detail"]
+        self.assertEqual(detail, {"criterion": "AC-1@9f3c", "evidence_ref": ABSORBED_REF})
+
+    def test_l195_2a_attempt_clauses_count_case_insensitively_in_the_text_form_only(self):
+        for ref in (ABSORBED_REF, "run 130 attempt 1 (Attempt 2)", "run 130 ATTEMPT 1 attempt #2",
+                    "run 130 job build attempt 1 attempt 1"):
+            with self.subTest(ref):
+                self.assertTrue(gv._ambiguous_evidence_ref(ref))
+        for ref in ("run 130 attempt 1", "run 130 attempt 1 (merged-tree rerun)", "run 130",
+                    "run 130 job build-and-test attempt 1", "130/build attempt 1 results/attempt-1",
+                    "130/build/attempt-1", "review 2201", None, ["run 1 attempt 1 attempt 2"]):
+            with self.subTest(ref=ref):
+                self.assertFalse(gv._ambiguous_evidence_ref(ref))
+        result, _, _ = scenario(lambda d: pm(d)["criteria"][0].update(
+            evidence_ref="run 130 attempt 1 (attempt 2 was cancelled)"))
+        self.assertNotVerified(result, "inconclusive", "ambiguous_evidence_ref")
+
+    def test_l195_2a_single_clause_path_and_bare_refs_keep_their_behavior(self):
+        suffixed, _, _ = scenario(lambda d: pm(d)["criteria"][0].update(
+            evidence_ref="run 130 attempt 1 (merged-tree rerun)"))
+        self.assertEqual(suffixed.outcome, "verified", suffixed.record["reason_codes"])
+        path, _, _ = scenario(lambda d: pm(d)["criteria"][0].update(evidence_ref="130/build/attempt-1"))
+        self.assertEqual(path.outcome, "verified", path.record["reason_codes"])
+        bare, _, _ = scenario(lambda d: pm(d)["criteria"][0].update(evidence_ref="run 130"))
+        self.assertNotVerified(bare, "inconclusive", "ci_identity_incomplete")
+        self.assertNotIn("ambiguous_evidence_ref", codes(bare))
+
+    # Items 2 and 3: CI proof comes from CI, through one function -------------------------------
+
+    def test_l195_2a_every_run_consumer_calls_the_one_ci_read(self):
+        sites = {}
+        for fn in self._functions():
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                        and node.func.attr == "confirm_ci_run":
+                    consumer = node.args[1].value
+                    self.assertNotIn(consumer, sites)
+                    sites[consumer] = fn.name
+        self.assertEqual(sites, {"test_proof": "proof_test", "prior_gate": "check_gate",
+                                 "post_merge_rerun": "check_gate"})
+        self.assertEqual(set(sites), set(gv.RUN_CONSUMERS))
+        # The Actions endpoints are built in that one function and nowhere else.
+        builders = set()
+        for fn in self._functions():
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and "actions/" in node.value:
+                    builders.add(fn.name)
+        self.assertEqual(builders, {"confirm_ci_run"})
+        # Its reads go through the injected reader, never a process of its own.
+        fn = next(f for f in self._functions() if f.name == "confirm_ci_run")
+        called = {n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", None)
+                  for n in ast.walk(fn) if isinstance(n, ast.Call)}
+        self.assertIn("read", called)
+        self.assertFalse(called & {"run", "Popen", "subprocess_runner", "build_gh_read"})
+
+    def test_l195_2a_positive_controls_read_the_run_and_its_jobs_for_every_consumer(self):
+        for consumer, (mutate, run, _) in CONSUMER_PATHS.items():
+            with self.subTest(consumer):
+                result, runner, _ = scenario(mutate)
+                self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+                self.assertEqual(runner.count(actions_ep(run, 1)), 1)
+                self.assertEqual(runner.count(jobs_ep(run, 1)), 1)
+                jobs_argv = next(a for a in runner.calls if a[-1] == jobs_ep(run, 1))
+                self.assertEqual(jobs_argv, ["gh", "api", "--method", "GET", "--paginate", jobs_ep(run, 1)])
+
+    def test_l195_2a_without_synthesis_the_read_is_unreadable(self):
+        result, runner, sleeps = scenario(actions=False)
+        self.assertNotVerified(result, "inconclusive", "ci_run_unreadable")
+        self.assertIn(actions_ep(130, 1), runner.unknown)
+        self.assertEqual(runner.count(actions_ep(130, 1)), gv.READ_TRIES)
+        detail = self.reason(result, "ci_run_unreadable")["detail"]
+        self.assertEqual((detail["read"], detail["cause"]), ("actions-run:130/attempt-1", "not_found"))
+        self.assertIn("actions-run:130/attempt-1", [u["read"] for u in result.record["unread_inputs"]])
+        verbatim, _, _ = scenario(make_verbatim, actions=False)
+        self.assertNotVerified(verbatim, "inconclusive", "ci_run_unreadable")
+
+    def test_l195_2a_api_failure_on_each_consumer_never_verifies(self):
+        for consumer, (mutate, run, _) in CONSUMER_PATHS.items():
+            for endpoint in (actions_ep(run, 1), jobs_ep(run, 1)):
+                with self.subTest(consumer=consumer, endpoint=endpoint):
+                    result, runner, sleeps = scenario(mutate, mutate_gh=lambda g, e=endpoint: g.update(
+                        {e: Failing(HTTP_500)}))
+                    self.assertNotVerified(result, "inconclusive", "ci_run_unreadable")
+                    self.assertEqual(runner.count(endpoint), gv.READ_TRIES)
+                    self.assertIn(1.0, sleeps)
+                    consumers = {r["detail"].get("consumer") for r in result.record["reason_codes"]
+                                 if r["code"] == "ci_run_unreadable"}
+                    self.assertIn(consumer, consumers)
+
+    def test_l195_2a_api_mismatch_on_each_consumer_is_not_complete(self):
+        def fields(run, head):
+            return {
+                "conclusion": lambda g: g[actions_ep(run, 1)].update(conclusion="failure"),
+                "head_sha": lambda g: g[actions_ep(run, 1)].update(head_sha="b720c68" + "0" * 33),
+                "run_attempt": lambda g: g[actions_ep(run, 1)].update(run_attempt=2),
+                "job": lambda g: g[jobs_ep(run, 1)].update(total_count=1, jobs=[
+                    {"name": "other", "conclusion": "success"}]),
+                "job_conclusion": lambda g: g[jobs_ep(run, 1)]["jobs"][0].update(conclusion="cancelled"),
+            }
+        for consumer, (mutate, run, head) in CONSUMER_PATHS.items():
+            for name, mutate_gh in fields(run, head).items():
+                with self.subTest(consumer=consumer, field=name):
+                    result, _, _ = scenario(mutate, mutate_gh=mutate_gh)
+                    self.assertNotVerified(result, "not_complete", "ci_run_api_mismatch")
+                    details = [r["detail"] for r in result.record["reason_codes"]
+                               if r["code"] == "ci_run_api_mismatch"]
+                    self.assertIn((consumer, run, 1, name),
+                                  [(d["consumer"], d["run"], d["attempt"], d["field"]) for d in details])
+
+    def test_l195_2a_head_sha_is_the_subject_github_reports(self):
+        # A merge-ref run (pull_request event) reports the PR head, never the temporary merge OID.
+        for consumer, (mutate, run, head) in CONSUMER_PATHS.items():
+            with self.subTest(consumer):
+                ok, _, _ = scenario(mutate, mutate_gh=lambda g, r=run, h=head: g[actions_ep(r, 1)].update(head_sha=h))
+                self.assertEqual(ok.outcome, "verified", ok.record["reason_codes"])
+        merge_oid, _, _ = scenario(make_verbatim, mutate_gh=lambda g: g[actions_ep(123, 1)].update(
+            head_sha="7a0b5d1" + "0" * 33))
+        self.assertNotVerified(merge_oid, "not_complete", "ci_run_api_mismatch")
+        self.assertEqual(gv._ci_head_sha({"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"}), "4e683b4")
+        self.assertEqual(gv._ci_head_sha({"sha": "d44f1e0", "kind": "head"}), "d44f1e0")
+        self.assertEqual(gv._ci_head_sha("d44f1e0"), "d44f1e0")
+        for unbound in (None, {}, {"kind": "merge_ref"}, {"sha": "not-hex"}, [1]):
+            self.assertIsNone(gv._ci_head_sha(unbound))
+
+    def test_l195_2a_unbound_subject_is_inconclusive_with_no_read(self):
+        reader = mock.Mock()
+        direct = gv._Evaluation.confirm_ci_run(
+            mock.Mock(repo=REPO, reader=reader),
+            {"run": 5, "job": "build", "attempt": 1, "tested_subject": {"kind": "head"}}, "test_proof")
+        self.assertEqual(direct[:2], ("inconclusive", "ci_subject_unbound"))
+        reader.read.assert_not_called()
+        for attempt in (None, 0, True, "1"):
+            with self.subTest(attempt=attempt):
+                direct = gv._Evaluation.confirm_ci_run(
+                    mock.Mock(repo=REPO, reader=reader),
+                    {"run": 5, "job": "build", "attempt": attempt, "tested_subject": "d44f1e0"}, "prior_gate")
+                self.assertEqual(direct[:2], ("inconclusive", "ci_identity_incomplete"))
+        reader.read.assert_not_called()
+
+    def test_l195_2a_ledger_conclusion_never_accepts_by_itself(self):
+        # Ledger failure + API success stays not_complete, exactly as at 1f7fe8e.
+        def ledger_fails(d):
+            pr(d)["ci_runs"][1]["conclusion"] = "failure"
+            pm(d)["run"]["conclusion"] = "failure"
+        result, _, _ = scenario(ledger_fails, mutate_gh=lambda g: g[actions_ep(130, 1)].update(
+            conclusion="success"))
+        self.assertNotVerified(result, "not_complete", "post_merge_failed")
+        self.assertNotIn("ci_run_api_mismatch", codes(result))
+        # Ledger success + API failure is not_complete: only the API can accept.
+        api_fails, _, _ = scenario(mutate_gh=lambda g: g[actions_ep(130, 1)].update(conclusion="failure"))
+        self.assertNotVerified(api_fails, "not_complete", "ci_run_api_mismatch")
+
+    def test_l195_2a_pending_run_is_inconclusive(self):
+        result, _, _ = scenario(mutate_gh=lambda g: g[actions_ep(130, 1)].update(
+            status="in_progress", conclusion=None))
+        self.assertNotVerified(result, "inconclusive", "ci_run_pending")
+
+    def test_l195_2a_wrong_shape_and_incomplete_listing_are_inconclusive(self):
+        cases = {
+            "run_not_object": lambda g: g.update({actions_ep(130, 1): ["x"]}),
+            "run_head_missing": lambda g: g[actions_ep(130, 1)].pop("head_sha"),
+            "jobs_not_list": lambda g: g.update({jobs_ep(130, 1): {"jobs": "x"}}),
+            "incomplete": lambda g: g[jobs_ep(130, 1)].update(total_count=250),
+        }
+        for name, mutate_gh in cases.items():
+            with self.subTest(name):
+                result, _, _ = scenario(mutate_gh=mutate_gh)
+                self.assertNotVerified(result, "inconclusive", "ci_run_unreadable")
+
+    def test_l195_2a_paginated_jobs_pages_are_joined(self):
+        page1 = {"total_count": 2, "jobs": [{"name": "lint", "conclusion": "success"}]}
+        page2 = {"total_count": 2, "jobs": [{"name": "build", "conclusion": "success"}]}
+        raw = json.dumps(page1) + "\n" + json.dumps(page2)
+        result, _, _ = scenario(mutate_gh=lambda g: g.update({jobs_ep(130, 1): Failing([(0, raw, "")])}))
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertEqual(gv._parse_json_stream(raw)["jobs"], page1["jobs"] + page2["jobs"])
+        with self.assertRaises(ValueError):
+            gv._parse_json_stream(json.dumps({"a": 1}) + json.dumps({"b": 2}))
+
+    def test_l195_2a_missing_attempt_on_a_ci_entry_makes_no_read(self):
+        # Existing code, reused: ci_identity_incomplete (test_proof and rerun via resolve_ci_run).
+        def unrecorded_attempt(d):
+            pr(d)["ci_runs"][1].pop("attempt")
+            pm(d)["run"].pop("attempt")
+        result, runner, _ = scenario(unrecorded_attempt)
+        self.assertNotVerified(result, "inconclusive", "ci_identity_incomplete")
+        self.assertFalse([a for a in runner.calls if "/actions/" in a[-1]])
+        # A governing prior-gate entry with no attempt now gets the same code and no read.
+        def prior_no_attempt(d):
+            prior_gate_lint_124(d)
+            pr(d)["ci_runs"][-1].pop("attempt")
+        prior, runner, _ = scenario(prior_no_attempt)
+        self.assertNotVerified(prior, "inconclusive", "ci_identity_incomplete")
+        self.assertFalse([a for a in runner.calls if "/actions/runs/124/" in a[-1]])
+
+    def test_l195_2a_local_and_approved_fallback_entries_make_no_actions_read(self):
+        result, runner, _ = scenario(local_fallback)
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertFalse([a for a in runner.calls if "/actions/" in a[-1]])
+        unapproved, runner, _ = scenario(lambda d: local_fallback(d, approved=False))
+        self.assertNotEqual(unapproved.outcome, "verified")
+        self.assertFalse([a for a in runner.calls if "/actions/" in a[-1]])
+
 
 # --- AC7: D3 retries --------------------------------------------------------------
 
@@ -1748,7 +2107,7 @@ class TestCommandLine(unittest.TestCase):
             argv = [a.replace("{ledger}", str(path)) for a in args]
             out = io.StringIO()
             with redirect_stdout(out):
-                code = gv.main(argv, runner=FakeRunner(copy.deepcopy(responses or BASE_GH)),
+                code = gv.main(argv, runner=FakeRunner(copy.deepcopy(responses or answered(data))),
                                sleep=lambda s: None, now=NOW)
         return code, out.getvalue()
 
@@ -1806,9 +2165,14 @@ class TestOffline(unittest.TestCase):
 
     def test_ac9_real_runner_is_never_invoked_when_a_runner_is_injected(self):
         with mock.patch.object(gv, "subprocess_runner", side_effect=AssertionError("real runner")) as real:
-            result, _, _ = scenario()
+            result, runner, _ = scenario()
+            verbatim, verbatim_runner, _ = scenario(make_verbatim)
         real.assert_not_called()
         self.assertEqual(result.outcome, "verified")
+        self.assertEqual(verbatim.outcome, "verified")
+        # L195-2a: the Actions reads went to the injected fake runner, not a process.
+        self.assertIn(actions_ep(130, 1), [a[-1] for a in runner.calls])
+        self.assertIn(jobs_ep(123, 1), [a[-1] for a in verbatim_runner.calls])
 
 
 # --- AC10: SC-3 fixtures, read only ------------------------------------------------

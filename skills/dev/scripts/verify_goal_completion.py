@@ -54,6 +54,33 @@ must name the job (``run <id> job <name> attempt <n>``); otherwise it is
 ``evidence_ref_ambiguous``. The check is the PR ``checks`` entry whose ``id`` is
 the run's ``job``; its post-merge check must pass at the merge sha.
 
+Ambiguous reference (L195-2a). A text-form ``evidence_ref`` holding more than
+one ``attempt <n>`` clause (counted case-insensitively, so it fails closed) is
+``inconclusive`` (``ambiguous_evidence_ref``) and never verifies, whatever
+``ci_runs`` holds: the greedy job group would otherwise absorb the first clause
+into the job name (``run 999 job build attempt 1 (retry attempt 2)``). The path
+form (``<run>/<job>/attempt-<n>``) and the bare form (``run <id>``) are
+unchanged.
+
+CI proof comes from CI (SDP section 6, the independent-check line; L195-2a).
+Every consumed CI run entry (``RUN_CONSUMERS``) that passes ``_authorize_run``
+and whose ledger conclusion is ``success`` is then confirmed against GitHub
+Actions by one method, ``_Evaluation.confirm_ci_run``, through two pinned GET
+reads: ``repos/{repo}/actions/runs/{run}/attempts/{n}`` and its ``/jobs``
+(paginated). The run is accepted only when the API reports ``conclusion:
+success``, ``run_attempt`` equal to the entry's attempt, ``head_sha`` equal to
+the tested subject GitHub reports (a merge-ref subject's ``head``, which a
+``pull_request`` run reports; otherwise the subject's ``sha``, which a head or
+push run reports), and a job named exactly the entry's ``job`` with every such
+job concluded ``success``. A read that fails after the D3 retries, or an answer
+of the wrong shape, is ``inconclusive`` (``ci_run_unreadable``, naming the
+read); a run not yet completed is ``inconclusive`` (``ci_run_pending``); a
+readable mismatch is ``not_complete`` (``ci_run_api_mismatch``, naming the run,
+attempt and field). The ledger's conclusion may reject a run but never accepts
+one by itself. A CI entry with no attempt is ``inconclusive``
+(``ci_identity_incomplete``) and makes no read. LOCAL and approved-fallback
+entries are not CI runs and make no Actions read.
+
 Environment rule. A check's ``environment`` is an executor class; a ``ci_runs``
 ``environment`` is a runtime descriptor. ``ci`` needs a recorded CI entry (any
 runner). ``ci:<runner>`` needs the entry's environment to name ``<runner>`` as
@@ -190,6 +217,8 @@ _RUN_REF_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?:\s+job\s+(?P<j
 _GITHUB_RUN_ID_RE = re.compile(r"[1-9][0-9]*")
 _RUN_BARE_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?![0-9A-Za-z_-])")
 _RUN_PATH_RE = re.compile(r"^(?P<run>[^/\s]+)/(?P<job>[^/]+)/attempt-(?P<attempt>[0-9]+)$")
+# L195-2a: one "attempt <n>" clause of a text-form CI evidence_ref, case-insensitive (fails closed).
+_ATTEMPT_CLAUSE_RE = re.compile(r"(?<![0-9A-Za-z_-])attempt\s+#?[0-9]+(?![0-9A-Za-z_-])", re.IGNORECASE)
 _COMMENT_REF_RE = re.compile(r"issuecomment-([0-9]+)")
 _REVIEW_REF_RE = re.compile(r"pullrequestreview-([0-9]+)")
 _ACCEPTING_REVIEW_STATES = ("APPROVED", "COMMENTED")
@@ -278,6 +307,11 @@ def _parse_json_stream(text: str):
         return values[0]
     if all(isinstance(v, list) for v in values):
         return [item for page in values for item in page]
+    # An Actions jobs listing pages as one object per page, each with a "jobs" list.
+    if all(isinstance(v, dict) and isinstance(v.get("jobs"), list) for v in values):
+        merged = dict(values[0])
+        merged["jobs"] = [job for page in values for job in page["jobs"]]
+        return merged
     raise ValueError("unexpected multi-document output")
 
 
@@ -552,6 +586,31 @@ def _run_identity(evidence_ref):
     return (bare.group("run"), None, None) if bare else None
 
 
+def _ambiguous_evidence_ref(evidence_ref) -> bool:
+    """True when a text-form CI reference holds more than one ``attempt <n>``
+    clause (L195-2a). The path form is never ambiguous here."""
+    if not isinstance(evidence_ref, str):
+        return False
+    text = evidence_ref.strip()
+    if _RUN_PATH_RE.match(text):
+        return False
+    return len(_ATTEMPT_CLAUSE_RE.findall(text)) > 1
+
+
+def _ci_head_sha(subject):
+    """The ``head_sha`` GitHub Actions reports for a run over ``subject``: a
+    merge ref's recorded ``head`` (a ``pull_request`` run), else the subject's
+    own ``sha`` (a head-kind subject or a pushed merge commit). None when the
+    subject names no object id."""
+    if isinstance(subject, str):
+        return _sha(subject)
+    if not isinstance(subject, dict):
+        return None
+    if subject.get("kind") != "head" and subject.get("head") is not None:
+        return _sha(subject.get("head"))
+    return _sha(subject.get("sha"))
+
+
 def _is_github_run_id(value) -> bool:
     """The one GitHub run-id rule (R3-F2). A run id is CI only when it is a
     positive int (never a bool) or a str of ASCII digits with no sign, no space
@@ -617,7 +676,8 @@ def _is_approved_fallback(entry) -> bool:
 
 
 # Every site that consumes a ``ci_runs`` entry as evidence. Each one calls
-# _authorize_run with its own name; the tests enumerate this tuple.
+# _authorize_run with its own name, then _Evaluation.confirm_ci_run with the
+# same name; the tests enumerate this tuple.
 RUN_CONSUMERS = ("test_proof", "prior_gate", "post_merge_rerun")
 
 
@@ -1244,6 +1304,10 @@ class _Evaluation:
                     if run.get("conclusion") != "success":
                         self.add("prior_gate_not_success", NOT_COMPLETE, job=run.get("job"), run=run.get("run"),
                                  attempt=run.get("attempt"), conclusion=run.get("conclusion"), **tag)
+                    elif not failed:
+                        confirmed = self.confirm_ci_run(run, "prior_gate")
+                        if confirmed:
+                            self.add(confirmed[1], confirmed[0], **confirmed[2], **tag)
         elif gate == "rerun_pass":
             run = pm.get("run")
             subject = (run or {}).get("tested_subject") or {}
@@ -1279,6 +1343,10 @@ class _Evaluation:
                                             "post_merge_rerun")
                     if failed:
                         fail(failed[1], failed[0], **failed[2])
+                    else:
+                        confirmed = self.confirm_ci_run(entry, "post_merge_rerun")
+                        if confirmed:
+                            fail(confirmed[1], confirmed[0], **confirmed[2])
         elif gate in (None, "pending"):
             self.add("post_merge_pending", INCONCLUSIVE, **tag)
         elif gate in _FAILED_GATE_RESULTS:
@@ -1376,6 +1444,62 @@ class _Evaluation:
         if len(matches) > 1:
             return None, "evidence_ref_ambiguous"
         return matches[0], None
+
+    def confirm_ci_run(self, entry, consumer):
+        """The one CI-proof read (L195-2a): confirm a consumed CI run entry
+        against GitHub Actions. None when accepted, else (cls, code, detail).
+        LOCAL and approved-fallback entries are not CI runs: no read. The
+        ledger's own conclusion is never consulted here; callers reach this
+        only after the ledger has not rejected the run."""
+        if _is_local(entry):
+            return None
+        run_id, job, attempt = entry.get("run"), entry.get("job"), entry.get("attempt")
+        base = {"consumer": consumer, "run": run_id, "job": job, "attempt": attempt}
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            return INCONCLUSIVE, "ci_identity_incomplete", base
+        expected = _ci_head_sha(entry.get("tested_subject"))
+        if expected is None:
+            return INCONCLUSIVE, "ci_subject_unbound", dict(base, tested_subject=entry.get("tested_subject"))
+        endpoint = f"repos/{self.repo}/actions/runs/{run_id}/attempts/{attempt}"
+        reads = (("run", f"actions-run:{run_id}/attempt-{attempt}", endpoint, False),
+                 ("jobs", f"actions-jobs:{run_id}/attempt-{attempt}", f"{endpoint}/jobs?per_page=100", True))
+        answers = {}
+        for name, read_id, path, paginate in reads:
+            try:
+                answers[name] = self.reader.read(read_id, path, paginate=paginate)
+            except ReadFailed as exc:
+                return INCONCLUSIVE, "ci_run_unreadable", dict(base, read=exc.read_id, cause=exc.cause)
+        run_data, jobs_data = answers["run"], answers["jobs"]
+
+        def unreadable(read, why):
+            return INCONCLUSIVE, "ci_run_unreadable", dict(base, read=f"{read}:{run_id}/attempt-{attempt}", cause=why)
+
+        def mismatch(name, api, want):
+            return NOT_COMPLETE, "ci_run_api_mismatch", dict(base, field=name, api=api, expected=want)
+
+        if not isinstance(run_data, dict) or _sha(run_data.get("head_sha")) is None:
+            return unreadable("actions-run", "unexpected_shape")
+        if not isinstance(jobs_data, dict) or not isinstance(jobs_data.get("jobs"), list) \
+                or not all(isinstance(j, dict) for j in jobs_data["jobs"]):
+            return unreadable("actions-jobs", "unexpected_shape")
+        total = jobs_data.get("total_count")
+        if isinstance(total, int) and not isinstance(total, bool) and total > len(jobs_data["jobs"]):
+            return unreadable("actions-jobs", "incomplete_listing")
+        if run_data.get("conclusion") is None and run_data.get("status") != "completed":
+            return INCONCLUSIVE, "ci_run_pending", dict(base, status=run_data.get("status"))
+        if run_data.get("run_attempt") != attempt:
+            return mismatch("run_attempt", run_data.get("run_attempt"), attempt)
+        if run_data.get("conclusion") != "success":
+            return mismatch("conclusion", run_data.get("conclusion"), "success")
+        if not _sha_eq(run_data.get("head_sha"), expected):
+            return mismatch("head_sha", run_data.get("head_sha"), expected)
+        named = [j for j in jobs_data["jobs"] if j.get("name") == job]
+        if not named:
+            return mismatch("job", None, job)
+        failed = [j.get("conclusion") for j in named if j.get("conclusion") != "success"]
+        if failed:
+            return mismatch("job_conclusion", failed[0], "success")
+        return None
 
     def tree_of(self, sha, tag):
         data = self.read(f"tree:{sha}", f"repos/{self.repo}/commits/{sha}", **tag)
@@ -1549,6 +1673,9 @@ class _Evaluation:
         item = _find(pm.get("criteria"), "id", cid)
         if not assigned.get("evidence_ref") or not item.get("evidence_ref"):
             return INCONCLUSIVE, "criterion_evidence_missing", None, {}
+        if _ambiguous_evidence_ref(item.get("evidence_ref")):
+            return INCONCLUSIVE, "ambiguous_evidence_ref", None, {"criterion": cid,
+                                                                  "evidence_ref": item.get("evidence_ref")}
         identity = _run_identity(item.get("evidence_ref"))
         if identity is None:
             return INCONCLUSIVE, "evidence_ref_unbound", None, {"evidence_ref": item.get("evidence_ref")}
@@ -1588,6 +1715,9 @@ class _Evaluation:
         authorized = _authorize_run(entry, check, "test_proof")
         if authorized is not None:
             return authorized[0], authorized[1], None, authorized[2]
+        confirmed = self.confirm_ci_run(entry, "test_proof")
+        if confirmed is not None:
+            return confirmed[0], confirmed[1], None, confirmed[2]
         pm_check = _find(pm.get("checks"), "id", job)
         if pm_check is None:
             return INCONCLUSIVE, "post_merge_check_missing", None, {"check": job}
