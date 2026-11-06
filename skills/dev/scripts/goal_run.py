@@ -4,15 +4,15 @@
 Pure-stdlib, side-effect-free module: no network, no subprocess, no file writes,
 and no clock reads. Every time-dependent function takes ``now`` and any
 approval/reference time as explicit UTC arguments supplied by the caller (strict
-ISO 8601 strings with a ``Z`` or ``+00:00`` offset, or ``datetime`` objects).
-Nothing here persists state or grants authority; the owner/lead authority rules
-are the caller's responsibility.
+ISO 8601 strings with a ``Z`` or ``+00:00`` offset, or aware ``datetime`` objects
+at exactly zero offset). Nothing here persists state or grants authority; the
+owner/lead authority rules are the caller's responsibility.
 
 Stable public API (frozen once this PR is up; lanes L3 authority and L5 recovery
 import it):
 
     Result                          outcome/reason/value/detail envelope
-    Assignment                      frozen ``assignment-v1`` record
+    Assignment                      frozen ``assignment-v1`` record (has ``to_dict``)
     ArmedRun                        frozen scope + mode + D3 policy block
     Handback                        correlated handback record
     BoundsPolicy                    D3 run-bounds policy (defaults, narrowed only)
@@ -57,10 +57,11 @@ Reason codes (``Result.reason``) are part of the interface. Arming-refusal codes
 ``empty_issue_set``, ``cross_repo_issue``, ``bare_ambiguous_issue_id``,
 ``duplicate_issue``, ``non_pr_goal``, ``managed_missing_bindings``,
 ``unsupported_major_version``, ``malformed_input``, ``missing_required_field``,
-``approval_revision_mismatch``, ``source_revision_mismatch``,
-``machine_specific_path``, ``missing_resolved_issues``. Guard codes:
-``managed_to_standalone``, ``standalone_to_managed``, ``scope_growth``. Bounds
-codes: ``goal_widening``, ``coordinator_loosening``, ``coordinator_in_standalone``,
+``approval_revision_mismatch``, ``source_revision_missing``,
+``source_revision_mismatch``, ``machine_specific_path``,
+``missing_resolved_issues``. Guard codes: ``managed_to_standalone``,
+``standalone_to_managed``, ``mode_change``, ``scope_growth``. Bounds codes:
+``goal_widening``, ``coordinator_loosening``, ``coordinator_in_standalone``,
 ``invalid_policy_value``, ``run_time_exceeded``, ``spend_cap_exceeded``,
 ``dispatch_cap_exceeded``, ``no_limit_to_extend``, ``not_an_extension``,
 ``unknown_limit_field``. Marker codes: ``no_marker``, ``marker_not_last``,
@@ -73,6 +74,15 @@ argument, and the marker forms are strict: ``HARD-STOP: H<1-5> \u2014 <reason>``
 ``WAKE: <UTC ISO-8601 time> \u2014 <action>``, ``GOAL-COMPLETE: <source>``. Only
 the last nonempty line counts. A marker on any earlier nonempty line reports
 ``marker_not_last``; two markers on the same last line report ``multiple_markers``.
+
+``source`` uses the ``path@revision`` grammar: the part after the last ``@`` is an
+immutable revision and must equal ``approval_revision``. A missing ``@`` reports
+``source_revision_missing``; a mismatched revision reports ``source_revision_mismatch``.
+
+D3 run limits are reached at ``>=`` their value (SDP D3: "when a limit is reached").
+``Assignment.to_dict()`` returns a plain JSON-safe dict (nested provenance frozen
+internally, so the record stays immutable but is serializable for the ledger and
+lanes L3/L5).
 """
 
 from __future__ import annotations
@@ -80,7 +90,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Any, Optional
 
@@ -112,9 +122,12 @@ DELIVERABLE_PR = "pr"
 USAGE_UNKNOWN = "unknown"
 
 _ENTRY_KINDS = ("plan", "prd", "issue", "milestone")
+_IDENTITY_MEMBERS = ("agent_id", "harness", "model")
+_AUTHORITY_KEYS = ("agent_id", "id", "agent", "identity")
 _QUALIFIED_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$")
 _QUALIFIED_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _MACHINE_PATH_RE = re.compile(r"^(~/|/|[A-Za-z]:[\\/])")
+_STRICT_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$")
 
 _HARD_STOP_RE = re.compile(r"^HARD-STOP: H([1-5]) \u2014 (.+)$")
 _WAKE_RE = re.compile(r"^WAKE: (.+?) \u2014 (.+)$")
@@ -169,6 +182,23 @@ class Assignment:
     charter_revision: Optional[str] = None
     contract_refs: tuple = ()
 
+    def to_dict(self) -> dict:
+        """Return a plain JSON-safe dict (dicts/lists/scalars) for the ledger or
+        lanes L3/L5. The record itself stays immutable."""
+        return {
+            "repo": self.repo,
+            "run": self.run,
+            "mode": self.mode,
+            "lead": _to_plain(self.lead),
+            "plan_ref": _to_plain(self.plan_ref),
+            "source": self.source,
+            "approval_revision": self.approval_revision,
+            "fixed_issues": list(self.fixed_issues),
+            "coordinator": _to_plain(self.coordinator) if self.coordinator is not None else None,
+            "charter_revision": self.charter_revision,
+            "contract_refs": list(self.contract_refs),
+        }
+
 
 @dataclass(frozen=True)
 class BoundsPolicy:
@@ -205,7 +235,7 @@ class RunCounters:
     dispatch_counts: dict = field(default_factory=dict)
     dispatch_request_ids: dict = field(default_factory=dict)
     request_issues: dict = field(default_factory=dict)
-    spend: Any = USAGE_UNKNOWN  # a number (measured) or USAGE_UNKNOWN
+    spend: Any = USAGE_UNKNOWN  # a measured number or USAGE_UNKNOWN
 
     def dispatch_count(self, issue: str) -> int:
         return self.dispatch_counts.get(issue, 0)
@@ -227,6 +257,14 @@ def _freeze(value):
     return value
 
 
+def _to_plain(value):
+    if isinstance(value, MappingProxyType):
+        return {k: _to_plain(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_to_plain(v) for v in value]
+    return value
+
+
 def _is_machine_path(value: str) -> bool:
     return bool(_MACHINE_PATH_RE.match(value))
 
@@ -240,39 +278,59 @@ def _is_finite_positive(value) -> bool:
     )
 
 
-def _parse_dt(value) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    text = str(value).strip()
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    return datetime.fromisoformat(text)
+def _is_positive_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _is_measured_usage(value) -> bool:
+    """One predicate for measured usage: a finite, non-negative int/float (not
+    bool). NaN/inf/negative are not measured usage."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+        and value >= 0
+    )
 
 
 def _is_strict_utc(text) -> bool:
     if not isinstance(text, str):
         return False
     value = text.strip()
-    if not value:
+    if not _STRICT_UTC_RE.fullmatch(value):
         return False
-    if value.endswith("Z"):
-        try:
-            datetime.fromisoformat(value[:-1])
-            return True
-        except ValueError:
-            return False
-    if value.endswith("+00:00"):
-        try:
-            datetime.fromisoformat(value)
-            return True
-        except ValueError:
-            return False
-    return False
+    try:
+        if value.endswith("Z"):
+            parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+        else:
+            parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.utcoffset() is not None and parsed.utcoffset().total_seconds() == 0
+
+
+def _coerce_utc(value):
+    """Return an aware UTC ``datetime`` for a strict-UTC value, or ``None`` when
+    the value is naive, non-UTC, or malformed."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None or value.utcoffset() is None:
+            return None
+        if value.utcoffset().total_seconds() != 0:
+            return None
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not _is_strict_utc(text):
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
 
 
 def _normalized_spend(counters: RunCounters):
     spend = counters.spend
-    if isinstance(spend, (int, float)) and not isinstance(spend, bool):
+    if _is_measured_usage(spend):
         return spend
     return USAGE_UNKNOWN
 
@@ -281,8 +339,9 @@ def normalize_entry(entry, resolved_issues=None) -> Result:
     """Normalize a plan / PRD / Issue / milestone entry to one ``assignment-v1``
     record. ``resolved_issues`` is the caller-supplied resolved Issue list for a
     milestone entry (never a live query); it is frozen into ``fixed_issues``.
-    Every required field's shape is validated before it is dereferenced; invalid
-    input yields ``Result`` with outcome ``invalid`` and never raises."""
+    Required field shapes and their required members are validated before they are
+    dereferenced; invalid input yields ``Result`` with outcome ``invalid`` and
+    never raises."""
     if not isinstance(entry, dict):
         return _invalid("malformed_input")
 
@@ -317,6 +376,9 @@ def normalize_entry(entry, resolved_issues=None) -> Result:
         return _invalid("missing_required_field", {"field": "lead"})
     if not isinstance(lead, dict) or not lead:
         return _invalid("malformed_input", {"field": "lead"})
+    lead_result = _validate_identity_members(lead, "lead")
+    if not lead_result.ok:
+        return lead_result
 
     plan_ref = entry.get("plan_ref")
     if plan_ref is None:
@@ -343,10 +405,11 @@ def normalize_entry(entry, resolved_issues=None) -> Result:
 
     if approval_revision != plan_ref.get("approved_revision"):
         return _invalid("approval_revision_mismatch")
-    if "@" in source:
-        source_revision = source.rsplit("@", 1)[1].strip()
-        if source_revision != approval_revision:
-            return _invalid("source_revision_mismatch")
+    if "@" not in source:
+        return _invalid("source_revision_missing")
+    source_revision = source.rsplit("@", 1)[1].strip()
+    if source_revision != approval_revision:
+        return _invalid("source_revision_mismatch")
 
     if kind == "milestone":
         if resolved_issues is None:
@@ -367,6 +430,9 @@ def normalize_entry(entry, resolved_issues=None) -> Result:
         coordinator = entry.get("coordinator")
         if not isinstance(coordinator, dict) or not coordinator:
             return _invalid("managed_missing_bindings", {"field": "coordinator"})
+        coordinator_result = _validate_identity_members(coordinator, "coordinator")
+        if not coordinator_result.ok:
+            return coordinator_result
         charter_revision = entry.get("charter_revision")
         if charter_revision is None or charter_revision == "":
             return _invalid("managed_missing_bindings", {"field": "charter_revision"})
@@ -395,6 +461,16 @@ def normalize_entry(entry, resolved_issues=None) -> Result:
     return _accept(value=assignment)
 
 
+def _validate_identity_members(record: dict, prefix: str) -> Result:
+    for member in _IDENTITY_MEMBERS:
+        value = record.get(member)
+        if value is None or value == "":
+            return _invalid("missing_required_field", {"field": prefix + "." + member})
+        if not isinstance(value, str):
+            return _invalid("malformed_input", {"field": prefix + "." + member})
+    return _accept()
+
+
 def _validate_plan_ref(plan_ref: dict) -> Result:
     for field_name in ("origin", "source_revision", "approved_revision"):
         value = plan_ref.get(field_name)
@@ -411,11 +487,25 @@ def _validate_plan_ref(plan_ref: dict) -> Result:
     approval = plan_ref.get("approval")
     if not isinstance(approval, dict) or not approval:
         return _invalid("missing_required_field", {"field": "plan_ref.approval"})
-    for field_name in ("authority", "evidence"):
-        value = approval.get(field_name)
-        if not isinstance(value, dict) or not value:
+
+    authority = approval.get("authority")
+    if not isinstance(authority, dict) or not authority:
+        return _invalid("missing_required_field", {"field": "plan_ref.approval.authority"})
+    if not _has_identity(authority):
+        return _invalid("missing_required_field", {"field": "plan_ref.approval.authority"})
+
+    evidence = approval.get("evidence")
+    if not isinstance(evidence, dict) or not evidence:
+        return _invalid("missing_required_field", {"field": "plan_ref.approval.evidence"})
+    for member in ("reference", "digest"):
+        value = evidence.get(member)
+        if value is None or value == "":
             return _invalid(
-                "malformed_input", {"field": "plan_ref.approval." + field_name}
+                "missing_required_field", {"field": "plan_ref.approval.evidence." + member}
+            )
+        if not isinstance(value, str):
+            return _invalid(
+                "malformed_input", {"field": "plan_ref.approval.evidence." + member}
             )
 
     producer = plan_ref.get("producer")
@@ -432,6 +522,13 @@ def _validate_plan_ref(plan_ref: dict) -> Result:
                 "malformed_input", {"field": "plan_ref.producer." + field_name}
             )
     return _accept()
+
+
+def _has_identity(record: dict) -> bool:
+    return any(
+        isinstance(record.get(key), str) and record.get(key).strip()
+        for key in _AUTHORITY_KEYS
+    )
 
 
 def _validate_fixed_issues(issue_list, repo: str) -> Result:
@@ -492,7 +589,8 @@ def guard_frozen_scope(scope, mode=None, fixed_issues=None) -> Result:
 
     ``scope`` is an ``Assignment`` or ``ArmedRun``. A scope of any other type is
     invalid, never accepted and never raised. Distinct reason codes for
-    managed->standalone, standalone->managed, and post-freeze scope growth."""
+    managed->standalone, standalone->managed, any other mode change
+    (``mode_change``), and post-freeze scope growth."""
     if isinstance(scope, ArmedRun):
         assignment = scope.assignment
     elif isinstance(scope, Assignment):
@@ -581,12 +679,22 @@ def _validate_policy_value(field_name: str, value) -> Result:
             return _accept()
         return _invalid(field_name, {"cause": "invalid_value"})
     if field_name in ("dispatch_cap_per_issue", "gv_retries"):
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        if _is_positive_int(value):
             return _accept()
         return _invalid(field_name, {"cause": "invalid_value"})
     if _is_finite_positive(value):
         return _accept()
     return _invalid(field_name, {"cause": "invalid_value"})
+
+
+def _validate_extension_value(field_name: str, value) -> Result:
+    if field_name in ("dispatch_cap_per_issue", "gv_retries"):
+        if _is_positive_int(value):
+            return _accept()
+        return _invalid("invalid_policy_value", {"field": field_name})
+    if _is_finite_positive(value):
+        return _accept()
+    return _invalid("invalid_policy_value", {"field": field_name})
 
 
 def _narrow(policy: BoundsPolicy, overrides: dict) -> Result:
@@ -648,23 +756,26 @@ def evaluate_limits(
     now,
     dependencies=None,
 ) -> Result:
-    """Evaluate D3 limits. ``approval_time`` and ``now`` are explicit UTC
-    arguments. Returns ``complete`` when no limit is reached, else ``incomplete``
-    naming the limit. A limit is reached at >= its value. Unknown usage never
-    stops the run and is reported as ``spend`` ``USAGE_UNKNOWN`` with
+    """Evaluate D3 limits. ``approval_time`` and ``now`` must be strict UTC (aware
+    ``datetime`` at zero offset, or a strict ISO 8601 string); anything else is
+    invalid, never raised. Returns ``complete`` when no limit is reached, else
+    ``incomplete`` naming the limit. A limit is reached at >= its value. Unknown
+    usage never stops the run and is reported as ``spend`` ``USAGE_UNKNOWN`` with
     ``spend_cap_enforceable`` false. Per-Issue dispatch cap marks only that Issue
     incomplete; siblings continue unless ``dependencies`` maps an Issue to the
     Issues it depends on."""
     if not isinstance(counters, RunCounters):
         return _invalid("malformed_input", {"field": "counters"})
 
-    approval_dt = _parse_dt(approval_time)
-    now_dt = _parse_dt(now)
+    approval_dt = _coerce_utc(approval_time)
+    now_dt = _coerce_utc(now)
+    if approval_dt is None or now_dt is None:
+        field_name = "approval_time" if approval_dt is None else "now"
+        return _invalid("malformed_input", {"field": field_name})
+
     elapsed_hours = (now_dt - approval_dt).total_seconds() / 3600.0
 
-    measured = (
-        isinstance(counters.spend, (int, float)) and not isinstance(counters.spend, bool)
-    )
+    measured = _is_measured_usage(counters.spend)
     detail = {"spend": _normalized_spend(counters)}
     if policy.spend_cap is not None:
         detail["spend_cap_enforceable"] = measured
@@ -711,14 +822,15 @@ def evaluate_limits(
 def extend_limit(policy: BoundsPolicy, field: str, new_value) -> Result:
     """Raise a limit (owner authority only, enforced by the caller). Counters are
     held separately and never touched, so a used counter is preserved. The new
-    value must be a valid, finite, positive limit value."""
+    value must be a valid, finite, positive limit value; ``None``, NaN, inf and
+    non-positive values are invalid for every limit including ``spend_cap``."""
     if not isinstance(policy, BoundsPolicy):
         return _invalid("malformed_input", {"field": "policy"})
     if field not in _EXTENDABLE_LIMITS:
         return _invalid("unknown_limit_field", {"field": field})
-    check = _validate_policy_value(field, new_value)
+    check = _validate_extension_value(field, new_value)
     if not check.ok:
-        return _invalid("invalid_policy_value", {"field": field})
+        return check
     current = getattr(policy, field)
     if current is None:
         return _invalid("no_limit_to_extend", {"field": field})

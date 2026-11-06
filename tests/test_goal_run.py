@@ -438,10 +438,10 @@ class FixBatch1Tests(unittest.TestCase):
         cases.append(("lead", e, "malformed_input"))
         e = _entry()
         e["plan_ref"]["approval"]["authority"] = {}
-        cases.append(("authority", e, "malformed_input"))
+        cases.append(("authority", e, "missing_required_field"))
         e = _entry()
         e["plan_ref"]["approval"]["evidence"] = {}
-        cases.append(("evidence", e, "malformed_input"))
+        cases.append(("evidence", e, "missing_required_field"))
         e = _entry(mode="managed")
         e["coordinator"] = {}
         cases.append(("coordinator", e, "managed_missing_bindings"))
@@ -563,6 +563,15 @@ class FixBatch1Tests(unittest.TestCase):
         )
         self.assertTrue(past_matching.may_proceed)
 
+        for bad in ("2026-11-06Z", "2026-11-06T12:00:00+05:00Z"):
+            with self.subTest(bad=bad):
+                result = gr.parse_turn_end_marker(
+                    "WAKE: %s \u2014 resume" % bad,
+                    next_wake_at="2026-11-06T12:00:00Z",
+                    next_action="resume",
+                )
+                self.assertEqual(result.reason, "wake_time_not_utc")
+
     def test_f6_unmeasured_spend_normalizes_unknown(self):
         self.assertEqual(gr.RunCounters().spend, gr.USAGE_UNKNOWN)
 
@@ -622,6 +631,9 @@ class FixBatch1Tests(unittest.TestCase):
         self.assertIn("U+2014", doc)
         self.assertIn("marker_not_last", doc)
         self.assertIn("multiple_markers", doc)
+        self.assertIn("mode_change", doc)
+        self.assertIn("path@revision", doc)
+        self.assertIn(">=", doc)
 
     def test_a7_request_id_conflict_across_issues(self):
         counters = gr.RunCounters()
@@ -646,6 +658,113 @@ class FixBatch1Tests(unittest.TestCase):
             "2026-11-06T01:00:00Z",
         )
         self.assertIs(measured.detail["spend_cap_enforceable"], True)
+
+    def test_f1_member_validation(self):
+        e = _entry()
+        e["lead"]["model"] = ""
+        self._assert_arm_reason("lead.model empty", e, "missing_required_field")
+
+        e = _entry()
+        del e["lead"]["harness"]
+        self._assert_arm_reason("lead.harness missing", e, "missing_required_field")
+
+        e = _entry()
+        e["plan_ref"]["approval"]["authority"] = {"unrelated": True}
+        self._assert_arm_reason("authority identity", e, "missing_required_field")
+
+        e = _entry()
+        e["plan_ref"]["approval"]["evidence"] = {"reference": "r"}
+        self._assert_arm_reason("evidence.digest", e, "missing_required_field")
+
+        e = _entry(mode="managed")
+        e["coordinator"] = {"unrelated": True}
+        self._assert_arm_reason("coordinator.agent_id", e, "missing_required_field")
+
+    def _assert_arm_reason(self, name, entry, expected):
+        with self.subTest(name=name):
+            result = gr.arm(entry)
+            self.assertEqual(result.outcome, "invalid", name)
+            self.assertEqual(result.reason, expected, name)
+
+    def test_f1_source_revision_required(self):
+        e = _entry()
+        e["source"] = "docs/plans/2099-01-01-synthetic-plan.md"
+        result = gr.arm(e)
+        self.assertEqual(result.outcome, "invalid")
+        self.assertEqual(result.reason, "source_revision_missing")
+
+        e = _entry()
+        e["source"] = "docs/plans/x.md@%s" % _SHA_9
+        result = gr.arm(e)
+        self.assertEqual(result.outcome, "invalid")
+        self.assertEqual(result.reason, "source_revision_mismatch")
+
+    def test_f3_extension_rejects_invalid_values(self):
+        spend_policy = gr.apply_policy(goal={"spend_cap": 10.0}).value
+        for field, policy in (
+            ("dispatch_cap_per_issue", gr.apply_policy().value),
+            ("spend_cap", spend_policy),
+        ):
+            for bad in (None, float("nan"), float("inf"), 0, -1, 2.5):
+                with self.subTest(field=field, value=bad):
+                    result = gr.extend_limit(policy, field, bad)
+                    self.assertFalse(result.ok, (field, bad))
+
+    def test_n1_measured_usage_predicate(self):
+        policy = gr.apply_policy(goal={"spend_cap": 10.0}).value
+        for bad in (float("nan"), float("inf"), -5.0):
+            with self.subTest(spend=bad):
+                counters = gr.RunCounters(spend=bad)
+                result = gr.evaluate_limits(
+                    policy, counters, "2026-11-06T00:00:00Z", "2026-11-06T01:00:00Z"
+                )
+                self.assertEqual(result.detail["spend"], gr.USAGE_UNKNOWN)
+                self.assertIs(result.detail["spend_cap_enforceable"], False)
+                self.assertEqual(result.outcome, "complete")
+
+    def test_m1_assignment_to_dict_roundtrip(self):
+        assignment = gr.normalize_entry(_entry()).value
+        as_dict = assignment.to_dict()
+        self.assertIsInstance(as_dict["lead"], dict)
+        self.assertIsInstance(as_dict["plan_ref"], dict)
+        self.assertEqual(as_dict["fixed_issues"], [_ISSUE_1])
+
+        roundtripped = json.loads(json.dumps(as_dict))
+        self.assertEqual(roundtripped["lead"]["agent_id"], "synthetic-agent-001")
+        self.assertEqual(roundtripped["fixed_issues"], [_ISSUE_1])
+
+        with self.assertRaises(TypeError):
+            assignment.lead["agent_id"] = "x"
+
+    def test_m2_evaluate_limits_rejects_non_utc_times(self):
+        import datetime as _dt
+
+        policy = gr.apply_policy().value
+        counters = gr.RunCounters()
+
+        naive = _dt.datetime(2026, 11, 6, 12, 0, 0)
+        result = gr.evaluate_limits(policy, counters, naive, "2026-11-06T13:00:00Z")
+        self.assertEqual(result.outcome, "invalid")
+        self.assertEqual(result.reason, "malformed_input")
+
+        aware_non_utc = _dt.datetime(
+            2026, 11, 6, 12, 0, 0, tzinfo=_dt.timezone(_dt.timedelta(hours=5))
+        )
+        result = gr.evaluate_limits(
+            policy, counters, "2026-11-06T00:00:00Z", aware_non_utc
+        )
+        self.assertEqual(result.outcome, "invalid")
+
+        result = gr.evaluate_limits(
+            policy, counters, "2026-11-06T00:00:00", "2026-11-06T01:00:00"
+        )
+        self.assertEqual(result.outcome, "invalid")
+
+    def test_k1_mode_change_reason(self):
+        standalone = gr.normalize_entry(_entry()).value
+        result = gr.guard_frozen_scope(standalone, mode="bogus")
+        self.assertEqual(result.outcome, "invalid")
+        self.assertEqual(result.reason, "mode_change")
 
 
 if __name__ == "__main__":
