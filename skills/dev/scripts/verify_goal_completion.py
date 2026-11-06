@@ -62,15 +62,20 @@ for an approved local fallback: the entry records ``executor`` and
 ``fallback_approved_by``, and the executor is ``<id>`` or ``host:<id>``. A named
 environment (for example a preview) is never test proof. An entry is LOCAL
 when it records a non-CI ``executor``, a ``host:`` environment, or a run id that
-is not a GitHub run id; a LOCAL entry never satisfies ``ci`` or ``ci:<runner>``
-(``local_run_not_ci``), whether or not it is approved. A missing check
+is not a GitHub run id (a positive int, or ASCII digits with no sign, space or
+leading zero; ``_is_github_run_id``); a LOCAL entry never satisfies ``ci`` or
+``ci:<runner>`` (``local_run_not_ci``), whether or not it is approved. One
+function, ``_authorize_run``, applies this rule to every run entry GV consumes:
+the test proof, every governing prior-gate run, and the post-merge rerun
+(``RUN_CONSUMERS``). A missing check
 environment, or a missing runner descriptor where ``ci:<runner>`` needs one, is
 ``inconclusive``. A different executor class or runner never verifies.
 ``fallback_approved_by`` is GV's spelling; the template does not define it yet.
 
 Prior gate (B2). ``applies_verbatim`` selects ``ci_runs`` entries by subject
 first (the post-merge ``tested_subject`` when recorded, else the runs at the PR
-head). Per job, the latest run by ``observed_at`` governs; attempts order only
+head: a merge ref recording ``head: <head>``, or a head-kind subject whose
+``sha`` is the head). Per job, the latest run by ``observed_at`` governs; attempts order only
 within one run id; an order that cannot be established is ``inconclusive``
 (``prior_gate_ambiguous``). Every governing run must have concluded
 ``success``, whatever the criterion evaluators are, and its tested subject must
@@ -175,10 +180,14 @@ _REVERT_RE = re.compile(r"This reverts commit ([0-9a-fA-F]{7,40})")
 # GitHub's UI revert PR, squash-merged: "Reverts OWNER/REPO#N".
 _REVERT_PR_RE = re.compile(r"^Reverts ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)\s*$", re.MULTILINE)
 # A CI evidence_ref: "run 130 [job <name>] attempt 1 (...)" or "<run>/<job>/attempt-<n>".
-# The text form anchors on the trailing "attempt <n>", so a job name may hold
-# hyphens and spaces. "run <id>" with no attempt parses with attempt None.
-_RUN_REF_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?:\s+job\s+(?P<job>\S.*?))?"
+# In the text form the job name extends to the LAST "attempt <n>" clause in the
+# ref (the job group is greedy), so a name may hold hyphens, spaces and even
+# "attempt 1". Any text after that clause is the existing explanatory suffix.
+# "run <id>" with no attempt parses with attempt None.
+_RUN_REF_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?:\s+job\s+(?P<job>\S.*))?"
                          r"\s+attempt\s+#?(?P<attempt>[0-9]+)(?![0-9A-Za-z_-])")
+# R3-F2: the one GitHub run-id shape (ASCII digits, no sign, space or leading zero).
+_GITHUB_RUN_ID_RE = re.compile(r"[1-9][0-9]*")
 _RUN_BARE_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?![0-9A-Za-z_-])")
 _RUN_PATH_RE = re.compile(r"^(?P<run>[^/\s]+)/(?P<job>[^/]+)/attempt-(?P<attempt>[0-9]+)$")
 _COMMENT_REF_RE = re.compile(r"issuecomment-([0-9]+)")
@@ -543,6 +552,29 @@ def _run_identity(evidence_ref):
     return (bare.group("run"), None, None) if bare else None
 
 
+def _is_github_run_id(value) -> bool:
+    """The one GitHub run-id rule (R3-F2). A run id is CI only when it is a
+    positive int (never a bool) or a str of ASCII digits with no sign, no space
+    and no leading zero. Everything else, including ``0``, is LOCAL."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value > 0
+    if isinstance(value, str):
+        return _GITHUB_RUN_ID_RE.fullmatch(value) is not None
+    return False
+
+
+def _subject_at_head(subject, head) -> bool:
+    """A tested subject is at the PR head when it records ``head: <head>`` (a
+    merge ref) or is itself a head-kind subject whose ``sha`` is the head (R3-F3)."""
+    if not isinstance(subject, dict):
+        return False
+    if _sha_eq(subject.get("head"), head):
+        return True
+    return subject.get("kind") == "head" and _sha_eq(subject.get("sha"), head)
+
+
 def _latest_run(runs):
     """The governing run among one job's runs, or None when the order is unknown."""
     if len(runs) == 1:
@@ -576,15 +608,34 @@ def _is_local(entry) -> bool:
     environment = entry.get("environment")
     if isinstance(environment, str) and environment.strip().startswith("host:"):
         return True
-    run_id = entry.get("run")
-    if isinstance(run_id, bool) or not (isinstance(run_id, int) or (isinstance(run_id, str) and run_id.isdigit())):
-        return True
-    return False
+    return not _is_github_run_id(entry.get("run"))
 
 
 def _is_approved_fallback(entry) -> bool:
     return (_is_local(entry) and isinstance(entry.get("executor"), str) and bool(entry.get("executor"))
             and bool(entry.get("fallback_approved_by")))
+
+
+# Every site that consumes a ``ci_runs`` entry as evidence. Each one calls
+# _authorize_run with its own name; the tests enumerate this tuple.
+RUN_CONSUMERS = ("test_proof", "prior_gate", "post_merge_rerun")
+
+
+def _authorize_run(entry, check, consumer):
+    """The one executor-class and authorization rule (R3-F1) for a consumed run
+    entry against its required check. None when accepted, else (cls, code,
+    detail). LOCAL never satisfies ``ci`` or ``ci:<runner>``; ``host:<id>``
+    needs an approved fallback with a matching executor; a named environment is
+    never test proof; a missing environment is inconclusive."""
+    if not isinstance(entry, dict):
+        return INCONCLUSIVE, "ci_run_unrecorded", {"consumer": consumer}
+    if not isinstance(check, dict):
+        return INCONCLUSIVE, "required_check_unbound", {"consumer": consumer, "job": entry.get("job")}
+    verdict = _environment_verdict(check.get("environment"), entry)
+    if verdict is None:
+        return None
+    cls, code, detail = verdict
+    return cls, code, dict(detail, consumer=consumer, job=entry.get("job"))
 
 
 def _environment_verdict(check_env, entry):
@@ -1186,6 +1237,10 @@ class _Evaluation:
                 if not runs and not ambiguous:
                     self.add("tree_unreadable", INCONCLUSIVE, why="no prior gate run for the tested subject", **tag)
                 for run in runs:
+                    failed = _authorize_run(run, _find(rec.get("checks"), "id", run.get("job")), "prior_gate")
+                    if failed:
+                        detail = dict(failed[2], run=run.get("run"), attempt=run.get("attempt"))
+                        self.add(failed[1], failed[0], **detail, **tag)
                     if run.get("conclusion") != "success":
                         self.add("prior_gate_not_success", NOT_COMPLETE, job=run.get("job"), run=run.get("run"),
                                  attempt=run.get("attempt"), conclusion=run.get("conclusion"), **tag)
@@ -1219,6 +1274,11 @@ class _Evaluation:
                 elif run.get("environment") and run.get("environment") != entry.get("environment"):
                     fail("environment_mismatch", NOT_COMPLETE, run=run.get("environment"),
                          recorded=entry.get("environment"))
+                else:
+                    failed = _authorize_run(entry, _find(rec.get("checks"), "id", entry.get("job")),
+                                            "post_merge_rerun")
+                    if failed:
+                        fail(failed[1], failed[0], **failed[2])
         elif gate in (None, "pending"):
             self.add("post_merge_pending", INCONCLUSIVE, **tag)
         elif gate in _FAILED_GATE_RESULTS:
@@ -1274,7 +1334,7 @@ class _Evaluation:
         latest run by recorded completion time (``observed_at``) governs, so a
         later failure is never masked by an earlier success. Attempts order only
         within one run id. An order that cannot be established is ambiguous."""
-        named = pm.get("tested_subject")
+        named = pm.get("tested_subject")  # else: runs at the PR head (_subject_at_head)
         named_sha = named.get("sha") if isinstance(named, dict) else named
         groups = {}
         for run in rec.get("ci_runs") or []:
@@ -1284,7 +1344,7 @@ class _Evaluation:
             if named_sha is not None:
                 if not _sha_eq(subject.get("sha"), named_sha):
                     continue
-            elif not _sha_eq(subject.get("head"), rec.get("headRefOid")):
+            elif not _subject_at_head(subject, rec.get("headRefOid")):
                 continue
             job = run.get("job")
             if not isinstance(job, str):
@@ -1506,7 +1566,7 @@ class _Evaluation:
             if not _sha_eq(subject.get("sha"), ctx["merge"]):
                 return NOT_COMPLETE, "test_subject_mismatch", None, {"tested": subject.get("sha")}
         else:
-            if not _sha_eq(subject.get("head"), rec.get("headRefOid")) or _sha(subject.get("sha")) is None:
+            if not _subject_at_head(subject, rec.get("headRefOid")) or _sha(subject.get("sha")) is None:
                 return NOT_COMPLETE, "test_subject_mismatch", None, {"tested": subject}
             tested_tree = self.tree_of(_sha(subject.get("sha")), {"prs": [ctx["prq"]]})
             merge_tree = self.tree_of(ctx["merge"], {"prs": [ctx["prq"]]})
@@ -1525,9 +1585,9 @@ class _Evaluation:
                 check["definition_ref"].get("ref"), check["definition_ref"].get("rev")):
             return NOT_COMPLETE, "definition_mismatch", None, {"run": definition,
                                                               "check": check["definition_ref"]}
-        environment = _environment_verdict(check.get("environment"), entry)
-        if environment is not None:
-            return environment[0], environment[1], None, environment[2]
+        authorized = _authorize_run(entry, check, "test_proof")
+        if authorized is not None:
+            return authorized[0], authorized[1], None, authorized[2]
         pm_check = _find(pm.get("checks"), "id", job)
         if pm_check is None:
             return INCONCLUSIVE, "post_merge_check_missing", None, {"check": job}
