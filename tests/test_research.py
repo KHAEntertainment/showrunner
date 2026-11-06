@@ -302,6 +302,12 @@ class ResearchAbRecordTests(unittest.TestCase):
             self.text,
         )
 
+    def test_efforts_run_inside_m2_without_pulling_in_other_work(self) -> None:
+        self.assertIn(
+            "they run inside M2: no work slated for another milestone is fetched and pulled in here",
+            self.text,
+        )
+
     def test_owner_reviews_blind_before_the_key_is_revealed(self) -> None:
         self.assertIn(
             "The owner reviews both outputs per effort blind (labelled X/Y), and the A/B key is revealed after review.",
@@ -395,6 +401,7 @@ class MutationTests(unittest.TestCase):
         (AB_RECORD, "## 6. Effort 2 — U1 workspace panel"),
         (AB_RECORD, "## 7. Effort 3 — U1 Scout tool"),
         (AB_RECORD, "research only over the existing U1 outline (the foreman epic artifact `u1-binary-components-phase`)"),
+        (AB_RECORD, "they run inside M2: no work slated for another milestone is fetched and pulled in here"),
         (AB_RECORD, "The owner reviews both outputs per effort blind (labelled X/Y), and the A/B key is revealed after review."),
         (AB_RECORD, "**Status: pending**"),
         (AB_RECORD, "Measured values only."),

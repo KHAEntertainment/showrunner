@@ -17,6 +17,8 @@ Implements `KHAEntertainment/showrunner#207` (M2 package **P1-02**), criterion 4
 | Owner ruling | `ruling-207-pin-2026-11-05` (2026-11-05) — the C2 pin `advise-project-approach`, directory digest `sha256:2386030e…896c`, is owner-confirmed and C2 may activate against it. |
 | Owner ruling | `ruling-207-ab-u1-2026-11-05` (2026-11-05) — the efforts are set by owner ruling (open: q-207-l5b): **Effort 1 — U1 unified CLI**, **Effort 2 — U1 workspace panel**, **Effort 3 — U1 Scout tool**. It supersedes `ruling-207-ab-efforts-2026-11-05`. |
 
+The three efforts are research runs on the existing U1 outline, and they run inside M2: no work slated for another milestone is fetched and pulled in here.
+
 Every SDP line citation in this record is a line number **at revision `7177580c…`** (819 lines); the digest above was recomputed locally from that artifact before this record was written. If the SDP is re-pinned, this record stops and re-checks rather than citing a stale revision.
 
 ## 2. Rule — no claim before 3/3
