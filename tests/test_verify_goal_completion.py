@@ -1025,10 +1025,8 @@ class TestFixBatch1(unittest.TestCase):
                     pr(d)["ci_runs"][1]["environment"] = env
                 result, _, _ = scenario(mutate)
                 self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
-        self.assertIsNone(gv._environment_verdict("ci:ubuntu-latest", {"environment": "ubuntu-latest, python 3.x"},
-                                                  False))
-        self.assertIsNone(gv._environment_verdict("ci:ubuntu-latest", {"environment": "ubuntu-latest / node 22 / x"},
-                                                  False))
+        self.assertIsNone(gv._environment_verdict("ci:ubuntu-latest", {"run": 130, "environment": "ubuntu-latest, python 3.x"}))
+        self.assertIsNone(gv._environment_verdict("ci:ubuntu-latest", {"run": 130, "environment": "ubuntu-latest / node 22 / x"}))
 
     def test_m2_runner_prefix_is_not_a_match(self):
         def mutate(d):
@@ -1069,7 +1067,7 @@ class TestFixBatch1(unittest.TestCase):
 
     def test_m2_local_fallback_never_satisfies_a_ci_check(self):
         result, _, _ = scenario(lambda d: local_fallback(d, check_env="ci"))
-        self.assertNotVerified(result, "not_complete", "environment_mismatch")
+        self.assertNotVerified(result, "not_complete", "local_run_not_ci")
 
     # B2: the prior gate must have passed, whatever the evaluators ----------------------
 
@@ -1219,6 +1217,252 @@ class TestFixBatch1(unittest.TestCase):
         stale = next(r for r in result.record["reason_codes"] if r["code"] == "source_revision_stale")
         self.assertEqual(stale["issues"], [ISSUE])
 
+
+# --- Fix batch 2 regressions (PR #237 round 2 R2-F1..F4, R2-A1, QA Medium-4, Low-1) --------
+# Each test reproduces a wrong outcome seen at e95d393 and asserts the fixed one.
+
+
+def demo_only_verbatim(data):
+    make_verbatim(data)
+    only_criteria(data, "AC-3@9f3c")
+
+
+def older_run_100(conclusion, observed_at="2099-01-01T01:00:00Z"):
+    run = {"run": 100, "job": "build", "attempt": 5,
+           "definition_ref": {"ref": ".github/workflows/ci.yml#build", "rev": "2ab2b59"},
+           "tested_subject": {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4", "base_oid": "b720c68"},
+           "environment": "ubuntu-latest", "conclusion": conclusion,
+           "applicability": {"to": "4e683b4", "established": True}}
+    if observed_at is not None:
+        run["observed_at"] = observed_at
+    return run
+
+
+def rename_job(data, job):
+    for run in pr(data)["ci_runs"]:
+        run["job"] = job
+    pr(data)["checks"][0]["id"] = job
+    pm(data)["checks"][0]["id"] = job
+    pm(data)["run"]["job"] = job
+    pm(data)["criteria"][0]["evidence_ref"] = f"run 130 job {job} attempt 1"
+
+
+class TestFixBatch2(unittest.TestCase):
+    def assertNotVerified(self, result, outcome, code):
+        self.assertEqual(result.kind, "result", result.record)
+        self.assertEqual(result.outcome, outcome, result.record.get("reason_codes"))
+        self.assertIn(code, codes(result), result.record.get("reason_codes"))
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(gv.read_result(result.record)[0], "accept", gv.read_result(result.record))
+
+    # R2-F1 + QA Medium-4: executor class is independent of approval -------------------------
+
+    def test_r2f1_unapproved_host_executor_never_satisfies_a_ci_check(self):
+        result, _, _ = scenario(lambda d: local_fallback(d, check_env="ci", approved=False))
+        self.assertNotVerified(result, "not_complete", "local_run_not_ci")
+        runner, _, _ = scenario(lambda d: local_fallback(d, check_env="ci:ubuntu-latest", approved=False))
+        self.assertNotVerified(runner, "not_complete", "local_run_not_ci")
+
+    def test_r2f1_host_environment_without_executor_is_local(self):
+        result, _, _ = scenario(lambda d: pr(d)["ci_runs"][1].update(environment="host:mac-1"))
+        self.assertNotVerified(result, "not_complete", "local_run_not_ci")
+
+    def test_r2f1_non_github_run_id_without_executor_is_local(self):
+        def mutate(d):
+            pr(d)["ci_runs"][1]["run"] = "manual-130"
+            pm(d)["run"]["run"] = "manual-130"
+            pm(d)["criteria"][0]["evidence_ref"] = "run manual-130 attempt 1"
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "not_complete", "local_run_not_ci")
+
+    def test_r2f1_approved_local_entry_never_satisfies_a_ci_check(self):
+        result, _, _ = scenario(lambda d: local_fallback(d, check_env="ci"))
+        self.assertNotVerified(result, "not_complete", "local_run_not_ci")
+
+    def test_r2f1_ci_entry_never_satisfies_a_host_check(self):
+        result, _, _ = scenario(lambda d: pr(d)["checks"][0].update(environment="host:mac-1"))
+        self.assertNotVerified(result, "not_complete", "environment_mismatch")
+
+    def test_r2f1_local_classification_shapes(self):
+        self.assertFalse(gv._is_local({"run": 130}))
+        self.assertFalse(gv._is_local({"run": "130", "executor": "ci"}))
+        for entry in ({"run": 130, "executor": "host:mac-1"}, {"run": 130, "environment": "host:mac-1"},
+                      {"run": "local-7"}, {"run": None}, {"run": True}):
+            with self.subTest(entry):
+                self.assertTrue(gv._is_local(entry))
+
+    # R2-F2: unreadable trees ------------------------------------------------------------------
+
+    def test_r2f2_both_trees_unreadable_is_inconclusive(self):
+        def blank(g):
+            g[f"repos/{REPO}/commits/7a0b5d1"] = {}
+            g[f"repos/{REPO}/commits/{MERGE}"] = {}
+        result, _, _ = scenario(demo_only_verbatim, blank)
+        self.assertNotVerified(result, "inconclusive", "tree_unreadable")
+        reason = next(r for r in result.record["reason_codes"] if r["code"] == "tree_unreadable")
+        self.assertEqual(reason["detail"]["reads"], ["tree:7a0b5d1", f"tree:{MERGE}"])
+        self.assertIsNone(result.record["repository_facts"]["pull_requests"][0]["tree_equivalent"])
+
+    def test_r2f2_one_tree_unreadable_is_inconclusive(self):
+        result, _, _ = scenario(demo_only_verbatim, lambda g: g.update({f"repos/{REPO}/commits/{MERGE}": {}}))
+        self.assertNotVerified(result, "inconclusive", "tree_unreadable")
+
+    def test_r2f2_reader_rejects_verified_verbatim_without_tree_equivalence(self):
+        good, _, _ = scenario(demo_only_verbatim)
+        self.assertEqual(good.outcome, "verified")
+        self.assertEqual(good.record["repository_facts"]["pull_requests"][0]["gate_result"], "applies_verbatim")
+        for value in (False, None):
+            with self.subTest(value=value):
+                broken = copy.deepcopy(good.record)
+                broken["repository_facts"]["pull_requests"][0]["tree_equivalent"] = value
+                self.assertEqual(gv.read_result(broken)[0], "unusable")
+        dropped = copy.deepcopy(good.record)
+        dropped["repository_facts"]["pull_requests"][0].pop("tree_equivalent")
+        self.assertEqual(gv.read_result(dropped)[0], "unusable")
+
+    # R2-F3: prior gate selection ----------------------------------------------------------------
+
+    def test_r2f3_newer_failure_is_not_masked_by_an_older_high_attempt_success(self):
+        def mutate(d):
+            demo_only_verbatim(d)
+            pr(d)["ci_runs"][0].update(conclusion="failure", observed_at="2099-01-01T12:00:00Z")
+            pr(d)["ci_runs"].append(older_run_100("success"))
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "not_complete", "prior_gate_not_success")
+
+    def test_r2f3_newer_success_after_an_older_failure_verifies(self):
+        def mutate(d):
+            demo_only_verbatim(d)
+            pr(d)["ci_runs"][0].update(observed_at="2099-01-01T12:00:00Z")
+            pr(d)["ci_runs"].append(older_run_100("failure"))
+        result, _, _ = scenario(mutate)
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+
+    def test_r2f3_unorderable_runs_are_inconclusive(self):
+        def missing_time(d):
+            demo_only_verbatim(d)
+            pr(d)["ci_runs"].append(older_run_100("failure", observed_at=None))
+        result, _, _ = scenario(missing_time)
+        self.assertNotVerified(result, "inconclusive", "prior_gate_ambiguous")
+
+        def tie(d):
+            demo_only_verbatim(d)
+            pr(d)["ci_runs"].append(older_run_100("failure", observed_at=pr(d)["ci_runs"][0]["observed_at"]))
+        tied, _, _ = scenario(tie)
+        self.assertNotVerified(tied, "inconclusive", "prior_gate_ambiguous")
+
+    def test_r2f3_attempts_order_within_one_run(self):
+        def mutate(d):
+            demo_only_verbatim(d)
+            retry = copy.deepcopy(pr(d)["ci_runs"][0])
+            retry.update(attempt=2, conclusion="failure")
+            retry.pop("observed_at")
+            pr(d)["ci_runs"].append(retry)
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "not_complete", "prior_gate_not_success")
+
+    def test_r2f3_gate_runs_are_selected_by_the_recorded_tested_subject(self):
+        def other_subject(d):
+            demo_only_verbatim(d)
+            stray = older_run_100("failure", observed_at="2099-01-01T23:00:00Z")
+            stray["tested_subject"]["sha"] = "8b1c2d3"
+            pr(d)["ci_runs"].append(stray)
+        unnamed, _, _ = scenario(other_subject)
+        self.assertNotVerified(unnamed, "not_complete", "prior_gate_not_success")
+
+        def named(d):
+            other_subject(d)
+            pm(d)["tested_subject"] = {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4", "base_oid": "b720c68"}
+        selected, _, _ = scenario(named)
+        self.assertEqual(selected.outcome, "verified", selected.record["reason_codes"])
+
+    # R2-F4: text evidence-ref parser ---------------------------------------------------------
+
+    def test_r2f4_text_refs_keep_hyphenated_and_spaced_job_names(self):
+        pairs = {
+            "run 130 job build-and-test attempt 1": "130/build-and-test/attempt-1",
+            "run 130 job Skill validation attempt 1": "130/Skill validation/attempt-1",
+            "run 42 job lint - strict attempt 3": "42/lint - strict/attempt-3",
+        }
+        for text, path in pairs.items():
+            with self.subTest(text):
+                self.assertEqual(gv._run_identity(text), gv._run_identity(path))
+        self.assertEqual(gv._run_identity("run 130 job build-and-test attempt 1"), ("130", "build-and-test", 1))
+        self.assertEqual(gv._run_identity("run 130 attempt 1 (vitest re-executed on the merged tree)"),
+                         ("130", None, 1))
+        self.assertEqual(gv._run_identity("run 130"), ("130", None, None))
+        self.assertIsNone(gv._run_identity("review 2201"))
+
+    def test_r2f4_hyphenated_and_spaced_job_names_verify_end_to_end(self):
+        for job in ("build-and-test", "Skill validation"):
+            with self.subTest(job):
+                result, _, _ = scenario(lambda d, j=job: rename_job(d, j))
+                self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+                self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["run"]["job"], job)
+
+    # R2-A1: malformed nested identities never raise --------------------------------------------
+
+    def test_r2a1_non_scalar_identities_are_reported_not_raised(self):
+        mutations = (
+            lambda d: parent(d)["criteria"][0].update(id=["AC-1@9f3c"]),
+            lambda d: parent(d)["criteria"][0].update(id={"id": "AC-1@9f3c"}),
+            lambda d: parent(d)["contributions"][0].update(issue={"issue": ISSUE}),
+            lambda d: pr(d).update(parent_ref=[ISSUE]),
+            lambda d: d["workers"][0].update(agent_id=["worker-agent-1"]),
+        )
+        for mutate in mutations:
+            result, _, _ = scenario(mutate)
+            self.assertNotEqual(result.outcome, "verified")
+        good, _, _ = scenario()
+        for path, value in ((("criteria", 0, "id"), ["AC-1@9f3c"]),
+                            (("criteria", 0, "id"), {"x": 1}),
+                            (("repository_facts", "closed_issues", 0, "issue"), [ISSUE]),
+                            (("repository_facts", "closed_issues", 0, "issue"), {"x": 1})):
+            broken = copy.deepcopy(good.record)
+            target = broken
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            self.assertEqual(gv.read_result(broken)[0], "unusable")
+
+    def test_r2a1_every_scalar_leaf_replaced_by_a_container_never_raises(self):
+        def leaves(value, path=()):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    yield from leaves(item, path + (key,))
+            elif isinstance(value, list):
+                for index, item in enumerate(value):
+                    yield from leaves(item, path + (index,))
+            else:
+                yield path
+        roots = (("pull_requests", 0), ("parent_acceptance", 0), ("workers", 0))
+        count = 0
+        for root in roots:
+            base = BASE_LEDGER
+            for key in root:
+                base = base[key]
+            for leaf in leaves(base):
+                for replacement in ([1], {"x": 1}):
+                    if isinstance(leaf[-1], int) and isinstance(replacement, list):
+                        continue  # the ledger grammar has no list-of-lists; render() cannot emit one
+                    def mutate(d, p=root + leaf, r=replacement):
+                        target = d
+                        for key in p[:-1]:
+                            target = target[key]
+                        target[p[-1]] = copy.deepcopy(r)
+                    result, _, _ = scenario(mutate)
+                    count += 1
+                    if result.kind == "result" and result.outcome == "verified":
+                        self.assertEqual(gv.read_result(result.record)[0], "accept", root + leaf)
+        self.assertGreater(count, 100)
+
+    # QA Low-1: stale criterion revision while the records agree ----------------------------------
+
+    def test_low1_stale_criterion_revision_with_agreeing_criteria_refs_is_inconclusive(self):
+        result, _, _ = scenario(lambda d: parent(d)["criteria"][0].update(id="AC-1@aaaa"))
+        self.assertNotVerified(result, "inconclusive", "criteria_revision_stale")
+        self.assertNotIn("criteria_ref_mismatch", codes(result))
+        self.assertEqual(line(result, "AC-1@aaaa")["state"], "inconclusive")
 
 # --- AC7: D3 retries --------------------------------------------------------------
 
