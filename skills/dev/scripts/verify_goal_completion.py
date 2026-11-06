@@ -68,11 +68,22 @@ and whose ledger conclusion is ``success`` is then confirmed against GitHub
 Actions by one method, ``_Evaluation.confirm_ci_run``, through two pinned GET
 reads: ``repos/{repo}/actions/runs/{run}/attempts/{n}`` and its ``/jobs``
 (paginated). The run is accepted only when the API reports ``conclusion:
-success``, ``run_attempt`` equal to the entry's attempt, ``head_sha`` equal to
-the tested subject GitHub reports (a merge-ref subject's ``head``, which a
-``pull_request`` run reports; otherwise the subject's ``sha``, which a head or
-push run reports), and a job named exactly the entry's ``job`` with every such
-job concluded ``success``. A read that fails after the D3 retries, or an answer
+success``, ``run_attempt`` equal to the entry's attempt, an ``event`` and
+``head_sha`` matching the one binding ``_Evaluation.ci_binding`` computes, and a
+job named exactly the entry's ``job`` with every such job concluded
+``success``. The binding comes from authoritative facts, never from the
+ledger's ``kind``/``head`` alone (fix batch 1). A post-merge rerun, including
+test proof under ``full_required_gate_rerun``, must be a ``push`` or
+``workflow_dispatch`` run at the recorded merge sha, whatever its subject says.
+Any other run is classified by ``_ci_subject``: a merge ref must be a
+``pull_request`` run (listing this PR when the API lists any) whose
+``head_sha`` is the merge ref's ``head``, which must be the PR head; a
+head-kind subject must be a ``push`` or ``workflow_dispatch`` run at its
+``sha``, which must be the PR head. A missing or unknown kind, or a merge ref
+with no ``head``, is ``inconclusive`` (``ci_subject_unbound``) with no
+fallback; a subject naming another commit than the PR head is ``not_complete``
+(``ci_subject_mismatch``); a missing or other event is ``inconclusive``
+(``ci_run_event_unbound``). A read that fails after the D3 retries, or an answer
 of the wrong shape, is ``inconclusive`` (``ci_run_unreadable``, naming the
 read); a run not yet completed is ``inconclusive`` (``ci_run_pending``); a
 readable mismatch is ``not_complete`` (``ci_run_api_mismatch``, naming the run,
@@ -597,18 +608,30 @@ def _ambiguous_evidence_ref(evidence_ref) -> bool:
     return len(_ATTEMPT_CLAUSE_RE.findall(text)) > 1
 
 
-def _ci_head_sha(subject):
-    """The ``head_sha`` GitHub Actions reports for a run over ``subject``: a
-    merge ref's recorded ``head`` (a ``pull_request`` run), else the subject's
-    own ``sha`` (a head-kind subject or a pushed merge commit). None when the
-    subject names no object id."""
-    if isinstance(subject, str):
-        return _sha(subject)
+# Fix batch 1: the Actions ``event`` each binding class accepts. A merge ref is
+# only ever tested by a ``pull_request`` run; a head-kind subject or a
+# post-merge rerun only by a run on the commit itself (``push``, or a manual
+# ``workflow_dispatch`` on that commit). Any other event is unbound.
+_CI_EVENTS = {"merge_ref": ("pull_request",), "head": ("push", "workflow_dispatch"),
+              "rerun": ("push", "workflow_dispatch")}
+_KNOWN_CI_EVENTS = ("pull_request", "push", "workflow_dispatch")
+
+
+def _ci_subject(subject):
+    """The one classifier of a ``ci_runs`` tested subject (fix batch 1, shared
+    with the tests' synthesizer). Returns (class, sha): a ``merge_ref`` with its
+    recorded ``head`` (what a ``pull_request`` run reports), or a ``head`` with
+    its ``sha``. A missing binding field gives (class, None); a missing or
+    unknown kind, or a subject that is not a map, gives (None, None). There is
+    no fallback between the two fields."""
     if not isinstance(subject, dict):
-        return None
-    if subject.get("kind") != "head" and subject.get("head") is not None:
-        return _sha(subject.get("head"))
-    return _sha(subject.get("sha"))
+        return None, None
+    kind = subject.get("kind")
+    if kind == "merge_ref":
+        return "merge_ref", _sha(subject.get("head"))
+    if kind == "head":
+        return "head", _sha(subject.get("sha"))
+    return None, None
 
 
 def _is_github_run_id(value) -> bool:
@@ -1169,6 +1192,9 @@ class _Evaluation:
             return ctx
         if current.get("branch") != branch:
             self.add("wrong_base", NOT_COMPLETE, recorded=branch, integrated=current.get("branch"), **tag)
+        # The merge sha CI proof binds to (confirm_ci_run). The fresh PR read below
+        # must equal it, or the PR is not_complete (merge_sha_mismatch).
+        ctx["bound_merge"] = current.get("merge_sha")
         self.check_consistency(prq, rec, current, tag)
 
         entries = [e for e in rec.get("post_merge") or []
@@ -1305,7 +1331,7 @@ class _Evaluation:
                         self.add("prior_gate_not_success", NOT_COMPLETE, job=run.get("job"), run=run.get("run"),
                                  attempt=run.get("attempt"), conclusion=run.get("conclusion"), **tag)
                     elif not failed:
-                        confirmed = self.confirm_ci_run(run, "prior_gate")
+                        confirmed = self.confirm_ci_run(run, "prior_gate", ctx)
                         if confirmed:
                             self.add(confirmed[1], confirmed[0], **confirmed[2], **tag)
         elif gate == "rerun_pass":
@@ -1344,7 +1370,7 @@ class _Evaluation:
                     if failed:
                         fail(failed[1], failed[0], **failed[2])
                     else:
-                        confirmed = self.confirm_ci_run(entry, "post_merge_rerun")
+                        confirmed = self.confirm_ci_run(entry, "post_merge_rerun", ctx)
                         if confirmed:
                             fail(confirmed[1], confirmed[0], **confirmed[2])
         elif gate in (None, "pending"):
@@ -1445,21 +1471,58 @@ class _Evaluation:
             return None, "evidence_ref_ambiguous"
         return matches[0], None
 
-    def confirm_ci_run(self, entry, consumer):
+    @staticmethod
+    def ci_binding(entry, consumer, ctx):
+        """The ONE place the expected Actions answer is computed (fix batch 1).
+        Returns (class, allowed events, expected head_sha), or (cls, code,
+        detail) when it cannot be bound.
+
+        The expectation comes from authoritative facts, never from the entry's
+        ``kind``/``head`` alone. A post-merge rerun (the ``post_merge_rerun``
+        consumer, or test proof under ``full_required_gate_rerun``) binds to the
+        recorded merge sha, whatever its subject says. Any other run binds to
+        the PR head (``headRefOid``) through its classified subject: a merge ref
+        whose ``head`` is the PR head (``pull_request``), or a head-kind subject
+        whose ``sha`` is the PR head (``push``/``workflow_dispatch``). Both the
+        merge sha and the PR head are checked against the fresh PR read
+        (``merge_sha_mismatch`` and ``head_mismatch`` are not_complete), so a
+        verified result never rests on a stale binding."""
+        rec = ctx.get("record") if isinstance(ctx.get("record"), dict) else {}
+        pm = ctx.get("pm") if isinstance(ctx.get("pm"), dict) else {}
+        rerun = consumer == "post_merge_rerun" or (
+            consumer == "test_proof" and pm.get("action") == "full_required_gate_rerun")
+        if rerun:
+            merge = _sha(ctx.get("bound_merge"))
+            if merge is None:
+                return INCONCLUSIVE, "ci_subject_unbound", {"class": "rerun", "why": "merge sha unbound"}
+            return "rerun", _CI_EVENTS["rerun"], merge
+        cls, sha = _ci_subject(entry.get("tested_subject"))
+        if cls is None or sha is None:
+            return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "tested_subject": entry.get("tested_subject")}
+        pr_head = _sha(rec.get("headRefOid"))
+        if pr_head is None:
+            return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "why": "PR head unbound"}
+        if not _sha_eq(sha, pr_head):
+            return NOT_COMPLETE, "ci_subject_mismatch", {"class": cls, "tested": sha, "pr_head": pr_head}
+        return cls, _CI_EVENTS[cls], pr_head
+
+    def confirm_ci_run(self, entry, consumer, ctx):
         """The one CI-proof read (L195-2a): confirm a consumed CI run entry
         against GitHub Actions. None when accepted, else (cls, code, detail).
         LOCAL and approved-fallback entries are not CI runs: no read. The
         ledger's own conclusion is never consulted here; callers reach this
-        only after the ledger has not rejected the run."""
+        only after the ledger has not rejected the run. The expectation is
+        ``ci_binding``'s; the API's own ``event`` must be one that class allows."""
         if _is_local(entry):
             return None
         run_id, job, attempt = entry.get("run"), entry.get("job"), entry.get("attempt")
         base = {"consumer": consumer, "run": run_id, "job": job, "attempt": attempt}
         if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
             return INCONCLUSIVE, "ci_identity_incomplete", base
-        expected = _ci_head_sha(entry.get("tested_subject"))
-        if expected is None:
-            return INCONCLUSIVE, "ci_subject_unbound", dict(base, tested_subject=entry.get("tested_subject"))
+        binding = self.ci_binding(entry, consumer, ctx)
+        if binding[0] in (INCONCLUSIVE, NOT_COMPLETE):
+            return binding[0], binding[1], dict(base, **binding[2])
+        subject_class, events, expected = binding
         endpoint = f"repos/{self.repo}/actions/runs/{run_id}/attempts/{attempt}"
         reads = (("run", f"actions-run:{run_id}/attempt-{attempt}", endpoint, False),
                  ("jobs", f"actions-jobs:{run_id}/attempt-{attempt}", f"{endpoint}/jobs?per_page=100", True))
@@ -1491,6 +1554,19 @@ class _Evaluation:
             return mismatch("run_attempt", run_data.get("run_attempt"), attempt)
         if run_data.get("conclusion") != "success":
             return mismatch("conclusion", run_data.get("conclusion"), "success")
+        event = run_data.get("event")
+        if not isinstance(event, str) or event not in _KNOWN_CI_EVENTS:
+            return INCONCLUSIVE, "ci_run_event_unbound", dict(base, event=event, subject_class=subject_class)
+        if event not in events:
+            return mismatch("event", event, list(events))
+        if event == "pull_request":
+            listed = run_data.get("pull_requests")
+            if not isinstance(listed, list) or not all(isinstance(p, dict) for p in listed):
+                return unreadable("actions-run", "unexpected_shape")
+            numbers = [str(p.get("number")) for p in listed]
+            # An empty list (a fork PR) leaves the head_sha binding below as the PR binding.
+            if numbers and str(ctx.get("number")) not in numbers:
+                return mismatch("pull_requests", numbers, ctx.get("number"))
         if not _sha_eq(run_data.get("head_sha"), expected):
             return mismatch("head_sha", run_data.get("head_sha"), expected)
         named = [j for j in jobs_data["jobs"] if j.get("name") == job]
@@ -1715,7 +1791,7 @@ class _Evaluation:
         authorized = _authorize_run(entry, check, "test_proof")
         if authorized is not None:
             return authorized[0], authorized[1], None, authorized[2]
-        confirmed = self.confirm_ci_run(entry, "test_proof")
+        confirmed = self.confirm_ci_run(entry, "test_proof", ctx)
         if confirmed is not None:
             return confirmed[0], confirmed[1], None, confirmed[2]
         pm_check = _find(pm.get("checks"), "id", job)

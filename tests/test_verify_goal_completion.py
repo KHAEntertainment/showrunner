@@ -200,8 +200,14 @@ def synthesize_actions_answers(data, responses):
     turns it off, and every L195-2a negative sets its endpoints explicitly
     through mutate_gh, which runs after it and wins.
 
-    The head mapping is written out here (merge ref -> its ``head``, else the
-    subject's ``sha``), not taken from the module."""
+    Fix batch 1 (QA Low 1): subjects are classified by the module's one
+    classifier, ``gv._ci_subject``, and the answer carries the event that class
+    is tested by (merge ref -> ``pull_request`` at its head; head kind ->
+    ``push`` at its sha). An unclassified or unbound subject gets NO answer, so
+    its read is unreadable rather than silently mapped. The answer still agrees
+    with the ledger's claim, never with GV's authoritative binding: a rerun
+    entry that claims a merge ref is answered as a ``pull_request`` run and
+    fails."""
     grouped = {}
     for rec in data.get("pull_requests") or []:
         for entry in rec.get("ci_runs") or []:
@@ -210,22 +216,23 @@ def synthesize_actions_answers(data, responses):
             attempt = entry.get("attempt")
             if not isinstance(attempt, int) or isinstance(attempt, bool):
                 continue
-            subject = entry.get("tested_subject")
-            if isinstance(subject, dict):
-                head = subject.get("head") if subject.get("kind") == "merge_ref" else subject.get("sha")
-            else:
-                head = subject
-            grouped.setdefault((entry.get("run"), attempt), []).append((entry, head))
+            subject_class, sha = gv._ci_subject(entry.get("tested_subject"))
+            if subject_class is None or sha is None:
+                continue
+            event = "pull_request" if subject_class == "merge_ref" else "push"
+            grouped.setdefault((entry.get("run"), attempt), []).append((entry, sha, event))
     for (run, attempt), entries in grouped.items():
-        passed = all(e.get("conclusion") == "success" for e, _ in entries)
+        passed = all(e.get("conclusion") == "success" for e, _, _ in entries)
+        event = entries[0][2]
         responses[actions_ep(run, attempt)] = {
             "id": int(run), "run_attempt": attempt, "status": "completed",
-            "conclusion": "success" if passed else "failure",
+            "conclusion": "success" if passed else "failure", "event": event,
+            "pull_requests": [{"number": 10}] if event == "pull_request" else [],
             "head_sha": _full(entries[0][1])}
         responses[jobs_ep(run, attempt)] = {
             "total_count": len(entries),
             "jobs": [{"name": e.get("job"), "status": "completed", "conclusion": e.get("conclusion")}
-                     for e, _ in entries]}
+                     for e, _, _ in entries]}
 
 
 def answered(data=None):
@@ -1823,6 +1830,30 @@ CONSUMER_PATHS = {
     "post_merge_rerun": (None, 130, MERGE),
 }
 HTTP_500 = [(1, "", "HTTP 500")] * 3
+TEMP_OID = "7a0b5d1" + "d" * 33  # run 123's temporary merge-ref OID, as the API would report it
+
+
+def answer_run(responses, run, *, event, head_sha, job="build", conclusion="success", attempt=1, prs=(10,)):
+    """An explicit Actions answer for one run attempt (used with synthesis OFF)."""
+    responses[actions_ep(run, attempt)] = {
+        "id": run, "run_attempt": attempt, "status": "completed", "conclusion": conclusion,
+        "event": event, "head_sha": head_sha,
+        "pull_requests": [{"number": n} for n in prs] if event == "pull_request" else []}
+    responses[jobs_ep(run, attempt)] = {"total_count": 1, "jobs": [
+        {"name": job, "status": "completed", "conclusion": conclusion}]}
+
+
+def answer_base(responses):
+    """Honest explicit answers for the base ledger's runs: 123 (merge ref), 130 (rerun)."""
+    answer_run(responses, 123, event="pull_request", head_sha=HEAD)
+    answer_run(responses, 130, event="push", head_sha=MERGE)
+
+
+def answers(*steps):
+    def apply(responses):
+        for step in steps:
+            step(responses)
+    return apply
 
 
 class TestGVHardening(unittest.TestCase):
@@ -1976,24 +2007,43 @@ class TestGVHardening(unittest.TestCase):
         merge_oid, _, _ = scenario(make_verbatim, mutate_gh=lambda g: g[actions_ep(123, 1)].update(
             head_sha="7a0b5d1" + "0" * 33))
         self.assertNotVerified(merge_oid, "not_complete", "ci_run_api_mismatch")
-        self.assertEqual(gv._ci_head_sha({"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"}), "4e683b4")
-        self.assertEqual(gv._ci_head_sha({"sha": "d44f1e0", "kind": "head"}), "d44f1e0")
-        self.assertEqual(gv._ci_head_sha("d44f1e0"), "d44f1e0")
-        for unbound in (None, {}, {"kind": "merge_ref"}, {"sha": "not-hex"}, [1]):
-            self.assertIsNone(gv._ci_head_sha(unbound))
+        # Fix batch 1: the one binding, from authoritative facts (PR head, merge sha), never kind alone.
+        bind = gv._Evaluation.ci_binding
+        verbatim = {"record": {"headRefOid": HEAD}, "pm": {"action": "applies_verbatim"}, "bound_merge": MERGE}
+        rerun = dict(verbatim, pm={"action": "full_required_gate_rerun"})
+        merge_ref = {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"}
+        self.assertEqual(bind({"tested_subject": merge_ref}, "prior_gate", verbatim),
+                         ("merge_ref", ("pull_request",), HEAD))
+        self.assertEqual(bind({"tested_subject": {"sha": "4e683b4", "kind": "head"}}, "test_proof", verbatim),
+                         ("head", ("push", "workflow_dispatch"), HEAD))
+        for subject in (merge_ref, {"sha": "d44f1e0", "kind": "head"}, {"sha": "d44f1e0"}, None):
+            with self.subTest(rerun_subject=subject):
+                self.assertEqual(bind({"tested_subject": subject}, "post_merge_rerun", verbatim),
+                                 ("rerun", ("push", "workflow_dispatch"), MERGE))
+                self.assertEqual(bind({"tested_subject": subject}, "test_proof", rerun)[2], MERGE)
+        stale = bind({"tested_subject": dict(merge_ref, head="8b1c2d3")}, "prior_gate", verbatim)
+        self.assertEqual(stale[:2], ("not_complete", "ci_subject_mismatch"))
+        for unbound in (None, {}, {"kind": "merge_ref"}, {"sha": "7a0b5d1", "head": "4e683b4"}, [1]):
+            with self.subTest(unbound=unbound):
+                self.assertEqual(bind({"tested_subject": unbound}, "prior_gate", verbatim)[:2],
+                                 ("inconclusive", "ci_subject_unbound"))
+        self.assertEqual(bind({}, "post_merge_rerun", dict(verbatim, bound_merge=None))[:2],
+                         ("inconclusive", "ci_subject_unbound"))
 
     def test_l195_2a_unbound_subject_is_inconclusive_with_no_read(self):
         reader = mock.Mock()
+        evaluation = mock.Mock(repo=REPO, reader=reader, ci_binding=gv._Evaluation.ci_binding)
+        ctx = {"record": {"headRefOid": HEAD}, "pm": {"action": "applies_verbatim"}, "bound_merge": MERGE}
         direct = gv._Evaluation.confirm_ci_run(
-            mock.Mock(repo=REPO, reader=reader),
-            {"run": 5, "job": "build", "attempt": 1, "tested_subject": {"kind": "head"}}, "test_proof")
+            evaluation, {"run": 5, "job": "build", "attempt": 1, "tested_subject": {"kind": "head"}},
+            "test_proof", ctx)
         self.assertEqual(direct[:2], ("inconclusive", "ci_subject_unbound"))
         reader.read.assert_not_called()
         for attempt in (None, 0, True, "1"):
             with self.subTest(attempt=attempt):
                 direct = gv._Evaluation.confirm_ci_run(
-                    mock.Mock(repo=REPO, reader=reader),
-                    {"run": 5, "job": "build", "attempt": attempt, "tested_subject": "d44f1e0"}, "prior_gate")
+                    evaluation, {"run": 5, "job": "build", "attempt": attempt,
+                                 "tested_subject": {"sha": "4e683b4", "kind": "head"}}, "prior_gate", ctx)
                 self.assertEqual(direct[:2], ("inconclusive", "ci_identity_incomplete"))
         reader.read.assert_not_called()
 
@@ -2052,6 +2102,161 @@ class TestGVHardening(unittest.TestCase):
         prior, runner, _ = scenario(prior_no_attempt)
         self.assertNotVerified(prior, "inconclusive", "ci_identity_incomplete")
         self.assertFalse([a for a in runner.calls if "/actions/runs/124/" in a[-1]])
+
+    # Fix batch 1 (round-1 review B1-B3): the expected head_sha is bound to authoritative facts
+    # and to the API event. Synthesis OFF, explicit answers only.
+
+    def test_fb1_b1_rerun_binds_to_the_merge_sha_whatever_the_subject_says(self):
+        # Reviewer repro: the rerun entry claims a merge ref of the old head; CI pushed the old head.
+        def mutate(d):
+            pr(d)["ci_runs"][1]["tested_subject"] = {"sha": "d44f1e0", "kind": "merge_ref",
+                                                     "head": "4e683b4", "base_oid": "b720c68"}
+        result, _, _ = scenario(mutate, actions=False, mutate_gh=answers(
+            answer_base, lambda g: answer_run(g, 130, event="push", head_sha=HEAD)))
+        self.assertNotVerified(result, "not_complete", "ci_run_api_mismatch")
+        details = [r["detail"] for r in result.record["reason_codes"] if r["code"] == "ci_run_api_mismatch"]
+        self.assertIn(("post_merge_rerun", "head_sha"), [(d["consumer"], d["field"]) for d in details])
+        # Positive control: the same ledger answered honestly (push at the merge sha) verifies.
+        honest, _, _ = scenario(mutate, actions=False, mutate_gh=answer_base)
+        self.assertEqual(honest.outcome, "verified", honest.record["reason_codes"])
+
+    def test_fb1_b2_merge_ref_without_head_is_unbound_never_its_temporary_oid(self):
+        # Reviewer repro: demo-only verbatim, run 123's merge ref loses its head, the post-merge
+        # record selects it by sha, and the API reports the temporary merge OID.
+        def mutate(d):
+            demo_only_verbatim(d)
+            del pr(d)["ci_runs"][0]["tested_subject"]["head"]
+            pm(d)["tested_subject"] = {"sha": "7a0b5d1"}
+        result, _, _ = scenario(mutate, actions=False, mutate_gh=lambda g: answer_run(
+            g, 123, event="pull_request", head_sha=TEMP_OID))
+        self.assertNotVerified(result, "inconclusive", "ci_subject_unbound")
+        self.assertEqual(self.reason(result, "ci_subject_unbound")["detail"]["consumer"], "prior_gate")
+
+    def test_fb1_b3_push_run_never_certifies_a_claimed_merge_ref(self):
+        # Reviewer repro: verbatim merge, run 123 claims merge ref 7a0b5d1 (head 4e683b4); the API run
+        # is a push of HEAD whose tree differs from the merge-ref tree.
+        def lying(g):
+            answer_run(g, 123, event="push", head_sha=HEAD)
+            g[f"repos/{REPO}/commits/{HEAD}"] = {"sha": HEAD, "commit": {"tree": {"sha": "f" * 40}}}
+        result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=lying)
+        self.assertNotVerified(result, "not_complete", "ci_run_api_mismatch")
+        fields_seen = {r["detail"]["field"] for r in result.record["reason_codes"] if r["code"] == "ci_run_api_mismatch"}
+        self.assertEqual(fields_seen, {"event"})
+        honest, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answer_base)
+        self.assertEqual(honest.outcome, "verified", honest.record["reason_codes"])
+
+    def test_fb1_unknown_or_missing_event_is_inconclusive(self):
+        for event in (None, "schedule", "pull_request_target", ["push"]):
+            with self.subTest(event=event):
+                def lying(g, e=event):
+                    answer_base(g)
+                    g[actions_ep(130, 1)]["event"] = e
+                result, _, _ = scenario(actions=False, mutate_gh=lying)
+                self.assertNotVerified(result, "inconclusive", "ci_run_event_unbound")
+
+    def test_fb1_pull_request_run_for_another_pr_is_not_complete(self):
+        result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
+            answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=(77,))))
+        self.assertNotVerified(result, "not_complete", "ci_run_api_mismatch")
+        self.assertIn("pull_requests", {r["detail"]["field"] for r in result.record["reason_codes"]
+                                        if r["code"] == "ci_run_api_mismatch"})
+
+    def test_fb1_workflow_dispatch_is_accepted_only_where_push_is(self):
+        rerun, _, _ = scenario(actions=False, mutate_gh=answers(
+            answer_base, lambda g: answer_run(g, 130, event="workflow_dispatch", head_sha=MERGE)))
+        self.assertEqual(rerun.outcome, "verified", rerun.record["reason_codes"])
+        merge_ref, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
+            answer_base, lambda g: answer_run(g, 123, event="workflow_dispatch", head_sha=HEAD)))
+        self.assertNotVerified(merge_ref, "not_complete", "ci_run_api_mismatch")
+
+    def test_fb1_subject_classifier_is_shared_and_fails_closed(self):
+        table = {
+            ("merge_ref", "4e683b4"): {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"},
+            ("merge_ref", None): {"sha": "7a0b5d1", "kind": "merge_ref"},
+            ("head", "d44f1e0"): {"sha": "d44f1e0", "kind": "head"},
+            ("head", None): {"kind": "head"},
+            (None, None): {"sha": "7a0b5d1", "head": "4e683b4"},
+        }
+        for expected, subject in table.items():
+            with self.subTest(subject=subject):
+                self.assertEqual(gv._ci_subject(subject), expected)
+        for subject in ("d44f1e0", None, [1], {"sha": "d44f1e0", "kind": "merge"}, {"kind": ["head"]}):
+            with self.subTest(subject=subject):
+                self.assertEqual(gv._ci_subject(subject), (None, None))
+        # The synthesizer answers only through the module's classifier: an unclassified subject
+        # gets no answer at all, so the read is unreadable rather than silently mapped.
+        responses = {}
+        data = copy.deepcopy(BASE_LEDGER)
+        pr(data)["ci_runs"][1]["tested_subject"] = {"sha": "d44f1e0"}
+        synthesize_actions_answers(data, responses)
+        self.assertNotIn(actions_ep(130, 1), responses)
+        self.assertEqual(responses[actions_ep(123, 1)]["event"], "pull_request")
+        unclassified, _, _ = scenario(lambda d: pr(d)["ci_runs"][1].update(tested_subject={"sha": "d44f1e0"}))
+        self.assertNotEqual(unclassified.outcome, "verified")
+
+    def test_fb1_ac5_contradictory_answers_never_verify_on_any_consumer(self):
+        # Synthesis OFF. consumer x {wrong event, wrong head_sha, merge_ref with no head}. Each row's
+        # API answer is what an unbound or ledger-only mapping would have accepted.
+        def no_head(run, sha):
+            def apply(d):
+                entry = next(r for r in pr(d)["ci_runs"] if r["run"] == run)
+                entry["tested_subject"] = {"sha": sha, "kind": "merge_ref"}
+            return apply
+
+        def select_temp_oid(d):
+            pm(d)["tested_subject"] = {"sha": "7a0b5d1"}
+
+        rows = {
+            "test_proof": (proof_on_run_131, 131, {
+                "wrong_event": ([], dict(event="pull_request", head_sha=MERGE)),
+                "wrong_head_sha": ([], dict(event="push", head_sha=HEAD)),
+                "merge_ref_no_head": ([no_head(131, "d44f1e0")], dict(event="pull_request", head_sha=MERGE)),
+            }),
+            "prior_gate": (prior_gate_lint_124, 124, {
+                "wrong_event": ([], dict(event="push", head_sha=HEAD)),
+                "wrong_head_sha": ([], dict(event="pull_request", head_sha=TEMP_OID)),
+                "merge_ref_no_head": ([no_head(124, "7a0b5d1"), select_temp_oid],
+                                      dict(event="pull_request", head_sha=TEMP_OID)),
+            }),
+            "post_merge_rerun": (None, 130, {
+                "wrong_event": ([], dict(event="pull_request", head_sha=MERGE)),
+                "wrong_head_sha": ([], dict(event="push", head_sha=HEAD)),
+                "merge_ref_no_head": ([no_head(130, "d44f1e0")], dict(event="pull_request", head_sha=MERGE)),
+            }),
+        }
+        for consumer, (base, run, cases) in rows.items():
+            for name, (extra, answer) in cases.items():
+                with self.subTest(consumer=consumer, row=name):
+                    def mutate(d, base=base, extra=extra):
+                        if base:
+                            base(d)
+                        for step in extra:
+                            step(d)
+
+                    def lying(g, run=run, answer=answer, consumer=consumer):
+                        answer_base(g)
+                        if consumer == "test_proof":
+                            answer_run(g, 131, event="push", head_sha=MERGE)
+                        if consumer == "prior_gate":
+                            answer_run(g, 124, event="pull_request", head_sha=HEAD, job="lint")
+                        answer_run(g, run, job="lint" if run == 124 else "build", **answer)
+                    result, _, _ = scenario(mutate, actions=False, mutate_gh=lying)
+                    self.assertNotEqual(result.outcome, "verified", result.record["reason_codes"])
+                    self.assertNotEqual(result.exit_code, 0)
+                    hit = {(r["code"], r["detail"].get("consumer")) for r in result.record["reason_codes"]
+                           if r["code"].startswith("ci_")}
+                    self.assertTrue(any(c == consumer for _, c in hit), hit)
+        # Each base path, answered honestly with synthesis OFF, verifies (the rows are not vacuous).
+        for consumer, (base, run, _) in rows.items():
+            with self.subTest(consumer=consumer, row="honest"):
+                def honest(g, consumer=consumer):
+                    answer_base(g)
+                    if consumer == "test_proof":
+                        answer_run(g, 131, event="push", head_sha=MERGE)
+                    if consumer == "prior_gate":
+                        answer_run(g, 124, event="pull_request", head_sha=HEAD, job="lint")
+                result, _, _ = scenario(base, actions=False, mutate_gh=honest)
+                self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
 
     def test_l195_2a_local_and_approved_fallback_entries_make_no_actions_read(self):
         result, runner, _ = scenario(local_fallback)
