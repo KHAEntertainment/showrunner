@@ -68,6 +68,7 @@ __all__ = [
     "GROUPS",
     "UNRESOLVED_DECISIONS",
     "FOREMAN_MARKS",
+    "MARK_GATES",
     "MergeLedger",
     "dispose_gate",
     "resolve_family",
@@ -542,9 +543,21 @@ FOREMAN_MARKS = (
     "seat receipts current",
     "lane upkeep",
 )
+# Marks carried by a gate read their state from exactly one evidence entry
+# (sc-4.md, "Reading a marks[] entry"). The other two marks are carried by the
+# record's own fields and have no evidence entry.
+MARK_GATES = {
+    "acceptance lane": "qa",
+    "independent review": "review",
+    "post-merge record for every merge": "post_merge",
+    "lane upkeep": "lane_upkeep",
+}
+# A missing entry for these gates is the missing-mandatory-evidence defect
+# itself (reported by the gate layer), not a second defect.
+_MANDATORY_EVIDENCE_GATES = ("qa", "review")
 
 
-def _marks_shape(marks) -> Result:
+def _marks_shape(marks, evidence=()) -> Result:
     if not isinstance(marks, (list, tuple)) or len(marks) != _SC4_MARK_COUNT:
         return _invalid("marks_incomplete", {"layer": "shape"})
     seen = []
@@ -561,6 +574,24 @@ def _marks_shape(marks) -> Result:
         seen.append(name.strip().lower())
     if sorted(seen) != sorted(FOREMAN_MARKS):
         return _invalid("marks_malformed", {"layer": "shape", "reason": "each Foreman mark exactly once"})
+    for mark in marks:
+        name = mark["foreman_mark"].strip().lower()
+        gate = MARK_GATES.get(name)
+        if gate is None:
+            continue
+        entries = [e for e in evidence if isinstance(e, Mapping) and e.get("gate") == gate]
+        if not entries:
+            if gate in _MANDATORY_EVIDENCE_GATES:
+                continue
+            return _invalid("mark_evidence_mismatch",
+                            {"layer": "shape", "foreman_mark": name, "gate": gate, "cause": "missing"})
+        if len(entries) > 1:
+            return _invalid("mark_evidence_mismatch",
+                            {"layer": "shape", "foreman_mark": name, "gate": gate, "cause": "ambiguous"})
+        if entries[0].get("state") != mark["state"]:
+            return _invalid("mark_evidence_mismatch",
+                            {"layer": "shape", "foreman_mark": name, "gate": gate, "cause": "disagrees",
+                             "mark_state": mark["state"], "evidence_state": entries[0].get("state")})
     return _accept()
 
 
@@ -582,7 +613,7 @@ def _sc4_shape(record) -> Result:
             return _invalid("required_evidence_unnamed", {"layer": "shape", "gate": entry["gate"]})
         if state == "valid-skip" and not _nonempty_str(entry.get("reason")):
             return _invalid("skip_without_reason", {"layer": "shape", "gate": entry["gate"]})
-    return _marks_shape(record["marks"])
+    return _marks_shape(record["marks"], record["evidence"])
 
 
 def _evidence_for(record, gate: str):
@@ -1066,7 +1097,7 @@ def check_action(ledger: MergeLedger, action_kind) -> Result:
 _SC2_REQUIRED = ("policy_ref", "policy_revision", "actor", "run", "operation", "target", "head", "result")
 _SC2_BINDINGS = ("actor", "run", "operation", "target", "head", "policy_ref", "policy_revision")
 _BEGIN_BINDINGS = ("grant_id", "grant_kind", "grant_holder", "grant_epoch", "grant_start", "grant_finish")
-_AUTHORITY_BINDINGS = ("actor", "run", "target", "head")
+_AUTHORITY_BINDINGS = ("actor", "run", "operation", "target", "head")
 
 
 def _sc2_shape(ctx) -> Result:
@@ -1080,17 +1111,19 @@ def _sc2_shape(ctx) -> Result:
     return _accept()
 
 
-def bind_authority(authority: Result, *, actor, run, target, head, grant_id=None, operation=None) -> Result:
+def bind_authority(authority: Result, *, actor, run, operation, target, head, grant_id=None) -> Result:
     """Attach the operation bindings an authority check covered (pure: returns
-    a new ``Result``). ``check_begin`` accepts only a bound authority whose
-    bindings match the Begin exactly. A refused authority is returned as is."""
+    a new ``Result``). ``operation`` is required. ``check_begin`` accepts only
+    a bound authority whose bindings match the Begin exactly. A refused
+    authority is returned as is; an unbound required field is refused."""
     if not (isinstance(authority, Result) and authority.may_proceed):
         return authority
-    binding = {"actor": actor, "run": run, "target": target, "head": head}
+    binding = {"actor": actor, "run": run, "operation": operation, "target": target, "head": head}
+    for name in _AUTHORITY_BINDINGS:
+        if not _nonempty_str(binding[name]):
+            return _invalid("authority_binding_missing", {"field": name})
     if grant_id is not None:
         binding["grant_id"] = grant_id
-    if operation is not None:
-        binding["operation"] = operation
     return Result(authority.outcome, reason=authority.reason, value=authority.value,
                   detail={**authority.detail, "binding": binding})
 
@@ -1102,10 +1135,10 @@ def _check_authority_binding(ctx, authority) -> Result:
     if not isinstance(binding, Mapping):
         return _invalid("no_authority_binding")
     for name in _AUTHORITY_BINDINGS:
-        if not _nonempty_str(binding.get(name)) or binding.get(name) != ctx.get(name):
+        if not _nonempty_str(binding.get(name)):
+            return _invalid("authority_binding_missing", {"field": name})
+        if binding[name] != ctx.get(name):
             return _invalid("authority_binding_mismatch", {"field": name})
-    if "operation" in binding and binding["operation"] != ctx.get("operation"):
-        return _invalid("authority_binding_mismatch", {"field": "operation"})
     if ("grant_id" in binding or "grant_id" in ctx) and binding.get("grant_id") != ctx.get("grant_id"):
         return _invalid("authority_binding_mismatch", {"field": "grant_id"})
     return _accept()

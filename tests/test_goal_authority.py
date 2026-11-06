@@ -571,8 +571,8 @@ def _new_begin_ctx(**changes):
 
 def _auth(ctx, **override):
     """An accepted authority bound to exactly the Begin's operation."""
-    binding = {"actor": ctx["actor"], "run": ctx["run"], "target": ctx["target"], "head": ctx["head"],
-               "grant_id": ctx.get("grant_id")}
+    binding = {"actor": ctx["actor"], "run": ctx["run"], "operation": ctx["operation"], "target": ctx["target"],
+               "head": ctx["head"], "grant_id": ctx.get("grant_id")}
     binding.update(override)
     return ga.bind_authority(gr.Result("accept"), **binding)
 
@@ -984,6 +984,69 @@ class FixBatch1Regressions(unittest.TestCase):
                                    acknowledged_ids=["m"])
         self.assertEqual(unknown.value["continue"], pending)
         self.assertEqual(unknown.detail["unknown_targets"], ["lane-9"])
+
+
+# ---------------------------------------------------------------------------
+# Fix batch 2 — review round 2 residuals R2-B5 and R2-B8 (reviewer repro inputs)
+# ---------------------------------------------------------------------------
+
+
+class FixBatch2Regressions(unittest.TestCase):
+    def test_r2_b5_operation_is_a_required_exact_binding(self):
+        c = _new_begin_ctx()
+        auth = _auth(c)
+        c["operation"] = "release"
+        result = ga.check_begin(c, scope={"targets": [c["target"]], "operations": ["merge", "release"]},
+                                authority=auth)
+        self.assertEqual((result.outcome, result.reason, result.detail["field"]),
+                         ("invalid", "authority_binding_mismatch", "operation"))
+        ctx = _new_begin_ctx()
+        unbound_op = gr.Result("accept", detail={"binding": {
+            "actor": ctx["actor"], "run": ctx["run"], "target": ctx["target"], "head": ctx["head"],
+            "grant_id": ctx["grant_id"]}})
+        missing = ga.check_begin(ctx, scope=_SCOPE, authority=unbound_op)
+        self.assertEqual((missing.reason, missing.detail["field"]), ("authority_binding_missing", "operation"))
+        for empty in ("", None):
+            with self.subTest(operation=empty):
+                bound = _auth(ctx, operation=empty)
+                self.assertEqual((bound.outcome, bound.reason, bound.detail["field"]),
+                                 ("invalid", "authority_binding_missing", "operation"))
+                self.assertEqual(ga.check_begin(ctx, scope=_SCOPE, authority=bound).reason, "no_authority")
+        import inspect
+        self.assertIs(inspect.signature(ga.bind_authority).parameters["operation"].default, inspect.Parameter.empty)
+        self.assertTrue(ga.check_begin(ctx, scope=_SCOPE, authority=_auth(ctx)).may_proceed)
+
+    def test_r2_b8_mark_state_must_agree_with_its_evidence(self):
+        r = _record()
+        r["marks"][2]["state"] = "failed"
+        result = ga.evaluate_conformance(r)
+        self.assertEqual((result.outcome, result.reason), ("invalid", "mark_evidence_mismatch"))
+        self.assertEqual((result.detail["foreman_mark"], result.detail["cause"]), ("independent review", "disagrees"))
+        merge = _decide(gates=_gates(r))
+        self.assertEqual((merge.outcome, merge.reason), ("blocked", "gates_not_satisfied"))
+        self.assertIn({"gate": "record_shape", "reason": "mark_evidence_mismatch"}, _gates(r).detail["failures"])
+
+    def test_r2_b8_missing_or_ambiguous_mark_evidence(self):
+        no_post = _record()
+        no_post["evidence"] = [e for e in no_post["evidence"] if e["gate"] != "post_merge"]
+        result = ga.evaluate_conformance(no_post)
+        self.assertEqual((result.reason, result.detail["cause"], result.detail["foreman_mark"]),
+                         ("mark_evidence_mismatch", "missing", "post-merge record for every merge"))
+        twice = _record()
+        twice["evidence"].append(dict(twice["evidence"][0]))
+        result = ga.evaluate_conformance(twice)
+        self.assertEqual((result.reason, result.detail["cause"], result.detail["gate"]),
+                         ("mark_evidence_mismatch", "ambiguous", "qa"))
+        self.assertEqual(_decide(gates=_gates(twice)).reason, "gates_not_satisfied")
+        # A missing mandatory QA entry stays the single missing-evidence defect (sc-4.md).
+        no_qa = _record()
+        no_qa["evidence"] = no_qa["evidence"][1:]
+        self.assertEqual(ga.evaluate_conformance(no_qa).reason, "missing_mandatory_qa")
+        # Record-field marks have no evidence entry and are not resolved against one.
+        record_marks = _record()
+        record_marks["marks"][0]["state"] = "pending"
+        record_marks["marks"][4]["state"] = "pending"
+        self.assertTrue(ga.evaluate_conformance(record_marks).may_proceed)
 
 
 # ---------------------------------------------------------------------------
