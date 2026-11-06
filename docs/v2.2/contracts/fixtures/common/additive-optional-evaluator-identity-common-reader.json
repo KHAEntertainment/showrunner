@@ -1,0 +1,94 @@
+{
+  "sc": "common",
+  "version": "conformance-v1",
+  "kind": "accepted",
+  "name": "additive-optional-evaluator-identity-common-reader",
+  "input": {
+    "workflow": "synthetic-workflow",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "run": "synthetic-run-050",
+    "lane": "synthetic-lane-050",
+    "head": "sha256:0000000000000000000000000000000000000000000000000000000000000040",
+    "gate_applicability": "qa_required",
+    "evidence": [
+      {
+        "gate": "qa",
+        "state": "required",
+        "evaluator": "synthetic-reviewer-051",
+        "report_ref": "synthetic-report-051",
+        "head": "sha256:0000000000000000000000000000000000000000000000000000000000000040"
+      },
+      {
+        "gate": "review",
+        "state": "required",
+        "evaluator": "synthetic-reviewer-052",
+        "report_ref": "synthetic-report-052",
+        "evaluator_identity": {
+          "agent_id": "synthetic-agent-052",
+          "harness": "synthetic-harness-b",
+          "model": "synthetic-family-b:synthetic-model-b",
+          "route_source": "different_family"
+        }
+      },
+      {
+        "gate": "post_merge",
+        "state": "valid-skip",
+        "reason": "no merge in this run or lane"
+      },
+      {
+        "gate": "lane_upkeep",
+        "state": "valid-skip",
+        "reason": "no outstanding lane obligation in this run or lane"
+      }
+    ],
+    "marks": [
+      {
+        "foreman_mark": "workflow phase reported",
+        "dev_applicability": "`workflow`/`policy_revision` + `run`/`lane`/`head` recorded in `conformance-v1`",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "acceptance lane",
+        "dev_applicability": "current-head QA, or a valid recorded skip (D2 l.240)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "independent review",
+        "dev_applicability": "independent review — different model family, or clean-context same family on a single-provider run (D2 l.265)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "post-merge record for every merge",
+        "dev_applicability": "post-merge record + gate evidence at the applicable tree (D2 l.242)",
+        "state": "valid-skip"
+      },
+      {
+        "foreman_mark": "seat receipts current",
+        "dev_applicability": "lead/seat identity + custody (L1 custody finding 2)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "lane upkeep",
+        "dev_applicability": "lane lifecycle / obligations (D7.1)",
+        "state": "valid-skip"
+      }
+    ],
+    "evaluator": "synthetic-lead-051",
+    "evaluator_identity": {
+      "agent_id": "synthetic-agent-050",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a",
+      "route_source": "none"
+    },
+    "report_ref": "synthetic-report-050"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Additive optional field: this `conformance-v1` record carries the optional `evaluator_identity` and the optional evidence-entry `head`. A v1 reader that does not know these fields ignores them and reads every required field of the record identically — the same outcome, the same six marks and the same required evidence with or without them. A reader that knows the fields uses them instead of inferring: the recorded evaluator identity establishes the independent-review route (D2 l.262–l.269) and the recorded evidence head is compared with the record's head (SDP l.543). This is a common-reader fixture, not silent parser leniency (representation rule, SDP l.536).",
+  "retained_source": {
+    "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
+    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
+    "sdp_line": 536
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

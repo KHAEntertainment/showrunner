@@ -1,0 +1,33 @@
+{
+  "sc": "SC-9",
+  "version": "recovery-receipt-v1",
+  "kind": "rejected",
+  "name": "rejected-authority-renewal",
+  "input": {
+    "run": "synthetic-run-042",
+    "session": "synthetic-session-042",
+    "event": "synthetic-event-042",
+    "adapter": "synthetic-adapter",
+    "version": "v0.2.1",
+    "note_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "freshness": "2099-01-02T00:00:00Z",
+    "authoritative_refs": [
+      "docs/plans/2099-01-01-synthetic-plan.md"
+    ],
+    "coverage": "top_level",
+    "degradation": null,
+    "event_accounting": {
+      "result": "counted_once"
+    },
+    "admission_outcome": "authority_renewed_by_activity"
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: the resumed run's activity is treated as renewing existing authority. Activity does not renew it — re-granting authority requires fresh authority. This is the only reason for rejection — every other part of the record is valid: the note revision and freshness are recorded, `authoritative_refs` is nonempty, the event is accounted exactly once (`counted_once`), and the adapter's coverage is recorded (SC-9 rejected example, SDP l.548; D2 l.240; resume admission order at l.477 step 5).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
+    "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",
+    "sdp_line": 548
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}
