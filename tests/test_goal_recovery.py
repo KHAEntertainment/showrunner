@@ -2,9 +2,10 @@
 reconciliation.
 
 One named test per acceptance criterion (AC1-AC10), plus a closed-list drift test
-against docs/v2.2/contracts/sc-9.md and an AST side-effect-free test. SC-9 fixtures
-under docs/v2.2/contracts/fixtures/sc-9/ are consumed read-only with no digest
-pins; recovery-only cases live under tests/fixtures/recovery/.
+against docs/v2.2/contracts/sc-9.md, an AST side-effect-free test, and per-branch
+refusal tests for every closed-list and gate helper. SC-9 fixtures under
+docs/v2.2/contracts/fixtures/sc-9/ are consumed read-only with no digest pins;
+recovery-only cases live under tests/fixtures/recovery/.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ SC9_FIXTURES = ROOT / "docs" / "v2.2" / "contracts" / "fixtures" / "sc-9"
 RECOVERY_FIXTURES = ROOT / "tests" / "fixtures" / "recovery"
 
 _ZEROS = "sha256:" + "0" * 64
+_APPROVAL = "2099-01-01T00:00:00Z"
+_NOW = "2099-01-01T10:00:00Z"
 
 
 def _load(name, path):
@@ -72,8 +75,52 @@ def _obligations(**overrides):
     return rc.Obligations(**base)
 
 
+def _policy(**overrides):
+    return rc.BoundsPolicy(**overrides)
+
+
+def _counters(**overrides):
+    return rc.RunCounters(**overrides)
+
+
+def _armed_scope():
+    return rc.ArmedRun(
+        assignment=gr.Assignment(
+            repo="KHAEntertainment/showrunner",
+            run="run-1",
+            mode="standalone",
+            lead={"agent_id": "a", "harness": "h", "model": "m"},
+            plan_ref={"origin": "p", "source_revision": "r", "approved_revision": "r"},
+            source="p@r",
+            approval_revision="r",
+            fixed_issues=("KHAEntertainment/showrunner#1",),
+        ),
+        policy=_policy(),
+    )
+
+
 def _input(**overrides):
-    base = dict(checkpoint=_checkpoint(), event_identity="evt-1", event_kind=rc.EVENT_KIND_COMPACTION)
+    base = dict(
+        checkpoint=_checkpoint(),
+        note_status=rc.NOTE_CURRENT,
+        checkpoint_available=True,
+        outstanding_waits=(),
+        protected_restrictions=(),
+        event_identity="evt-1",
+        event_kind=rc.EVENT_KIND_COMPACTION,
+        ledger=rc.EventLedger(),
+        obligations_before=_obligations(),
+        obligations_after=_obligations(),
+        current_source="docs/plans/synthetic-plan.md@rev",
+        charter_revision="rev",
+        current_heads=("head-1",),
+        invalidation=(),
+        policy=_policy(),
+        counters=_counters(),
+        approval_time=_APPROVAL,
+        now=_NOW,
+        authority_bindings=("lead-1",),
+    )
     base.update(overrides)
     return rc.RecoveryInput(**base)
 
@@ -91,26 +138,29 @@ class ResumeOrderTests(unittest.TestCase):
         # A failure at each step stops there and names the step.
         cases = [
             (_input(checkpoint=None), 1, "missing_required_field"),
+            (_input(note_status="stale", paused=True), 1, "resume_overrides_pause"),
+            (_input(note_status="missing", checkpoint_available=False), 1, "recovery_evidence_unavailable"),
             (_input(paused=True, resume_over_pause=True), 2, "resume_overrides_pause"),
+            (_input(outstanding_waits=None), 2, "missing_required_field"),
             (_input(sole_writer=False), 3, "second_writer"),
             (_input(rotation_due=True, event_kind=rc.EVENT_KIND_COMPACTION), 3, "compaction_counts_as_rotation"),
-            (
-                _input(
-                    replay_attempted=True,
-                    unknown_outcomes=("lost-1",),
-                    obligations_before=_obligations(),
-                    obligations_after=_obligations(worker_count=2),
-                ),
-                4,
-                "unknown_effect_replay",
-            ),
+            (_input(rotation_due=True, event_kind=rc.EVENT_KIND_WAKE), 3, "rotation_not_evidenced"),
+            (_input(ledger=rc.EventLedger(seen=("evt-1", "evt-1"))), 3, "duplicate_compaction_count"),
+            (_input(replay_attempted=True, unknown_outcomes=("lost-1",)), 4, "unknown_effect_replay"),
+            (_input(obligations_before=None), 4, "missing_required_field"),
+            (_input(obligations_after=_obligations(worker_count=2)), 4, "obligations_changed"),
+            (_input(current_source=None), 4, "missing_required_field"),
+            (_input(scope=_armed_scope(), fixed_issues=("KHAEntertainment/showrunner#2",)), 4, "scope_growth"),
             (_input(managed_fallback=True), 5, "managed_to_standalone"),
             (_input(authority_renewed=True), 5, "authority_renewed_by_activity"),
-            (_input(accounting_result="duplicate_compaction_count"), 6, "duplicate_compaction_count"),
+            (_input(authority_revoked=True), 5, "authority_revoked"),
+            (_input(authority_expired=True), 5, "authority_expired"),
+            (_input(policy=None), 5, "missing_required_field"),
+            (_input(now="2099-01-02T10:00:00Z"), 5, "run_time_exceeded"),
         ]
         for state, expected_step, expected_reason in cases:
             res = rc.admit_recovery(state)
-            self.assertFalse(res.ok, (expected_step, expected_reason))
+            self.assertFalse(res.ok, (expected_step, expected_reason, res.detail))
             self.assertEqual(res.detail["step"], expected_step, res.reason)
             self.assertEqual(res.reason, expected_reason, res.detail)
 
@@ -126,6 +176,37 @@ class ResumeOrderTests(unittest.TestCase):
         self.assertFalse(res.ok)
         self.assertEqual(res.reason, "managed_to_standalone")
         self.assertEqual(res.detail["step"], 5)
+
+
+class LimitGateTests(unittest.TestCase):
+    """F1/C1 — step 5 checks ``limits.outcome == "complete"``, not ``.ok``."""
+
+    def test_run_time_limit_rejected_at_step_5(self):
+        res = rc.admit_recovery(_input(now="2099-01-02T10:00:00Z"))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "run_time_exceeded")
+        self.assertEqual(res.detail["step"], 5)
+
+    def test_spend_cap_rejected_at_step_5(self):
+        res = rc.admit_recovery(
+            _input(policy=_policy(spend_cap=50), counters=_counters(spend=100))
+        )
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "spend_cap_exceeded")
+        self.assertEqual(res.detail["step"], 5)
+
+    def test_dispatch_cap_rejected_at_step_5_with_issue_eligibility(self):
+        res = rc.admit_recovery(
+            _input(
+                policy=_policy(dispatch_cap_per_issue=8),
+                counters=_counters(dispatch_counts={"issue-a": 8, "issue-b": 2}),
+            )
+        )
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "dispatch_cap_exceeded")
+        self.assertEqual(res.detail["step"], 5)
+        self.assertEqual(res.detail["incomplete_issues"], ["issue-a"])
+        self.assertEqual(res.detail["continue_issues"], ["issue-b"])
 
 
 class SC9RecordTests(unittest.TestCase):
@@ -177,6 +258,47 @@ class SC9RecordTests(unittest.TestCase):
         self.assertEqual(res.reason, "out_of_list_value")
 
 
+class MalformedEnumTests(unittest.TestCase):
+    """F7 — type-check enum values before set membership (never a TypeError)."""
+
+    def test_coverage_malformed_values(self):
+        for value in (["top_level"], {"x": 1}, 5):
+            res = rc.validate_sc9_record(
+                rc.VERSION_CHECKPOINT_REFERENCE,
+                {**_checkpoint().to_dict(), "coverage": value},
+            )
+            self.assertFalse(res.ok, value)
+            self.assertEqual(res.reason, "malformed_input", value)
+
+    def test_event_accounting_result_malformed_values(self):
+        for value in (["counted_once"], {"x": 1}, None, 5):
+            res = rc.build_recovery_receipt(
+                _checkpoint(), value, "restored_then_current_state_check"
+            )
+            self.assertFalse(res.ok, value)
+            self.assertEqual(res.reason, "malformed_input", value)
+
+    def test_admission_outcome_malformed_values(self):
+        for value in (["restored_then_current_state_check"], {"x": 1}, None, 5):
+            res = rc.build_recovery_receipt(_checkpoint(), "counted_once", value)
+            self.assertFalse(res.ok, value)
+            self.assertEqual(res.reason, "malformed_input", value)
+
+    def test_validate_sc9_record_enum_malformed_values(self):
+        receipt = _checkpoint().to_dict()
+        receipt["event_accounting"] = {"result": ["counted_once"]}
+        res = rc.validate_sc9_record(rc.VERSION_RECOVERY_RECEIPT, receipt)
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "malformed_input")
+
+        receipt = _checkpoint().to_dict()
+        receipt["event_accounting"] = {"result": "counted_once"}
+        receipt["admission_outcome"] = {"x": 1}
+        res = rc.validate_sc9_record(rc.VERSION_RECOVERY_RECEIPT, receipt)
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "malformed_input")
+
+
 class PausedRotationTests(unittest.TestCase):
     """AC3 — paused and rotation-due recovery."""
 
@@ -185,14 +307,59 @@ class PausedRotationTests(unittest.TestCase):
         self.assertTrue(res.may_proceed)
         self.assertEqual(res.value.admission_outcome, "pause_honored_recovery_only")
 
-    def test_AC3_due_rotation_not_satisfied_by_compaction(self):
+    def test_AC3_due_rotation_requires_real_evidence(self):
+        # A compaction is never a rotation.
         res = rc.admit_recovery(_input(rotation_due=True, event_kind=rc.EVENT_KIND_COMPACTION))
         self.assertFalse(res.ok)
         self.assertEqual(res.reason, "compaction_counts_as_rotation")
         self.assertEqual(res.detail["step"], 3)
 
-        # A proper rotation (lead handoff) applies the rotation.
+        # A wake with rotation due but no rotation evidence is refused.
+        res = rc.admit_recovery(_input(rotation_due=True, event_kind=rc.EVENT_KIND_WAKE))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "rotation_not_evidenced")
+        self.assertEqual(res.detail["step"], 3)
+
+        # A lead-handoff label alone (no successor/transfer/custody) is refused.
         res = rc.admit_recovery(_input(rotation_due=True, event_kind=rc.EVENT_KIND_LEAD_HANDOFF))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "rotation_not_evidenced")
+
+        # A pending transfer (not acknowledged) is refused.
+        res = rc.admit_recovery(
+            _input(
+                rotation_due=True,
+                event_kind=rc.EVENT_KIND_LEAD_HANDOFF,
+                successor="lead-2",
+            )
+        )
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "rotation_transfer_pending")
+
+        # A conflicting transfer is refused.
+        res = rc.admit_recovery(
+            _input(
+                rotation_due=True,
+                event_kind=rc.EVENT_KIND_LEAD_HANDOFF,
+                successor="lead-2",
+                transfer_acknowledged=True,
+                native_session_id="session-002",
+                transfer_conflict=True,
+            )
+        )
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "rotation_transfer_conflict")
+
+        # A genuine rotation applies the rotation.
+        res = rc.admit_recovery(
+            _input(
+                rotation_due=True,
+                event_kind=rc.EVENT_KIND_LEAD_HANDOFF,
+                successor="lead-2",
+                transfer_acknowledged=True,
+                native_session_id="session-002",
+            )
+        )
         self.assertTrue(res.may_proceed)
         self.assertEqual(res.value.admission_outcome, "rotation_due_rotation_applied")
 
@@ -218,6 +385,7 @@ class EventDedupTests(unittest.TestCase):
             self.assertFalse(second.detail["counted"])
             self.assertEqual(second.detail["count"], 1)
             self.assertEqual(second.detail["result"], "counted_once")
+            self.assertTrue(second.detail["duplicate"])
             # The counter is unchanged by the duplicate.
             self.assertEqual(second.value.count("evt"), 1)
 
@@ -248,12 +416,30 @@ class UnknownEffectTests(unittest.TestCase):
         self.assertFalse(res.detail["blocked"])
 
     def test_AC5_admit_recovery_replay_rejected_at_step_4(self):
-        res = rc.admit_recovery(
-            _input(replay_attempted=True, unknown_outcomes=("lost-1",))
-        )
+        res = rc.admit_recovery(_input(replay_attempted=True, unknown_outcomes=("lost-1",)))
         self.assertFalse(res.ok)
         self.assertEqual(res.reason, "unknown_effect_replay")
         self.assertEqual(res.detail["step"], 4)
+
+    def test_AC5_unknown_outcomes_restrict_admission(self):
+        # An unknown outcome, without replay, still restricts admission.
+        res = rc.admit_recovery(_input(unknown_outcomes=("lost-1",)))
+        self.assertTrue(res.may_proceed, res.reason)
+        self.assertEqual(res.detail["step"], 6)
+        # The unknown identities are kept, dependent actions are blocked, and the
+        # action is inspect-destination-first (eligibility limited).
+        self.assertEqual(res.detail["unknown_outcomes"], ("lost-1",))
+        self.assertTrue(res.detail["dependent_actions_blocked"])
+        self.assertEqual(res.detail["eligibility"], "inspection_and_independent")
+        self.assertEqual(res.detail["action"], "inspect_destination_first")
+
+    def test_AC5_dependent_action_withheld(self):
+        # A dependent action is blocked while an outcome is unknown.
+        res = rc.reconcile_unknown_effect("unknown")
+        self.assertTrue(res.detail["blocked"])
+        res = rc.reconcile_unknown_effect("unknown", retry=True)
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "unknown_effect_replay")
 
 
 class ObligationsTests(unittest.TestCase):
@@ -276,10 +462,58 @@ class ObligationsTests(unittest.TestCase):
             {"fix_batch_count": 1},
             {"owner_escalation": True},
             {"owed_replies": ()},
+            {"children": ()},
+            {"original_request": "request-2"},
+            {"responsible_party": "lead-2"},
+            {"evidence": ("ev-2",)},
+            {"consumed_allowances": ("allow-2",)},
         ):
             res = rc.preserve_obligations(before, _obligations(**override))
             self.assertFalse(res.ok, override)
             self.assertEqual(res.reason, "obligations_changed")
+
+    def test_AC6_end_to_end_obligations_unchanged(self):
+        before = _obligations()
+        # Recovery (compaction) preserves obligations.
+        res = rc.admit_recovery(_input(obligations_before=before, obligations_after=before))
+        self.assertTrue(res.may_proceed, res.reason)
+
+        # A genuine lead handoff preserves obligations.
+        res = rc.admit_recovery(
+            _input(
+                rotation_due=True,
+                event_kind=rc.EVENT_KIND_LEAD_HANDOFF,
+                successor="lead-2",
+                transfer_acknowledged=True,
+                native_session_id="session-002",
+                obligations_before=before,
+                obligations_after=before,
+            )
+        )
+        self.assertTrue(res.may_proceed, res.reason)
+        self.assertEqual(res.value.admission_outcome, "rotation_due_rotation_applied")
+
+        # A duplicate event preserves obligations.
+        dup = rc.account_event(rc.EventLedger(), "evt-1", rc.EVENT_KIND_COMPACTION)
+        res = rc.admit_recovery(
+            _input(
+                ledger=dup.value,
+                obligations_before=before,
+                obligations_after=before,
+            )
+        )
+        self.assertTrue(res.may_proceed, res.reason)
+
+        # A change is caught end-to-end.
+        res = rc.admit_recovery(
+            _input(
+                obligations_before=before,
+                obligations_after=_obligations(worker_count=2),
+            )
+        )
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "obligations_changed")
+        self.assertEqual(res.detail["step"], 4)
 
 
 class NoteCaseTests(unittest.TestCase):
@@ -321,6 +555,15 @@ class LineageCustodyTests(unittest.TestCase):
         res = rc.classify_lineage("session-001", None)
         self.assertEqual(res.value, "custody_unknown")
 
+    def test_AC8_contradictory_claim_refused(self):
+        res = rc.classify_lineage("session-001", "session-001", claim="successor")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "lineage_claim_conflict")
+
+        res = rc.classify_lineage("session-001", "session-002", claim=("successor", "takeover"))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "lineage_claim_conflict")
+
     def test_AC8_developing_adapters_never_parity(self):
         for adapter in (rc.ADAPTER_CODEX, rc.ADAPTER_PI):
             res = rc.qualify_adapter(
@@ -357,6 +600,29 @@ class LineageCustodyTests(unittest.TestCase):
         self.assertFalse(foreign.detail["supported"])
         self.assertEqual(foreign.detail["reason"], "foreign_last_loaded_marker")
 
+    def test_qualify_adapter_refusal_branches(self):
+        # Unknown adapter.
+        res = rc.qualify_adapter("unknown-adapter")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "malformed_input")
+
+        # No load evidence.
+        res = rc.qualify_adapter(rc.ADAPTER_CLAUDE)
+        self.assertTrue(res.may_proceed)
+        self.assertFalse(res.detail["supported"])
+        self.assertEqual(res.detail["reason"], "no_load_evidence")
+
+        # Unqualified route (load evidence present but not all qualifiers).
+        res = rc.qualify_adapter(
+            rc.ADAPTER_OPENCODE,
+            native_session_id="session-001",
+            load_evidence_session="session-001",
+            build_qualified=False,
+        )
+        self.assertTrue(res.may_proceed)
+        self.assertFalse(res.detail["supported"])
+        self.assertEqual(res.detail["reason"], "unqualified")
+
 
 class EvidenceReuseTests(unittest.TestCase):
     """AC9 — evidence reuse."""
@@ -368,15 +634,128 @@ class EvidenceReuseTests(unittest.TestCase):
         res = rc.reuse_evidence("issue-1", "abc", "r1", existing=existing)
         self.assertTrue(res.detail["reusable"])
 
-        # Pending CI never triggers local fallback.
+        # Pending CI never triggers local fallback; reusable stays True.
         res = rc.reuse_evidence("issue-1", "abc", "r1", existing=existing, pending_ci=True)
         self.assertFalse(res.detail["fallback"])
         self.assertTrue(res.detail["pending_ci"])
+        self.assertTrue(res.detail["reusable"])
 
         # A different head is stale and not reused.
         res = rc.reuse_evidence("issue-1", "def", "r1", existing=existing)
         self.assertFalse(res.detail["reusable"])
         self.assertEqual(res.detail["reason"], "stale_evidence")
+
+    def test_AC9_pending_ci_keeps_reusable_for_matching_evidence(self):
+        existing = {"subject": "issue-1", "head": "abc", "definition_revision": "r1"}
+        res = rc.reuse_evidence("issue-1", "abc", "r1", existing=existing, pending_ci=True)
+        self.assertTrue(res.detail["reusable"])
+        self.assertFalse(res.detail["fallback"])
+
+    def test_AC9_changed_definition_not_reused(self):
+        existing = {"subject": "issue-1", "head": "abc", "definition_revision": "r1"}
+        res = rc.reuse_evidence("issue-1", "abc", "r2", existing=existing, pending_ci=True)
+        self.assertFalse(res.detail["reusable"])
+        self.assertEqual(res.detail["reason"], "stale_evidence")
+
+    def test_reuse_evidence_refusal_branches(self):
+        # Invalid subject.
+        res = rc.reuse_evidence("", "abc", "r1")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "malformed_input")
+
+        # No evidence.
+        res = rc.reuse_evidence("issue-1", "abc", "r1")
+        self.assertTrue(res.may_proceed)
+        self.assertFalse(res.detail["reusable"])
+        self.assertEqual(res.detail["reason"], "no_evidence")
+        self.assertIn("fallback", res.detail)
+
+        # Non-dict existing.
+        res = rc.reuse_evidence("issue-1", "abc", "r1", existing=["not-a-dict"])
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "malformed_input")
+
+        # Different subject.
+        res = rc.reuse_evidence(
+            "issue-2", "abc", "r1", existing={"subject": "issue-1", "head": "abc", "definition_revision": "r1"}
+        )
+        self.assertTrue(res.may_proceed)
+        self.assertFalse(res.detail["reusable"])
+        self.assertEqual(res.detail["reason"], "different_subject")
+        self.assertIn("fallback", res.detail)
+
+
+class CoverageTests(unittest.TestCase):
+    """evaluate_coverage refusal branches."""
+
+    def test_evaluate_coverage_refusal_branches(self):
+        # Non-dict map.
+        res = rc.evaluate_coverage(["top_level"])
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "malformed_input")
+
+        # Out-of-list value.
+        res = rc.evaluate_coverage({"s": "everything"})
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "out_of_list_value")
+
+        # Non-string value (malformed, never a TypeError).
+        res = rc.evaluate_coverage({"s": ["top_level"]})
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "malformed_input")
+
+
+class HelperRefusalBranchTests(unittest.TestCase):
+    """Kilo W1-W8 — every refusal branch of each helper."""
+
+    def test_account_event_refusal_branches(self):
+        self.assertFalse(rc.account_event("not-a-ledger", "evt", "compaction").ok)
+        self.assertFalse(rc.account_event(rc.EventLedger(), "", "compaction").ok)
+        self.assertFalse(rc.account_event(rc.EventLedger(), "evt", "nope").ok)
+        self.assertFalse(rc.account_event(rc.EventLedger(), "evt", ["compaction"]).ok)
+        # Double-counted ledger.
+        res = rc.account_event(rc.EventLedger(seen=("evt", "evt")), "evt", "compaction")
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "duplicate_compaction_count")
+
+    def test_classify_note_refusal_branches(self):
+        self.assertFalse(rc.classify_note("not-a-status").ok)
+        self.assertFalse(rc.classify_note(["missing"]).ok)
+
+    def test_reconcile_unknown_effect_refusal_branches(self):
+        self.assertFalse(rc.reconcile_unknown_effect("not-an-outcome").ok)
+        self.assertFalse(rc.reconcile_unknown_effect(["unknown"]).ok)
+
+    def test_classify_lineage_refusal_branches(self):
+        self.assertFalse(rc.classify_lineage("s1", "s2", claim="bogus").ok)
+
+    def test_admit_recovery_degraded_checkpoint(self):
+        res = rc.admit_recovery(
+            _input(note_status="missing", checkpoint=_checkpoint(degradation="no_note"))
+        )
+        self.assertTrue(res.may_proceed, res.reason)
+        self.assertEqual(res.value.admission_outcome, "fallback_ledger_recovery")
+        self.assertEqual(res.value.checkpoint.degradation, "no_note")
+        self.assertEqual(res.value.checkpoint.coverage, "top_level")
+        self.assertEqual(res.detail["continuity"], "fallback")
+
+
+class ImportByPathTests(unittest.TestCase):
+    """M2 — goal_recovery is importable by path with no pre-registered goal_run."""
+
+    def test_importable_by_path_without_preregistered_goal_run(self):
+        saved_goal_run = sys.modules.get("goal_run")
+        sys.modules.pop("goal_run", None)
+        try:
+            spec = importlib.util.spec_from_file_location("goal_recovery_by_path", GOAL_RECOVERY)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["goal_recovery_by_path"] = mod
+            spec.loader.exec_module(mod)
+            self.assertTrue(hasattr(mod, "admit_recovery"))
+            self.assertTrue(hasattr(mod, "classify_note"))
+        finally:
+            if saved_goal_run is not None:
+                sys.modules["goal_run"] = saved_goal_run
 
 
 class SideEffectTests(unittest.TestCase):
@@ -391,6 +770,7 @@ class SideEffectTests(unittest.TestCase):
         "time.monotonic",
         "time.sleep",
     }
+    FORBIDDEN_METHODS = {"write", "write_text", "write_bytes"}
 
     def test_AC10_module_is_pure(self):
         source = GOAL_RECOVERY.read_text()
@@ -408,6 +788,8 @@ class SideEffectTests(unittest.TestCase):
             elif isinstance(node, ast.Call):
                 name = self._call_name(node.func)
                 self.assertNotIn(name, self.FORBIDDEN_CALLS, name)
+                if isinstance(node.func, ast.Attribute) and node.func.attr in self.FORBIDDEN_METHODS:
+                    self.fail("forbidden file write: .%s" % node.func.attr)
                 if name in self.FORBIDDEN_ATTRS:
                     self.fail("forbidden time call: %s" % name)
             elif isinstance(node, ast.Attribute):

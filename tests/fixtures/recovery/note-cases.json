@@ -50,6 +50,15 @@
       "checkpoint_available": false,
       "expected_outcome": "recovery_evidence_unavailable",
       "expected_reject": true
+    },
+    {
+      "name": "stale-note-no-pause-ledger-fallback",
+      "note_status": "stale",
+      "paused": false,
+      "checkpoint_available": true,
+      "expected_outcome": "fallback_ledger_recovery",
+      "expected_continuity": "fallback",
+      "expected_degradation": "stale_note"
     }
   ]
 }

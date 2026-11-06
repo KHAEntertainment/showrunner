@@ -9,9 +9,10 @@ module returns records, it never writes them.
 
 Imports from the frozen merged L1 module ``goal_run.py`` (read-only): ``Result``,
 ``RunCounters``, ``BoundsPolicy``, ``ArmedRun``, ``evaluate_limits`` and
-``guard_frozen_scope``. Its ``Result`` shape and reason-code style are reused; no
-goal_run logic is duplicated and no private (leading-underscore) name is imported
-or copied — this module needs none.
+``guard_frozen_scope``. ``Result``'s shape and reason-code style are reused, and
+the ``_invalid`` / ``_accept`` result helpers below are copied verbatim from
+``goal_run.py`` (copying is allowed; see the PR body). No private
+(leading-underscore) name is imported or copied — this module needs none.
 
 Stable public API:
 
@@ -38,23 +39,38 @@ Stable public API:
 Reason codes (``Result.reason``) are part of the interface. Recovery codes:
 ``unsupported_major_version``, ``missing_required_field``, ``out_of_list_value``,
 ``malformed_input``, ``resume_overrides_pause``, ``authority_renewed_by_activity``,
-``unknown_effect_replay``, ``compaction_counts_as_rotation``,
+``authority_revoked``, ``authority_expired``, ``unknown_effect_replay``,
+``compaction_counts_as_rotation``, ``rotation_not_evidenced``,
+``rotation_transfer_pending``, ``rotation_transfer_conflict``,
 ``recovery_evidence_unavailable``, ``duplicate_compaction_count``,
 ``managed_to_standalone``, ``second_writer``, ``obligations_changed``,
-``scope_growth`` (reused from goal_run).
+``lineage_claim_conflict``, ``scope_growth`` (reused from goal_run).
 
 ``admit_recovery`` implements the SDP l.477 resume admission order as one ordered
 evaluator. Each step fails closed; a failure returns ``Result("invalid")`` whose
-``detail["step"]`` names the step (1-6) and never runs later steps.
+``detail["step"]`` names the step (1-6) and never runs later steps. No guard may
+be skipped because its input is missing: every current-state input a step consumes
+must be supplied (``None`` means "not supplied" and stops that step); an explicit
+empty snapshot (``()`` / ``""``) is supplied and allowed. ``admit_recovery`` reads
+only; it returns the receipt and a next ledger, and never mutates any input.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+import sys
+from dataclasses import dataclass, field, fields, replace
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Optional
 
-from goal_run import (
+# Make the sibling ``goal_run`` module importable regardless of how this file is
+# loaded (as ``__main__``, or via ``importlib.util.spec_from_file_location`` in
+# tests), rather than relying on ``sys.path[0]`` being set for us.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from goal_run import (  # noqa: E402
     ArmedRun,
     BoundsPolicy,
     Result,
@@ -165,6 +181,9 @@ _ADAPTERS = (ADAPTER_CLAUDE, ADAPTER_OPENCODE, ADAPTER_CODEX, ADAPTER_PI)
 # Developing (Codex) and owner-reported (Pi) adapters are never parity.
 _DEVELOPING_ADAPTERS = frozenset({ADAPTER_CODEX, ADAPTER_PI})
 
+# A genuine rotation transfer claim vocabulary (classify_lineage).
+_LINEAGE_CLAIMS = ("successor", "takeover")
+
 
 def _invalid(reason: str, detail: Optional[dict] = None) -> Result:
     return Result("invalid", reason=reason, detail=detail or {})
@@ -172,6 +191,24 @@ def _invalid(reason: str, detail: Optional[dict] = None) -> Result:
 
 def _accept(value: Any = None, detail: Optional[dict] = None) -> Result:
     return Result("accept", value=value, detail=detail or {})
+
+
+def _enum_check(value, allowed, field: str) -> Result:
+    """Type-check a closed-list value before testing membership, so a list, object,
+    ``None`` or wrong scalar yields an explicit ``invalid`` and never a TypeError."""
+    if not isinstance(value, str):
+        return _invalid("malformed_input", {"field": field, "value": value})
+    if value not in allowed:
+        return _invalid("out_of_list_value", {"field": field, "value": value})
+    return _accept()
+
+
+def _first_missing(*pairs) -> Optional[str]:
+    """Return the name of the first ``(name, value)`` whose value is ``None``."""
+    for name, value in pairs:
+        if value is None:
+            return name
+    return None
 
 
 @dataclass(frozen=True)
@@ -256,31 +293,56 @@ class Obligations:
 
 @dataclass(frozen=True)
 class RecoveryInput:
-    """Frozen inputs to ``admit_recovery``. All fields optional; each maps to the
-    resume-admission step that consumes it (see docstring of ``admit_recovery``)."""
+    """Frozen inputs to ``admit_recovery``. Each current-state field maps to the
+    resume-admission step that consumes it (see the ``admit_recovery`` docstring).
+    ``None`` means "not supplied" and stops that step; an explicit empty snapshot
+    (``()`` / ``""``) is supplied and allowed."""
 
-    checkpoint: Optional[CheckpointReference] = None  # step 1
-    paused: bool = False  # step 2
-    resume_over_pause: bool = False  # step 2 (stale note applied over a pause)
-    event_identity: str = ""  # step 3
-    event_kind: str = EVENT_KIND_COMPACTION  # step 3
-    ledger: EventLedger = field(default_factory=EventLedger)  # step 3
-    rotation_due: bool = False  # step 3
-    native_session_id: Optional[str] = None  # step 3 custody
-    sole_writer: bool = True  # step 3
-    accounting_result: str = "counted_once"  # step 6 record
-    obligations_before: Optional[Obligations] = None  # step 4
-    obligations_after: Optional[Obligations] = None  # step 4
-    replay_attempted: bool = False  # step 4
-    unknown_outcomes: tuple = ()  # step 4
-    scope: Optional[ArmedRun] = None  # step 4 scope growth
-    fixed_issues: tuple = ()  # step 4
-    managed_fallback: bool = False  # step 5
-    authority_renewed: bool = False  # step 5
-    policy: Optional[BoundsPolicy] = None  # step 5
-    counters: Optional[RunCounters] = None  # step 5
-    approval_time: Any = None  # step 5
-    now: Any = None  # step 5
+    # step 1 — recover checkpoint + classify note
+    checkpoint: Optional[CheckpointReference] = None
+    note_status: str = NOTE_CURRENT
+    checkpoint_available: bool = True
+
+    # step 2 — owner pause + read-only waits/restrictions
+    paused: bool = False
+    resume_over_pause: bool = False
+    outstanding_waits: Optional[tuple] = None
+    protected_restrictions: Optional[tuple] = None
+
+    # step 3 — count the event once; sole writer; rotation and custody
+    event_identity: str = ""
+    event_kind: str = EVENT_KIND_COMPACTION
+    ledger: EventLedger = field(default_factory=EventLedger)
+    rotation_due: bool = False
+    native_session_id: Optional[str] = None
+    custody_record: Optional[str] = None
+    successor: Optional[str] = None
+    transfer_acknowledged: bool = False
+    transfer_conflict: bool = False
+    sole_writer: bool = True
+
+    # step 4 — preserve obligations; current source/charter/heads/invalidation
+    obligations_before: Optional[Obligations] = None
+    obligations_after: Optional[Obligations] = None
+    replay_attempted: bool = False
+    unknown_outcomes: tuple = ()
+    scope: Optional[ArmedRun] = None
+    fixed_issues: tuple = ()
+    current_source: Optional[str] = None
+    charter_revision: Optional[str] = None
+    current_heads: Optional[tuple] = None
+    invalidation: Optional[tuple] = None
+
+    # step 5 — budgets and authority
+    managed_fallback: bool = False
+    authority_renewed: bool = False
+    authority_revoked: bool = False
+    authority_expired: bool = False
+    policy: Optional[BoundsPolicy] = None
+    counters: Optional[RunCounters] = None
+    approval_time: Any = None
+    now: Any = None
+    authority_bindings: Optional[tuple] = None
 
 
 def _validate_checkpoint_dict_fields(record: dict) -> Result:
@@ -307,8 +369,10 @@ def _validate_checkpoint_dict_fields(record: dict) -> Result:
             return _invalid("malformed_input", {"field": "authoritative_refs"})
 
     coverage = record.get("coverage")
-    if coverage is not None and coverage not in COVERAGE_VALUES:
-        return _invalid("out_of_list_value", {"field": "coverage", "value": coverage})
+    if coverage is not None:
+        check = _enum_check(coverage, COVERAGE_VALUES, "coverage")
+        if not check.ok:
+            return check
 
     degradation = record.get("degradation")
     if degradation is not None and not isinstance(degradation, str):
@@ -374,22 +438,22 @@ def build_recovery_receipt(
     checkpoint: CheckpointReference, event_accounting_result, admission_outcome
 ) -> Result:
     """Build and validate a ``recovery-receipt-v1`` record. Every checkpoint field
-    is validated unchanged, then the two receipt fields are checked against their
-    closed lists. Never raises."""
+    is validated unchanged, then the two receipt fields are type-checked against
+    their closed lists (a non-string is ``malformed_input``, a string outside the
+    list is ``out_of_list_value``). Never raises."""
     if not isinstance(checkpoint, CheckpointReference):
         return _invalid("malformed_input", {"field": "checkpoint"})
     check = _validate_checkpoint_object(checkpoint)
     if not check.ok:
         return check
-    if event_accounting_result not in EVENT_ACCOUNTING_RESULTS:
-        return _invalid(
-            "out_of_list_value",
-            {"field": "event_accounting.result", "value": event_accounting_result},
-        )
-    if admission_outcome not in ADMISSION_OUTCOMES:
-        return _invalid(
-            "out_of_list_value", {"field": "admission_outcome", "value": admission_outcome}
-        )
+    check = _enum_check(
+        event_accounting_result, EVENT_ACCOUNTING_RESULTS, "event_accounting.result"
+    )
+    if not check.ok:
+        return check
+    check = _enum_check(admission_outcome, ADMISSION_OUTCOMES, "admission_outcome")
+    if not check.ok:
+        return check
     return _accept(
         value=RecoveryReceipt(
             checkpoint=checkpoint,
@@ -406,7 +470,8 @@ def validate_sc9_record(record_type, record) -> Result:
     ``record`` is the record dict. Unknown major version, missing required field or
     out-of-list value yields ``invalid``. A receipt additionally rejects
     ``duplicate_compaction_count`` and every rejection ``admission_outcome``.
-    """
+    Enum values are type-checked before membership testing, so a list, object or
+    wrong scalar is ``malformed_input``, never a TypeError."""
     if record_type not in _RECORD_TYPES:
         return _invalid("unsupported_major_version", {"version": record_type})
     if not isinstance(record, dict):
@@ -423,12 +488,14 @@ def validate_sc9_record(record_type, record) -> Result:
     if not isinstance(event_accounting, dict):
         return _invalid("missing_required_field", {"field": "event_accounting"})
     result = event_accounting.get("result")
-    if result not in EVENT_ACCOUNTING_RESULTS:
-        return _invalid("out_of_list_value", {"field": "event_accounting.result", "value": result})
+    check = _enum_check(result, EVENT_ACCOUNTING_RESULTS, "event_accounting.result")
+    if not check.ok:
+        return check
 
     outcome = record.get("admission_outcome")
-    if outcome not in ADMISSION_OUTCOMES:
-        return _invalid("out_of_list_value", {"field": "admission_outcome", "value": outcome})
+    check = _enum_check(outcome, ADMISSION_OUTCOMES, "admission_outcome")
+    if not check.ok:
+        return check
 
     if result == "duplicate_compaction_count":
         return _invalid("duplicate_compaction_count")
@@ -440,14 +507,23 @@ def validate_sc9_record(record_type, record) -> Result:
 def account_event(ledger: EventLedger, identity: str, kind: str) -> Result:
     """Count one event (compaction, wake, restart, duplicate hook delivery, lead
     handoff) once by identity. A duplicate identity is recorded as a duplicate and
-    changes no counter; the accounting result stays ``counted_once``. Returns a new
-    ledger; the input ledger is never mutated."""
+    changes no counter; the accounting result stays ``counted_once`` with
+    ``duplicate: true, counted: false`` in detail. An identity already present in
+    ``seen`` more than once is a double count and yields ``duplicate_compaction_count``.
+    Returns a new ledger; the input ledger is never mutated."""
     if not isinstance(ledger, EventLedger):
         return _invalid("malformed_input", {"field": "ledger"})
     if not isinstance(identity, str) or not identity:
         return _invalid("malformed_input", {"field": "identity"})
+    if not isinstance(kind, str):
+        return _invalid("malformed_input", {"field": "kind", "value": kind})
     if kind not in EVENT_KINDS:
         return _invalid("out_of_list_value", {"field": "kind", "value": kind})
+
+    if ledger.seen.count(identity) > 1:
+        return _invalid(
+            "duplicate_compaction_count", {"field": "identity", "identity": identity}
+        )
 
     if identity in ledger.seen:
         new_duplicates = dict(ledger.duplicates)
@@ -493,11 +569,14 @@ def preserve_obligations(before: Obligations, after: Obligations) -> Result:
 
 def classify_note(note_status, *, paused: bool = False, checkpoint_available: bool = False) -> Result:
     """Classify the handoff note for admission (sc-9.md note cases). A stale note
-    applied over an owner pause is ``resume_overrides_pause`` (reject). A missing,
-    failed or emergency-without-note handoff with a usable ledger checkpoint is
-    ``fallback_ledger_recovery`` (accept) with ``degradation`` set and
-    ``continuity: fallback``. With neither a usable note nor a usable ledger
-    checkpoint the outcome is ``recovery_evidence_unavailable`` (reject)."""
+    applied over an owner pause is ``resume_overrides_pause`` (reject). A stale
+    (without a pause), missing, failed or emergency-without-note handoff with a
+    usable ledger checkpoint is ``fallback_ledger_recovery`` (accept) with
+    ``degradation`` set and ``continuity: fallback``. With neither a usable note
+    nor a usable ledger checkpoint the outcome is ``recovery_evidence_unavailable``
+    (reject)."""
+    if not isinstance(note_status, str):
+        return _invalid("malformed_input", {"field": "note_status", "value": note_status})
     if note_status not in NOTE_STATUSES:
         return _invalid("out_of_list_value", {"field": "note_status", "value": note_status})
 
@@ -526,6 +605,8 @@ def reconcile_unknown_effect(outcome, *, retry: bool = False) -> Result:
     ``inspect_destination_first`` (never ``retry``) and every dependent action is
     blocked. Repeating the action before reconciliation is
     ``unknown_effect_replay`` (reject). A reconciled outcome unblocks."""
+    if not isinstance(outcome, str):
+        return _invalid("malformed_input", {"field": "outcome", "value": outcome})
     if outcome not in ("unknown", "resolved"):
         return _invalid("out_of_list_value", {"field": "outcome", "value": outcome})
 
@@ -540,23 +621,41 @@ def reconcile_unknown_effect(outcome, *, retry: bool = False) -> Result:
 
 def classify_lineage(prior_session_id, current_session_id, claim=None) -> Result:
     """Distinguish a same-session compaction from a lineage/custody claim. Custody
-    is ``unknown`` when no native session id is supplied. With a new session id the
-    claim may be ``successor`` or ``takeover``; without a claim it is a bare
-    lineage claim (new session)."""
+    is ``unknown`` when no native session id is supplied. A ``successor`` or
+    ``takeover`` claim with a *new* session id is accepted; the same claim on the
+    same session id, or both markers together, is a contradictory claim and is
+    refused with ``lineage_claim_conflict``. With a new session id and no claim the
+    result is a bare ``lineage_claim`` (new session)."""
     if current_session_id is None or current_session_id == "":
         return _accept(value="custody_unknown", detail={"custody": "unknown"})
 
-    if prior_session_id is not None and current_session_id == prior_session_id:
-        return _accept(
-            value="same_session_compaction",
-            detail={"custody": "known", "lineage": "same_session"},
-        )
+    same_session = prior_session_id is not None and current_session_id == prior_session_id
 
-    if claim in ("successor", "takeover"):
+    if isinstance(claim, (list, tuple)):
+        if set(claim) >= {"successor", "takeover"}:
+            return _invalid(
+                "lineage_claim_conflict",
+                {"reason": "both successor and takeover markers", "claim": list(claim)},
+            )
+        return _invalid("malformed_input", {"field": "claim", "value": list(claim)})
+
+    if claim in _LINEAGE_CLAIMS:
+        if same_session:
+            return _invalid(
+                "lineage_claim_conflict",
+                {"reason": "%s claim with the same native session id" % claim, "claim": claim},
+            )
         return _accept(value=claim, detail={"custody": "known", "lineage": claim})
 
     if claim is None:
-        return _accept(value="lineage_claim", detail={"custody": "known", "lineage": "new_session"})
+        if same_session:
+            return _accept(
+                value="same_session_compaction",
+                detail={"custody": "known", "lineage": "same_session"},
+            )
+        return _accept(
+            value="lineage_claim", detail={"custody": "known", "lineage": "new_session"}
+        )
 
     return _invalid("malformed_input", {"field": "claim", "value": claim})
 
@@ -575,6 +674,8 @@ def qualify_adapter(
     Claude/OpenCode route is supported only by actual build, per-session load
     evidence (a load marker for another session is not proof), event coverage and
     child exclusions."""
+    if not isinstance(adapter, str):
+        return _invalid("malformed_input", {"field": "adapter", "value": adapter})
     if adapter not in _ADAPTERS:
         return _invalid("malformed_input", {"field": "adapter", "value": adapter})
 
@@ -617,42 +718,42 @@ def qualify_adapter(
 
 def reuse_evidence(subject, head, definition_revision, *, existing=None, pending_ci: bool = False) -> Result:
     """Decide whether verification evidence is reusable (AC-06 evidence reuse).
-    Pending CI is never a local-fallback trigger. Evidence for the same subject at
-    the same head and definition revision is reused; a different head or definition
-    is stale and not reused."""
+    Pending CI never triggers local fallback and never disables reuse of evidence
+    that otherwise applies. Evidence for the same subject at the same head and
+    definition revision is reused; a changed head or definition revision is stale
+    and not reused. ``fallback`` is always reported."""
     if not isinstance(subject, str) or not subject:
         return _invalid("malformed_input", {"field": "subject"})
 
-    if pending_ci:
-        return _accept(
-            detail={"reusable": False, "fallback": False, "pending_ci": True}
-        )
+    base = {"fallback": False, "pending_ci": pending_ci}
 
     if existing is None:
-        return _accept(detail={"reusable": False, "reason": "no_evidence"})
+        return _accept(detail={**base, "reusable": False, "reason": "no_evidence"})
 
     if not isinstance(existing, dict):
         return _invalid("malformed_input", {"field": "existing"})
 
     if existing.get("subject") != subject:
-        return _accept(detail={"reusable": False, "reason": "different_subject"})
+        return _accept(detail={**base, "reusable": False, "reason": "different_subject"})
     if existing.get("head") != head or existing.get("definition_revision") != definition_revision:
-        return _accept(detail={"reusable": False, "reason": "stale_evidence"})
+        return _accept(detail={**base, "reusable": False, "reason": "stale_evidence"})
 
-    return _accept(detail={"reusable": True, "reused": existing})
+    return _accept(detail={**base, "reusable": True, "reused": existing})
 
 
 def evaluate_coverage(coverage_map) -> Result:
     """Validate and partition a per-adapter coverage map into covered (top-level or
     child) and excluded sessions. Excluded sessions are not counted as covered. A
-    value outside the ``coverage`` closed list is invalid."""
+    non-dict map is ``malformed_input``; a value outside the ``coverage`` closed
+    list is ``out_of_list_value`` (and a non-string value is ``malformed_input``)."""
     if not isinstance(coverage_map, dict):
         return _invalid("malformed_input", {"field": "coverage_map"})
 
     covered, excluded = [], []
     for session, value in coverage_map.items():
-        if value not in COVERAGE_VALUES:
-            return _invalid("out_of_list_value", {"field": "coverage", "value": value, "session": session})
+        check = _enum_check(value, COVERAGE_VALUES, "coverage")
+        if not check.ok:
+            return _invalid(check.reason, {**check.detail, "session": session})
         if value == "excluded":
             excluded.append(session)
         else:
@@ -661,14 +762,49 @@ def evaluate_coverage(coverage_map) -> Result:
     return _accept(detail={"covered": covered, "excluded": excluded})
 
 
-def _resolve_outcome(state: RecoveryInput) -> str:
+def _genuine_rotation(state: RecoveryInput) -> bool:
+    """A due rotation is only satisfied by a real, evidenced rotation: a lead
+    handoff with a successor, an acknowledged transfer, and a native session id or
+    custody record, with no conflicting transfer."""
+    return (
+        state.event_kind == EVENT_KIND_LEAD_HANDOFF
+        and bool(state.successor)
+        and state.transfer_acknowledged
+        and (bool(state.native_session_id) or bool(state.custody_record))
+        and not state.transfer_conflict
+    )
+
+
+def _rotation_refusal(state: RecoveryInput) -> str:
+    """Name the reason a due rotation is refused when it is not genuinely applied."""
+    if state.event_kind != EVENT_KIND_LEAD_HANDOFF:
+        return "rotation_not_evidenced"
+    if state.transfer_conflict:
+        return "rotation_transfer_conflict"
+    if not state.successor:
+        return "rotation_not_evidenced"
+    if not state.transfer_acknowledged:
+        return "rotation_transfer_pending"
+    return "rotation_not_evidenced"
+
+
+def _resolve_outcome(state: RecoveryInput, note: Result) -> str:
     if state.paused:
         return "pause_honored_recovery_only"
     if state.rotation_due:
         return "rotation_due_rotation_applied"
-    if state.checkpoint is not None and state.checkpoint.degradation in _DEGRADED:
-        return "fallback_ledger_recovery"
-    return "restored_then_current_state_check"
+    return note.value
+
+
+def _receipt_checkpoint(state: RecoveryInput, note: Result) -> CheckpointReference:
+    """Return the receipt's checkpoint. A fallback (degraded note) records the note
+    degradation; coverage keeps the source's own classification unchanged."""
+    checkpoint = state.checkpoint
+    if note.value == "fallback_ledger_recovery":
+        degradation = note.detail.get("degradation")
+        if checkpoint.degradation != degradation:
+            checkpoint = replace(checkpoint, degradation=degradation)
+    return checkpoint
 
 
 def admit_recovery(state: RecoveryInput) -> Result:
@@ -676,18 +812,26 @@ def admit_recovery(state: RecoveryInput) -> Result:
     fails closed; a failure returns ``Result("invalid")`` with ``detail["step"]``
     naming the step (1-6), and no later step runs.
 
-    Step 1 recover checkpoint identity/freshness/authoritative references;
-    step 2 read owner pause before task action (a stale note over a pause rejects);
-    step 3 count the event once and check sole writer, rotation and custody;
-    step 4 reload scope/heads preserving children, owed replies and unknown
-    outcomes (replay before reconciliation rejects); step 5 recheck budgets and
-    authority with no managed-to-standalone fallback; step 6 record the recovery
-    and continue only eligible work.
+    Step 1 recover checkpoint identity/freshness/authoritative references and
+    classify the handoff note; step 2 read owner pause and the read-only
+    waits/restrictions (a stale note over a pause rejects); step 3 count the event
+    once, check sole writer, rotation and custody; step 4 preserve children, owed
+    replies and unknown outcomes (replay before reconciliation rejects) against the
+    read-only current source/charter/heads; step 5 recheck budgets and authority
+    (no managed-to-standalone fallback); step 6 record the recovery and continue
+    only eligible work.
     """
     if not isinstance(state, RecoveryInput):
         return _invalid("malformed_input", {"field": "state"})
 
     # Step 1
+    note = classify_note(
+        state.note_status,
+        paused=state.paused,
+        checkpoint_available=state.checkpoint_available,
+    )
+    if not note.ok:
+        return _invalid(note.reason, {**note.detail, "step": 1})
     if state.checkpoint is None:
         return _invalid("missing_required_field", {"step": 1, "field": "checkpoint"})
     step1 = _validate_checkpoint_object(state.checkpoint)
@@ -695,27 +839,51 @@ def admit_recovery(state: RecoveryInput) -> Result:
         return _invalid(step1.reason, {**step1.detail, "step": 1})
 
     # Step 2
+    missing = _first_missing(
+        ("outstanding_waits", state.outstanding_waits),
+        ("protected_restrictions", state.protected_restrictions),
+    )
+    if missing is not None:
+        return _invalid("missing_required_field", {"step": 2, "field": missing})
     if state.paused and state.resume_over_pause:
         return _invalid("resume_overrides_pause", {"step": 2})
 
     # Step 3
     if not state.sole_writer:
         return _invalid("second_writer", {"step": 3})
-    if state.rotation_due and state.event_kind == EVENT_KIND_COMPACTION:
-        return _invalid("compaction_counts_as_rotation", {"step": 3})
+    if state.rotation_due:
+        if state.event_kind == EVENT_KIND_COMPACTION:
+            return _invalid("compaction_counts_as_rotation", {"step": 3})
+        if not _genuine_rotation(state):
+            return _invalid(_rotation_refusal(state), {"step": 3})
     step3 = account_event(state.ledger, state.event_identity, state.event_kind)
     if not step3.ok:
         return _invalid(step3.reason, {**step3.detail, "step": 3})
     next_ledger = step3.value
+    event_accounting_result = step3.detail["result"]
     custody = "unknown" if (state.native_session_id is None or state.native_session_id == "") else "known"
 
     # Step 4
     if state.replay_attempted and state.unknown_outcomes:
         return _invalid("unknown_effect_replay", {"step": 4})
-    if state.obligations_before is not None and state.obligations_after is not None:
-        step4 = preserve_obligations(state.obligations_before, state.obligations_after)
-        if not step4.ok:
-            return _invalid(step4.reason, {**step4.detail, "step": 4})
+    unknown_restricted = bool(state.unknown_outcomes)
+    missing = _first_missing(
+        ("obligations_before", state.obligations_before),
+        ("obligations_after", state.obligations_after),
+    )
+    if missing is not None:
+        return _invalid("missing_required_field", {"step": 4, "field": missing})
+    step4 = preserve_obligations(state.obligations_before, state.obligations_after)
+    if not step4.ok:
+        return _invalid(step4.reason, {**step4.detail, "step": 4})
+    missing = _first_missing(
+        ("current_source", state.current_source),
+        ("charter_revision", state.charter_revision),
+        ("current_heads", state.current_heads),
+        ("invalidation", state.invalidation),
+    )
+    if missing is not None:
+        return _invalid("missing_required_field", {"step": 4, "field": missing})
     if state.scope is not None and state.fixed_issues:
         scope_check = guard_frozen_scope(state.scope, fixed_issues=list(state.fixed_issues))
         if not scope_check.ok:
@@ -726,16 +894,27 @@ def admit_recovery(state: RecoveryInput) -> Result:
         return _invalid("managed_to_standalone", {"step": 5})
     if state.authority_renewed:
         return _invalid("authority_renewed_by_activity", {"step": 5})
-    if state.policy is not None and state.counters is not None:
-        limits = evaluate_limits(state.policy, state.counters, state.approval_time, state.now)
-        if not limits.ok:
-            return _invalid(limits.reason, {**limits.detail, "step": 5})
+    if state.authority_revoked:
+        return _invalid("authority_revoked", {"step": 5})
+    if state.authority_expired:
+        return _invalid("authority_expired", {"step": 5})
+    missing = _first_missing(
+        ("policy", state.policy),
+        ("counters", state.counters),
+        ("approval_time", state.approval_time),
+        ("now", state.now),
+        ("authority_bindings", state.authority_bindings),
+    )
+    if missing is not None:
+        return _invalid("missing_required_field", {"step": 5, "field": missing})
+    limits = evaluate_limits(state.policy, state.counters, state.approval_time, state.now)
+    if limits.outcome != "complete":
+        return _invalid(limits.reason, {**limits.detail, "step": 5})
 
     # Step 6
-    if state.accounting_result == "duplicate_compaction_count":
-        return _invalid("duplicate_compaction_count", {"step": 6})
-    outcome = _resolve_outcome(state)
-    receipt = build_recovery_receipt(state.checkpoint, state.accounting_result, outcome)
+    outcome = _resolve_outcome(state, note)
+    checkpoint = _receipt_checkpoint(state, note)
+    receipt = build_recovery_receipt(checkpoint, event_accounting_result, outcome)
     if not receipt.ok:
         return _invalid(receipt.reason, {**receipt.detail, "step": 6})
 
@@ -747,5 +926,11 @@ def admit_recovery(state: RecoveryInput) -> Result:
             "event_counted": step3.detail.get("counted"),
             "ledger": next_ledger,
             "admission_outcome": outcome,
+            "continuity": note.detail.get("continuity"),
+            "degradation": note.detail.get("degradation"),
+            "unknown_outcomes": tuple(state.unknown_outcomes),
+            "dependent_actions_blocked": unknown_restricted,
+            "eligibility": "inspection_and_independent" if unknown_restricted else "full",
+            "action": "inspect_destination_first" if unknown_restricted else None,
         },
     )
