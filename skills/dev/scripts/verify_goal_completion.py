@@ -10,7 +10,7 @@ records the result as sole ledger writer.
 Usage::
 
     verify_goal_completion.py --ledger .agent/dev-state.md [--purpose final]
-        [--owner-account LOGIN] [--marker TEXT] [--approved-revision DIGEST]
+        [--marker TEXT] [--approved-revision DIGEST]
         [--invoker-role ROLE] [--invoker-id ID] [--invoker-harness HARNESS]
         [--consumer-context CONTEXT] [--hook-cap-exhausted]
         [--supersedes RESULT_ID ...] [--result-id ID] [--ledger-ref REF]
@@ -29,18 +29,29 @@ Outcome classes. Each reason code carries one class:
   closed, a PR not merged, the wrong merge SHA, base or repository, a merge not
   reachable from the destination, a withdrawn integration, a failed post-merge
   gate, ``criteria_verdict: unmet``, an Issue with no PR record, proof of a kind
-  D4.4 never accepts, or a human criterion awaiting owner acceptance.
+  D4.4 never accepts, or a ``human`` criterion (``evaluator_unsupported``).
 * ``inconclusive``: missing, unreadable, stale or ambiguous evidence. Examples:
   a read failing after three tries, an API error or rate limit, a missing PR
   record in a multi-PR mapping, an absent or pending post-merge record, a stale
-  criteria or source revision, a suspected unrecorded revert, a mismatched
-  marker, or a missing owner account for a human criterion.
+  criteria or source revision, a suspected unrecorded revert, or a mismatched
+  marker.
 * ``advisory``: recorded, never blocking. Examples: a revert scan that could
   not run, hook-cap exhaustion, or an open Issue under ``purpose: readiness``.
 
 A ``not_complete`` reason outranks an ``inconclusive`` one. Neither the lead's
 marker nor its summary is ever read as proof, and no prior result is reused:
 every call re-reads the repository.
+
+Human evaluator (owner ruling 2026-11-06, ruling-no-github-accept). This
+amends SDP D4.4's human row for v2.2; the SDP text is not edited. v2.2 has no
+GitHub ``/accept`` command and no owner-account setting: the owner signs off in
+chat, which GV cannot read. A criterion whose evaluator is ``human`` is
+therefore unsupported. It is ``not_complete`` under ``purpose: final`` and
+``not_ready`` under ``purpose: readiness`` (``evaluator_unsupported``, detail
+``{criterion, evaluator: human, version: v2.2}``), and never verifies. ``human``
+stays in ``EVALUATOR_TYPES`` so such a record is still read, not malformed. GV
+never lists Issue comments; the only comment it reads is an internal review
+lane's own evidence comment, by id.
 
 Test proof binding (D4.4, GV reading accepted by the lead and foreman). A
 ``test`` criterion is proved by the CI job attempt its post-merge
@@ -53,6 +64,52 @@ entry with the same (run, job, attempt); ``environment``, ``definition_ref`` and
 must name the job (``run <id> job <name> attempt <n>``); otherwise it is
 ``evidence_ref_ambiguous``. The check is the PR ``checks`` entry whose ``id`` is
 the run's ``job``; its post-merge check must pass at the merge sha.
+
+Ambiguous reference (L195-2a). A text-form ``evidence_ref`` holding more than
+one ``attempt <n>`` clause (counted case-insensitively, so it fails closed) is
+``inconclusive`` (``ambiguous_evidence_ref``) and never verifies, whatever
+``ci_runs`` holds: the greedy job group would otherwise absorb the first clause
+into the job name (``run 999 job build attempt 1 (retry attempt 2)``). The path
+form (``<run>/<job>/attempt-<n>``) and the bare form (``run <id>``) are
+unchanged.
+
+CI proof comes from CI (SDP section 6, the independent-check line; L195-2a).
+Every consumed CI run entry (``RUN_CONSUMERS``) that passes ``_authorize_run``
+and whose ledger conclusion is ``success`` is then confirmed against GitHub
+Actions by one method, ``_Evaluation.confirm_ci_run``, through two pinned GET
+reads: ``repos/{repo}/actions/runs/{run}/attempts/{n}`` and its ``/jobs``
+(paginated). The run is accepted only when the API reports ``conclusion:
+success``, ``run_attempt`` equal to the entry's attempt, an ``event`` and
+``head_sha`` matching the one binding ``_Evaluation.ci_binding`` computes, and a
+job named exactly the entry's ``job`` with every such job concluded
+``success``. The binding comes from authoritative facts, never from the
+ledger's ``kind``/``head`` alone (fix batch 1). A post-merge rerun, including
+test proof under ``full_required_gate_rerun``, must be a ``push`` or
+``workflow_dispatch`` run at the recorded merge sha, whatever its subject says.
+Any other run is classified by ``_ci_subject``: a merge ref must be a
+``pull_request`` run whose ``head_sha`` is the merge ref's ``head``, which must
+be the PR head; a head-kind subject must be a ``push`` or ``workflow_dispatch``
+run at its ``sha``, which must be the PR head. A ``pull_request`` run must also
+carry this PR's own context (fix batch 2, ``confirm_pr_context``): exactly one
+``pull_requests`` entry with this PR's number, whose ``head.sha`` is the PR
+head, ``base.repo.full_name`` the goal repository and ``base.ref`` the PR's base
+branch (else ``not_complete`` ``ci_run_api_mismatch``, field ``pr.head``,
+``pr.base_repo`` or ``pr.base_ref``), and whose ``base.sha`` is the subject's
+``base_oid`` (else ``inconclusive`` ``ci_run_base_unconfirmed``). No entry for
+this PR, an empty list, several entries or an incomplete entry is
+``inconclusive`` (``ci_run_pr_context_missing``): a fork PR's ``pull_request``
+run is never GV CI proof in v2.2. A missing or unknown kind, or a merge ref
+with no ``head`` or no ``base_oid``, is ``inconclusive``
+(``ci_subject_unbound``) with no fallback; a subject naming another commit than the PR head is ``not_complete``
+(``ci_subject_mismatch``); a missing or other event is ``inconclusive``
+(``ci_run_event_unbound``). A read that fails after the D3 retries, or an answer
+of the wrong shape, is ``inconclusive`` (``ci_run_unreadable``, naming the
+read); a run not yet completed is ``inconclusive`` (``ci_run_pending``); a
+readable mismatch is ``not_complete`` (``ci_run_api_mismatch``, naming the run,
+attempt and field). The ledger's conclusion may reject a run but never accepts
+one by itself. A CI entry with no attempt is ``inconclusive``
+(``ci_identity_incomplete``) and makes no read. LOCAL and approved-fallback
+entries are not CI runs and make no Actions read.
 
 Environment rule. A check's ``environment`` is an executor class; a ``ci_runs``
 ``environment`` is a runtime descriptor. ``ci`` needs a recorded CI entry (any
@@ -175,7 +232,6 @@ _HEX_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _DIGEST_RE = re.compile(r"^sha256:([0-9a-f]{4,64})$")
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _ENDPOINT_RE = re.compile(r"^repos/[A-Za-z0-9_.\-/?=&:.@\[\]%+]+$")
-_ACCEPT_RE = re.compile(r"^/accept\s+(\S+)\s*$")
 _REVERT_RE = re.compile(r"This reverts commit ([0-9a-fA-F]{7,40})")
 # GitHub's UI revert PR, squash-merged: "Reverts OWNER/REPO#N".
 _REVERT_PR_RE = re.compile(r"^Reverts ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)\s*$", re.MULTILINE)
@@ -190,6 +246,8 @@ _RUN_REF_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?:\s+job\s+(?P<j
 _GITHUB_RUN_ID_RE = re.compile(r"[1-9][0-9]*")
 _RUN_BARE_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?![0-9A-Za-z_-])")
 _RUN_PATH_RE = re.compile(r"^(?P<run>[^/\s]+)/(?P<job>[^/]+)/attempt-(?P<attempt>[0-9]+)$")
+# L195-2a: one "attempt <n>" clause of a text-form CI evidence_ref, case-insensitive (fails closed).
+_ATTEMPT_CLAUSE_RE = re.compile(r"(?<![0-9A-Za-z_-])attempt\s+#?[0-9]+(?![0-9A-Za-z_-])", re.IGNORECASE)
 _COMMENT_REF_RE = re.compile(r"issuecomment-([0-9]+)")
 _REVIEW_REF_RE = re.compile(r"pullrequestreview-([0-9]+)")
 _ACCEPTING_REVIEW_STATES = ("APPROVED", "COMMENTED")
@@ -278,6 +336,11 @@ def _parse_json_stream(text: str):
         return values[0]
     if all(isinstance(v, list) for v in values):
         return [item for page in values for item in page]
+    # An Actions jobs listing pages as one object per page, each with a "jobs" list.
+    if all(isinstance(v, dict) and isinstance(v.get("jobs"), list) for v in values):
+        merged = dict(values[0])
+        merged["jobs"] = [job for page in values for job in page["jobs"]]
+        return merged
     raise ValueError("unexpected multi-document output")
 
 
@@ -552,6 +615,44 @@ def _run_identity(evidence_ref):
     return (bare.group("run"), None, None) if bare else None
 
 
+def _ambiguous_evidence_ref(evidence_ref) -> bool:
+    """True when a text-form CI reference holds more than one ``attempt <n>``
+    clause (L195-2a). The path form is never ambiguous here."""
+    if not isinstance(evidence_ref, str):
+        return False
+    text = evidence_ref.strip()
+    if _RUN_PATH_RE.match(text):
+        return False
+    return len(_ATTEMPT_CLAUSE_RE.findall(text)) > 1
+
+
+# Fix batch 1: the Actions ``event`` each binding class accepts. A merge ref is
+# only ever tested by a ``pull_request`` run; a head-kind subject or a
+# post-merge rerun only by a run on the commit itself (``push``, or a manual
+# ``workflow_dispatch`` on that commit). Any other event is unbound.
+_CI_EVENTS = {"merge_ref": ("pull_request",), "head": ("push", "workflow_dispatch"),
+              "rerun": ("push", "workflow_dispatch")}
+_KNOWN_CI_EVENTS = ("pull_request", "push", "workflow_dispatch")
+
+
+def _ci_subject(subject):
+    """The one classifier of a ``ci_runs`` tested subject (fix batch 1, shared
+    with the tests' synthesizer). Returns (class, sha, base): a ``merge_ref``
+    with its recorded ``head`` (what a ``pull_request`` run reports) and its
+    ``base_oid`` (fix batch 2), or a ``head`` with its ``sha`` and no base. A
+    missing binding field is None; a missing or unknown kind, or a subject that
+    is not a map, gives (None, None, None). There is no fallback between
+    fields."""
+    if not isinstance(subject, dict):
+        return None, None, None
+    kind = subject.get("kind")
+    if kind == "merge_ref":
+        return "merge_ref", _sha(subject.get("head")), _sha(subject.get("base_oid"))
+    if kind == "head":
+        return "head", _sha(subject.get("sha")), None
+    return None, None, None
+
+
 def _is_github_run_id(value) -> bool:
     """The one GitHub run-id rule (R3-F2). A run id is CI only when it is a
     positive int (never a bool) or a str of ASCII digits with no sign, no space
@@ -617,7 +718,8 @@ def _is_approved_fallback(entry) -> bool:
 
 
 # Every site that consumes a ``ci_runs`` entry as evidence. Each one calls
-# _authorize_run with its own name; the tests enumerate this tuple.
+# _authorize_run with its own name, then _Evaluation.confirm_ci_run with the
+# same name; the tests enumerate this tuple.
 RUN_CONSUMERS = ("test_proof", "prior_gate", "post_merge_rerun")
 
 
@@ -904,10 +1006,9 @@ def _skill_revision():
 
 
 class _Evaluation:
-    def __init__(self, reader, purpose, owner_account, assignment, goal, blocks):
+    def __init__(self, reader, purpose, assignment, goal, blocks):
         self.reader = reader
         self.purpose = purpose
-        self.owner = owner_account.lower() if isinstance(owner_account, str) and owner_account else None
         self.assignment = assignment
         self.goal = goal
         self.blocks = blocks
@@ -1109,6 +1210,9 @@ class _Evaluation:
             return ctx
         if current.get("branch") != branch:
             self.add("wrong_base", NOT_COMPLETE, recorded=branch, integrated=current.get("branch"), **tag)
+        # The merge sha CI proof binds to (confirm_ci_run). The fresh PR read below
+        # must equal it, or the PR is not_complete (merge_sha_mismatch).
+        ctx["bound_merge"] = current.get("merge_sha")
         self.check_consistency(prq, rec, current, tag)
 
         entries = [e for e in rec.get("post_merge") or []
@@ -1244,6 +1348,10 @@ class _Evaluation:
                     if run.get("conclusion") != "success":
                         self.add("prior_gate_not_success", NOT_COMPLETE, job=run.get("job"), run=run.get("run"),
                                  attempt=run.get("attempt"), conclusion=run.get("conclusion"), **tag)
+                    elif not failed:
+                        confirmed = self.confirm_ci_run(run, "prior_gate", ctx)
+                        if confirmed:
+                            self.add(confirmed[1], confirmed[0], **confirmed[2], **tag)
         elif gate == "rerun_pass":
             run = pm.get("run")
             subject = (run or {}).get("tested_subject") or {}
@@ -1279,6 +1387,10 @@ class _Evaluation:
                                             "post_merge_rerun")
                     if failed:
                         fail(failed[1], failed[0], **failed[2])
+                    else:
+                        confirmed = self.confirm_ci_run(entry, "post_merge_rerun", ctx)
+                        if confirmed:
+                            fail(confirmed[1], confirmed[0], **confirmed[2])
         elif gate in (None, "pending"):
             self.add("post_merge_pending", INCONCLUSIVE, **tag)
         elif gate in _FAILED_GATE_RESULTS:
@@ -1376,6 +1488,168 @@ class _Evaluation:
         if len(matches) > 1:
             return None, "evidence_ref_ambiguous"
         return matches[0], None
+
+    @staticmethod
+    def ci_binding(entry, consumer, ctx):
+        """The ONE place the expected Actions answer is computed (fix batch 1).
+        Returns (class, allowed events, expected head_sha, expected PR context),
+        or (cls, code, detail) when it cannot be bound. The PR context is None
+        except for a merge ref (fix batch 2): {head, base_ref, base_sha}, the
+        PR head, the PR's base branch (``target_branch``, which the fresh PR read
+        must match or the PR is not_complete ``wrong_base``) and the subject's
+        ``base_oid``. A merge ref with no ``base_oid`` is unbound.
+
+        The expectation comes from authoritative facts, never from the entry's
+        ``kind``/``head`` alone. A post-merge rerun (the ``post_merge_rerun``
+        consumer, or test proof under ``full_required_gate_rerun``) binds to the
+        recorded merge sha, whatever its subject says. Any other run binds to
+        the PR head (``headRefOid``) through its classified subject: a merge ref
+        whose ``head`` is the PR head (``pull_request``), or a head-kind subject
+        whose ``sha`` is the PR head (``push``/``workflow_dispatch``). Both the
+        merge sha and the PR head are checked against the fresh PR read
+        (``merge_sha_mismatch`` and ``head_mismatch`` are not_complete), so a
+        verified result never rests on a stale binding."""
+        rec = ctx.get("record") if isinstance(ctx.get("record"), dict) else {}
+        pm = ctx.get("pm") if isinstance(ctx.get("pm"), dict) else {}
+        rerun = consumer == "post_merge_rerun" or (
+            consumer == "test_proof" and pm.get("action") == "full_required_gate_rerun")
+        if rerun:
+            merge = _sha(ctx.get("bound_merge"))
+            if merge is None:
+                return INCONCLUSIVE, "ci_subject_unbound", {"class": "rerun", "why": "merge sha unbound"}
+            return "rerun", _CI_EVENTS["rerun"], merge, None
+        cls, sha, base_oid = _ci_subject(entry.get("tested_subject"))
+        if cls is None or sha is None or (cls == "merge_ref" and base_oid is None):
+            return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "tested_subject": entry.get("tested_subject")}
+        pr_head = _sha(rec.get("headRefOid"))
+        if pr_head is None:
+            return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "why": "PR head unbound"}
+        if not _sha_eq(sha, pr_head):
+            return NOT_COMPLETE, "ci_subject_mismatch", {"class": cls, "tested": sha, "pr_head": pr_head}
+        if cls != "merge_ref":
+            return cls, _CI_EVENTS[cls], pr_head, None
+        branch = rec.get("target_branch")
+        if not isinstance(branch, str) or not branch:
+            return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "why": "PR base branch unbound"}
+        return cls, _CI_EVENTS[cls], pr_head, {"head": pr_head, "base_ref": branch, "base_sha": base_oid}
+
+    def confirm_pr_context(self, run_data, pr_context, ctx, base):
+        """Fix batch 2 (R2-B1): a ``pull_request`` run is CI proof for a merge
+        ref only when the API's own PR context binds it to this PR, this head and
+        this base. None when accepted, else (cls, code, detail).
+
+        Exactly one ``pull_requests`` entry must carry this PR's number. None (an
+        empty list, as a fork PR's run reports, or only other PRs), several, or
+        an entry lacking head/base fields is inconclusive
+        ``ci_run_pr_context_missing``: a fork PR's ``pull_request`` run is never
+        GV CI proof in v2.2. The entry's ``head.sha`` must be the PR head,
+        ``base.repo.full_name`` the goal repository and ``base.ref`` the PR's
+        base branch; a mismatch is not_complete ``ci_run_api_mismatch`` (fields
+        ``pr.head``, ``pr.base_repo``, ``pr.base_ref``). ``base.sha`` must equal
+        the subject's ``base_oid``. A difference is inconclusive
+        ``ci_run_base_unconfirmed``, not a proven contradiction: GitHub does not
+        document that field as the base the run merged."""
+        def missing(why, **detail):
+            return INCONCLUSIVE, "ci_run_pr_context_missing", dict(base, why=why, **detail)
+
+        def mismatch(name, api, want):
+            return NOT_COMPLETE, "ci_run_api_mismatch", dict(base, field=name, api=api, expected=want)
+
+        if not isinstance(pr_context, dict):
+            return missing("no PR context is bound for this subject")
+        listed = run_data.get("pull_requests")
+        if not isinstance(listed, list) or not all(isinstance(p, dict) for p in listed):
+            return INCONCLUSIVE, "ci_run_unreadable", dict(
+                base, read=f"actions-run:{base['run']}/attempt-{base['attempt']}", cause="unexpected_shape")
+        mine = [p for p in listed if str(p.get("number")) == str(ctx.get("number"))]
+        if not mine:
+            return missing("this PR is not listed", listed=[p.get("number") for p in listed])
+        if len(mine) > 1:
+            return missing("this PR is listed more than once")
+        head = mine[0].get("head") if isinstance(mine[0].get("head"), dict) else {}
+        pr_base = mine[0].get("base") if isinstance(mine[0].get("base"), dict) else {}
+        repo = pr_base.get("repo") if isinstance(pr_base.get("repo"), dict) else {}
+        head_sha, base_ref, base_sha = head.get("sha"), pr_base.get("ref"), pr_base.get("sha")
+        base_repo = repo.get("full_name")
+        if _sha(head_sha) is None or _sha(base_sha) is None or not isinstance(base_ref, str) \
+                or not isinstance(base_repo, str):
+            return missing("the listed PR context is incomplete")
+        if not _sha_eq(head_sha, pr_context["head"]):
+            return mismatch("pr.head", head_sha, pr_context["head"])
+        if base_repo.lower() != self.repo.lower():
+            return mismatch("pr.base_repo", base_repo, self.repo)
+        if base_ref != pr_context["base_ref"]:
+            return mismatch("pr.base_ref", base_ref, pr_context["base_ref"])
+        if not _sha_eq(base_sha, pr_context["base_sha"]):
+            return INCONCLUSIVE, "ci_run_base_unconfirmed", dict(base, api=base_sha, expected=pr_context["base_sha"])
+        return None
+
+    def confirm_ci_run(self, entry, consumer, ctx):
+        """The one CI-proof read (L195-2a): confirm a consumed CI run entry
+        against GitHub Actions. None when accepted, else (cls, code, detail).
+        LOCAL and approved-fallback entries are not CI runs: no read. The
+        ledger's own conclusion is never consulted here; callers reach this
+        only after the ledger has not rejected the run. The expectation is
+        ``ci_binding``'s; the API's own ``event`` must be one that class allows."""
+        if _is_local(entry):
+            return None
+        run_id, job, attempt = entry.get("run"), entry.get("job"), entry.get("attempt")
+        base = {"consumer": consumer, "run": run_id, "job": job, "attempt": attempt}
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            return INCONCLUSIVE, "ci_identity_incomplete", base
+        binding = self.ci_binding(entry, consumer, ctx)
+        if binding[0] in (INCONCLUSIVE, NOT_COMPLETE):
+            return binding[0], binding[1], dict(base, **binding[2])
+        subject_class, events, expected, pr_context = binding
+        endpoint = f"repos/{self.repo}/actions/runs/{run_id}/attempts/{attempt}"
+        reads = (("run", f"actions-run:{run_id}/attempt-{attempt}", endpoint, False),
+                 ("jobs", f"actions-jobs:{run_id}/attempt-{attempt}", f"{endpoint}/jobs?per_page=100", True))
+        answers = {}
+        for name, read_id, path, paginate in reads:
+            try:
+                answers[name] = self.reader.read(read_id, path, paginate=paginate)
+            except ReadFailed as exc:
+                return INCONCLUSIVE, "ci_run_unreadable", dict(base, read=exc.read_id, cause=exc.cause)
+        run_data, jobs_data = answers["run"], answers["jobs"]
+
+        def unreadable(read, why):
+            return INCONCLUSIVE, "ci_run_unreadable", dict(base, read=f"{read}:{run_id}/attempt-{attempt}", cause=why)
+
+        def mismatch(name, api, want):
+            return NOT_COMPLETE, "ci_run_api_mismatch", dict(base, field=name, api=api, expected=want)
+
+        if not isinstance(run_data, dict) or _sha(run_data.get("head_sha")) is None:
+            return unreadable("actions-run", "unexpected_shape")
+        if not isinstance(jobs_data, dict) or not isinstance(jobs_data.get("jobs"), list) \
+                or not all(isinstance(j, dict) for j in jobs_data["jobs"]):
+            return unreadable("actions-jobs", "unexpected_shape")
+        total = jobs_data.get("total_count")
+        if isinstance(total, int) and not isinstance(total, bool) and total > len(jobs_data["jobs"]):
+            return unreadable("actions-jobs", "incomplete_listing")
+        if run_data.get("conclusion") is None and run_data.get("status") != "completed":
+            return INCONCLUSIVE, "ci_run_pending", dict(base, status=run_data.get("status"))
+        if run_data.get("run_attempt") != attempt:
+            return mismatch("run_attempt", run_data.get("run_attempt"), attempt)
+        if run_data.get("conclusion") != "success":
+            return mismatch("conclusion", run_data.get("conclusion"), "success")
+        event = run_data.get("event")
+        if not isinstance(event, str) or event not in _KNOWN_CI_EVENTS:
+            return INCONCLUSIVE, "ci_run_event_unbound", dict(base, event=event, subject_class=subject_class)
+        if event not in events:
+            return mismatch("event", event, list(events))
+        if event == "pull_request":
+            failed = self.confirm_pr_context(run_data, pr_context, ctx, base)
+            if failed:
+                return failed
+        if not _sha_eq(run_data.get("head_sha"), expected):
+            return mismatch("head_sha", run_data.get("head_sha"), expected)
+        named = [j for j in jobs_data["jobs"] if j.get("name") == job]
+        if not named:
+            return mismatch("job", None, job)
+        failed = [j.get("conclusion") for j in named if j.get("conclusion") != "success"]
+        if failed:
+            return mismatch("job_conclusion", failed[0], "success")
+        return None
 
     def tree_of(self, sha, tag):
         data = self.read(f"tree:{sha}", f"repos/{self.repo}/commits/{sha}", **tag)
@@ -1480,7 +1754,9 @@ class _Evaluation:
                 self.criterion(line, INCONCLUSIVE, "evaluator_unassigned")
                 continue
             if etype == "human":
-                self.check_human(line, parts)
+                # Owner ruling 2026-11-06 (no GitHub /accept in v2.2): unsupported, never verified.
+                self.criterion(line, NOT_COMPLETE, "evaluator_unsupported", criterion=cid,
+                               evaluator="human", version="v2.2")
                 continue
             proving = [ctx for prq, ctx in sorted(self.prs.items())
                        if cid in (ctx["record"].get("criteria_ids") or [])]
@@ -1549,6 +1825,9 @@ class _Evaluation:
         item = _find(pm.get("criteria"), "id", cid)
         if not assigned.get("evidence_ref") or not item.get("evidence_ref"):
             return INCONCLUSIVE, "criterion_evidence_missing", None, {}
+        if _ambiguous_evidence_ref(item.get("evidence_ref")):
+            return INCONCLUSIVE, "ambiguous_evidence_ref", None, {"criterion": cid,
+                                                                  "evidence_ref": item.get("evidence_ref")}
         identity = _run_identity(item.get("evidence_ref"))
         if identity is None:
             return INCONCLUSIVE, "evidence_ref_unbound", None, {"evidence_ref": item.get("evidence_ref")}
@@ -1588,6 +1867,9 @@ class _Evaluation:
         authorized = _authorize_run(entry, check, "test_proof")
         if authorized is not None:
             return authorized[0], authorized[1], None, authorized[2]
+        confirmed = self.confirm_ci_run(entry, "test_proof", ctx)
+        if confirmed is not None:
+            return confirmed[0], confirmed[1], None, confirmed[2]
         pm_check = _find(pm.get("checks"), "id", job)
         if pm_check is None:
             return INCONCLUSIVE, "post_merge_check_missing", None, {"check": job}
@@ -1713,64 +1995,9 @@ class _Evaluation:
             return None
         return data if isinstance(data, dict) else None
 
-    def check_human(self, line, parts):
-        cid = line["id"]
-        if self.owner is None:
-            self.criterion(line, INCONCLUSIVE, "owner_account_unavailable")
-            return
-        target = self.parent if self.parent is not None else (self.issues[0] if len(self.issues) == 1 else None)
-        target_parts = _split_issue(target)
-        if target_parts is None or target_parts[0] != self.repo:
-            self.criterion(line, INCONCLUSIVE, "acceptance_target_unreadable", target=target)
-            return
-        approved_at = self.criterion_approved_at()
-        if approved_at is None:
-            self.criterion(line, INCONCLUSIVE, "approval_time_unknown")
-            return
-        comments = self.read(f"acceptance:{target}",
-                             f"repos/{self.repo}/issues/{target_parts[1]}/comments?per_page=100",
-                             criteria=[cid], paginate=True)
-        if comments is None:
-            line["state"] = "inconclusive"
-            line["reason_code"] = "read_failed"
-            return
-        ignored = []
-        for comment in comments if isinstance(comments, list) else []:
-            if not isinstance(comment, dict):
-                continue
-            body = comment.get("body") or ""
-            for text in body.splitlines():
-                match = _ACCEPT_RE.match(text.strip())
-                if not match:
-                    continue
-                named = match.group(1)
-                named_parts = _criterion_parts(named)
-                author = _login(comment.get("user"))
-                posted = _parse_utc(comment.get("created_at"))
-                if named != cid:
-                    if named_parts and named_parts[0] == parts[0]:
-                        ignored.append({"why": "superseded_revision", "named": named, "author": author})
-                    continue
-                if author != self.owner:
-                    ignored.append({"why": "non_owner", "author": author})
-                elif posted is None or posted <= approved_at:
-                    ignored.append({"why": "before_current_revision_approval", "author": author})
-                else:
-                    line.update({"state": "met", "reason_code": "ok", "accepted_proof": {
-                        "command": f"/accept {cid}", "author": author, "issue": target,
-                        "created_at": comment.get("created_at"),
-                        "comment": comment.get("html_url") or comment.get("id")}})
-                    return
-        self.criterion(line, NOT_COMPLETE, "awaiting_owner_acceptance", ignored=ignored)
-
-    def criterion_approved_at(self):
-        amendment = (self.parent_record or {}).get("amendment")
-        if isinstance(amendment, dict) and amendment.get("to") == self.cref:
-            return _parse_utc(amendment.get("at"))
-        return _parse_utc(self.goal.get("approval_time"))
 
 
-def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, owner_account=None, runner=None, sleep=None,
+def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, runner=None, sleep=None,
              now=None, ledger_ref=DEFAULT_LEDGER_REF, invoker=None, consumer_context=None,
              supersedes=(), marker=None, approved_revision=None, hook_cap_exhausted=False,
              result_id=None) -> Verification:
@@ -1828,7 +2055,7 @@ def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, owner_account=None, runner=N
                 value = None
         blocks[key] = value
 
-    run = _Evaluation(reader, purpose, owner_account, assignment, goal, blocks)
+    run = _Evaluation(reader, purpose, assignment, goal, blocks)
     run.ref = ledger_ref
     run.reasons.extend(reasons_pre)
     for key, message in block_failures:
@@ -1947,7 +2174,6 @@ def _build_parser():
     parser = _Parser(description="Goal completion verifier (completion-result-v1). Read-only.")
     parser.add_argument("--ledger", required=True, help="path to the Dev ledger (read only)")
     parser.add_argument("--purpose", default=PURPOSE_FINAL, choices=sorted(VOCABULARY))
-    parser.add_argument("--owner-account", help="owner GitHub login for /accept commands")
     parser.add_argument("--marker", help="the lead's turn-end marker text (never proof)")
     parser.add_argument("--approved-revision", help="current approved plan revision")
     parser.add_argument("--invoker-role")
@@ -1971,7 +2197,7 @@ def main(argv=None, runner=None, sleep=None, now=None) -> int:
     else:
         try:
             result = evaluate(
-                text, purpose=args.purpose, owner_account=args.owner_account, runner=runner,
+                text, purpose=args.purpose, runner=runner,
                 sleep=sleep, now=now, ledger_ref=args.ledger_ref,
                 invoker={"role": args.invoker_role, "id": args.invoker_id, "harness": args.invoker_harness},
                 consumer_context=args.consumer_context, supersedes=args.supersedes,
