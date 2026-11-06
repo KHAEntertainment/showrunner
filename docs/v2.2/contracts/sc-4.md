@@ -1,6 +1,6 @@
 # SC-4 — conformance (`conformance-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.543. Owner-bound values from settled D2 (gates, l.240–l.241) and D7.2 (gate delegation). Foreman checklist source: `~/.claude/skills/foreman-showrunner/templates/STATUS_UPDATE.md` l.26–32 (Workflow conformance table). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.543. Owner-bound values from settled D2 (gates, l.240–l.241) and D7.2 (gate delegation). Foreman checklist source: `~/.claude/skills/foreman-showrunner/templates/STATUS_UPDATE.md` l.26–34 (Workflow conformance table; lane upkeep at l.34). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contract.** `conformance-v1` — the conformance/checklist record for one run or lane.
 
@@ -30,7 +30,9 @@
 
 **Additive optional fields (v1).** Two optional fields are added to `conformance-v1`. Both are additive, so a reader that does not know them reads the record exactly as it did before (representation rule, l.536).
 
-- `evaluator_identity` — the recorded identity of an evaluator and the route under which its independence is established: `{agent_id, harness, model, route_source}`. It is usable on the top-level evaluator and on an evidence entry, and it is optional at both levels. `route_source` is `different_family` (a qualified reviewer from a different model family, D2 l.265), `clean_context_same_family` (a separate agent with a clean context window on a single-provider run, D2 l.266) or `none` (no independence route is claimed). The field lets a consumer check the independent-review route from the record instead of inferring it: D2 l.262–l.269 makes the lead check the harness, model and agent identities in the ledger, and l.543 forbids inferring family diversity from a generic pass. When `evaluator_identity` is absent the record claims no route, and an independent-review mark is not satisfied by an inferred one — a reviewer that cannot be shown to meet either route does not count (D2 l.268).
+- `evaluator_identity` — the recorded identity of an evaluator and the route under which its independence is established: `{agent_id, harness, model, route_source}`. It is usable on the top-level evaluator and on an evidence entry, and it is optional at both levels. `route_source` is `different_family` (a qualified reviewer from a different model family, D2 l.265), `clean_context_same_family` (a separate agent with a clean context window on a single-provider run, D2 l.266), `same_family` (the same model family as the record's recorded evaluator, without the clean-context single-provider route) or `none` (no independence route is claimed). Only `different_family` and `clean_context_same_family` are qualifying routes.
+  - **Absence never rejects.** A v1 record without `evaluator_identity` stays valid. Its independent-review mark is established through the existing `evaluator` and `report_ref` references, which a consumer resolves against the producer's identity record — for Dev, the ledger's harness, model and agent identities, which D2 l.269 requires the lead to check. The optional field adds a checkable route; it never becomes a requirement, and a reader that does not know it reads the record identically (l.536).
+  - **A recorded identity must qualify.** When an identity *is* recorded for the independent-review gate, it is authoritative for that gate: if it meets neither D2 route — the same family without the clean-context single-provider fallback, or no route at all — the independent-review mark is not satisfied and the record is rejected. A reviewer that cannot be shown to meet either route does not count (D2 l.268), and family diversity is never inferred from a generic pass (l.543).
 - `head` (evidence entry) — the head the entry was recorded for. It is optional; when it is absent the entry is read as applying to the record's `head`, so entries written before the field existed are unchanged. When it is present it must name the record's `head`; evidence recorded for another head is rejected (l.543).
 
 Common-reader coverage for both fields is required by the representation rule (l.536) and is carried by `fixtures/common/additive-optional-evaluator-identity-common-reader.json`.
@@ -67,15 +69,15 @@ An entry may also carry the optional `head` and the optional `evaluator_identity
 - missing mandatory QA / review → `reject`
 - different-head evidence → `reject` (the evidence entry's optional `head` names another head)
 - family diversity inferred from a generic pass → `reject` (l.543)
-- independent-review mark met with no recorded reviewer identity → `reject` (l.543; D2 l.268 — a reviewer that cannot be shown to meet either route does not count)
+- independent-review mark met by a recorded identity that meets neither D2 route → `reject` (l.543; D2 l.268 — a reviewer that cannot be shown to meet either route does not count); a *missing* `evaluator_identity` never rejects on its own — the mark is resolved against the producer's identity record
 
 **Fixtures.**
 
-- `fixtures/sc-4/accepted-documented-skip-below-qa.json` (accept — documented skip below the QA triggers; maps all six Foreman marks)
+- `fixtures/sc-4/accepted-documented-skip-below-qa.json` (accept — documented skip below the QA triggers; maps all six Foreman marks; the legacy review entry carries no recorded identity)
 - `fixtures/sc-4/accepted-six-mark-mapping.json` (accept — all six Foreman marks mapped to Dev applicability, QA met and the reviewer route recorded)
 - `fixtures/sc-4/rejected-missing-mandatory-qa.json` (reject — the mandatory QA gate applies and no QA evidence is recorded)
 - `fixtures/sc-4/rejected-different-head-evidence.json` (reject — evidence recorded for a head other than the record's `head`)
-- `fixtures/sc-4/rejected-inferred-family-diversity.json` (reject — the independent-review mark is met by a generic pass with no reviewer identity)
-- `fixtures/common/additive-optional-evaluator-identity-common-reader.json` (common reader — a v1 reader that ignores the optional fields reads the record identically)
+- `fixtures/sc-4/rejected-inferred-family-diversity.json` (reject — the recorded reviewer identity meets neither D2 route, so the independent-review mark is satisfied only by a generic pass)
+- `fixtures/common/additive-optional-evaluator-identity-common-reader.json` (common reader — a v1 reader that ignores the optional fields reads the record identically, and removing them leaves the outcome unchanged)
 
 **Counterpart acceptance.** `pending` per consumer (P2, P3; future supervisor, Scout). No compatibility inferred from silence (l.550).

@@ -21,7 +21,13 @@
         "gate": "review",
         "state": "required",
         "evaluator": "synthetic-reviewer-032",
-        "report_ref": "synthetic-report-032"
+        "report_ref": "synthetic-report-032",
+        "evaluator_identity": {
+          "agent_id": "synthetic-agent-032",
+          "harness": "synthetic-harness-a",
+          "model": "synthetic-family-a:synthetic-model-a-alt",
+          "route_source": "same_family"
+        }
       },
       {
         "gate": "post_merge",
@@ -76,7 +82,7 @@
     "report_ref": "synthetic-report-030"
   },
   "expected_outcome": "reject",
-  "expected_reason": "Rejected: the independent-review mark is met by a generic pass — no reviewer identity is recorded for the review evidence, so neither a different-family nor a clean-context same-family route can be checked, and family diversity is never inferred from a generic pass. This is the only reason for rejection — every other part of the record is valid: the QA gate is `required` and carries its evaluator and report reference, the review gate is `required` and carries its evaluator and report reference, all six Foreman checklist marks are present and valid, and the post-merge record and lane-upkeep gates are documented skips (SC-4 rejected example, SDP l.543; D2 l.262–l.269, where a reviewer that cannot be shown to meet either route does not count).",
+  "expected_reason": "Rejected: the recorded reviewer identity meets neither D2 route — it is in the same model family as the record's recorded evaluator (`synthetic-family-a`) and claims no clean-context single-provider route, so it is neither a different-family reviewer nor a qualifying same-family fallback. The independent-review mark is therefore satisfied only by a generic pass, and a reviewer that cannot be shown to meet either route does not count. This is the only reason for rejection — every other part of the record is valid: the QA gate is `required` and carries its evaluator and report reference, the review gate is `required` and carries its evaluator, its report reference and its recorded identity, all six Foreman checklist marks are present and valid, and the post-merge record and lane-upkeep gates are documented skips (SC-4 rejected example, SDP l.543; D2 l.262–l.269).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",

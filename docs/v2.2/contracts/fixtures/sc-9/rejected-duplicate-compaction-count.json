@@ -22,7 +22,7 @@
     "admission_outcome": "restored_then_current_state_check"
   },
   "expected_outcome": "reject",
-  "expected_reason": "Rejected: the compaction event is counted more than once (`event_accounting.result` is `duplicate_compaction_count`), and the actual event is counted once. This is the only reason for rejection — every other part of the record is valid: the note revision and freshness are recorded, `authoritative_refs` is nonempty, the adapter's coverage is recorded, and the admission outcome itself is the accepted restored-then-current-state-check outcome (SC-9 rejected example, SDP l.548; resume admission order at l.477 step 3).",
+  "expected_reason": "Rejected: the compaction event is counted more than once (`event_accounting.result` is `duplicate_compaction_count`), and the actual event must be counted once. This is the only reason for rejection — every other part of the record is valid: the note revision and freshness are recorded, `authoritative_refs` is nonempty, the adapter's coverage is recorded, and the admission outcome itself is the accepted restored-then-current-state-check outcome (SC-9 rejected example, SDP l.548; resume admission order at l.477 step 3).",
   "retained_source": {
     "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
     "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",

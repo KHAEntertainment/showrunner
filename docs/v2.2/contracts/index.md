@@ -6,7 +6,7 @@ This directory is the P0-02 delivery package for `KHAEntertainment/showrunner#18
 
 L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
 
-L0c revision (2026-11-06): additive v1 correction to SC-4/SC-9 — `conformance-v1` gains the optional `evaluator_identity` and the optional evidence-entry `head`, the accepted SC-4 set maps all six Foreman checklist marks, every rejected SC-4/SC-9 fixture is single-cause, and SC-9 gains closed value lists plus a field table split into `checkpoint-reference-v1` / `recovery-receipt-v1`. Version identifiers unchanged; no field renamed or removed.
+L0c revision (2026-11-06): additive v1 correction to SC-4/SC-9 — `conformance-v1` gains the optional `evaluator_identity` and the optional evidence-entry `head` (their absence never rejects; a recorded identity must qualify), the accepted SC-4 set maps all six Foreman checklist marks, every rejected SC-4/SC-9 fixture is single-cause, and SC-9 gains closed value lists (including the ledger-fallback outcome for a missing or degraded handoff) plus a field table split into `checkpoint-reference-v1` / `recovery-receipt-v1`. Version identifiers unchanged; no field renamed or removed.
 
 ## Global rules
 
@@ -37,7 +37,7 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 
 | Fixture | SHA-256 |
 | --- | --- |
-| `fixtures/common/additive-optional-evaluator-identity-common-reader.json` | `54884ff99f6924cdd6e5ca7ce4851a1ea5b9e86808a80673d8169612fb8f55dd` |
+| `fixtures/common/additive-optional-evaluator-identity-common-reader.json` | `bbe1557a08091f61a33bb947a7240a46e0eb48eb59aa50ca5b560e81e7d4b8a3` |
 | `fixtures/common/additive-optional-field-common-reader.json` | `98b3d63721db75191c5d1674a91fc84c3c216f89d723eaf87398e8ecb0772e54` |
 | `fixtures/common/ambiguous-identity.json` | `7c293bd06cde533d5a8b4f59c2a7a65f021dc77934a84d9948c7ba2324fc5a99` |
 | `fixtures/common/dev-ledger-unsupported-schema-version.json` | `dd279f985167f1e77677a919f7eaf9efc085a99e7bcbc5e5367fa4eb21a53136` |
@@ -62,11 +62,11 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-3/evidence-rejected-pr-assurance-noncurrent-no-stale-reason.json` | `de26c50b2513d4d16222dd030451f5707c34dd54fc3c7de737369fa285e35705` |
 | `fixtures/sc-3/evidence-accepted-parent-acceptance.json` | `11847ae86c6c9cae442f63f27b901962d003f514643f9da751bb33e94b210d72` |
 | `fixtures/sc-3/evidence-rejected-parent-acceptance-carries-result.json` | `45bb71c55b2e14bd42ccd839bc40cfd0f29987608494c755e45e4fe91d0d8710` |
-| `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `b757adab6c01155afc248295eb559959fe00ac2686ff04aad8bb25b740661e5a` |
+| `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `c471847b4530bd29fb2d1a7a4f88882491820edd75eda1eab5a5e01b6641c8ec` |
 | `fixtures/sc-4/accepted-six-mark-mapping.json` | `e9d69a55ac7799c9ff13f9fe676af73f0fceb2f781abe4c712d83d82614d4b32` |
-| `fixtures/sc-4/rejected-different-head-evidence.json` | `7c33d9061f2a53cd7bb4601a26c71cddf7f079081e189ddd39057686312a283a` |
-| `fixtures/sc-4/rejected-inferred-family-diversity.json` | `c7b7fa68a8da3ab5e11bb63205915e0bbb13c71aa8b2cb470cc7bab9c84bd786` |
-| `fixtures/sc-4/rejected-missing-mandatory-qa.json` | `6e6826ddba4947e6c25d3e078144afb2167066904c344fe12fba38328894312c` |
+| `fixtures/sc-4/rejected-different-head-evidence.json` | `1c6c3bd573864343b2b609be376366627f19335045b9400665a10bd85b5d9c8e` |
+| `fixtures/sc-4/rejected-inferred-family-diversity.json` | `c95e6032c2ed5d985a4c4ae7b6a1474963ffc98cd08192b7332bc9e95fdb551d` |
+| `fixtures/sc-4/rejected-missing-mandatory-qa.json` | `3bc8490680b5f4fba3512db6001a98391aec0960678d66a1b24687ac8ca62861` |
 | `fixtures/sc-5/accepted-drift-fallback.json` | `00d83cd67366a930c1575a7c2286d32c5e0c75132791668725bcb096e0f88965` |
 | `fixtures/sc-5/accepted-needs-input.json` | `4a870ec99b043c7770a38ac3f4536c860eea06f5e5943aeeeb11f1c25a62e680` |
 | `fixtures/sc-5/accepted-scoped-read-only-finding.json` | `81e1e7ace3f34a8ba71672b4e5966abec2f1db45135a94435dc47c1287b8d76c` |
@@ -82,9 +82,10 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-8/accepted-compatible-existing-installation.json` | `abcf8cbf0ad23a8d58d101b96e86dd84ad70189fc39418396c2141e062815a36` |
 | `fixtures/sc-8/rejected-hot-replacement.json` | `218da61bbd97ff5889d91d71675d85bd9d2a1b0cc6ce737641f470d21464f38e` |
 | `fixtures/sc-9/accepted-checkpoint-reference-current-note.json` | `2a8f81ff310c934b9bfd27101f99b1dc5941c639b15ef373b059d9a9d960a59b` |
+| `fixtures/sc-9/accepted-missing-note-ledger-fallback.json` | `00b94b5333fae5400779116d4cadf4eef534ef5a624cf7e2ac31a1f55988f7be` |
 | `fixtures/sc-9/accepted-restored-context-current-state-check.json` | `6c5a1ab2afcc376f252899b8db189453695cabf8e7e1a3598a4ecad98197cbd5` |
-| `fixtures/sc-9/rejected-authority-renewal.json` | `93cea9402c0f949e4be587f3235e90d556bf393d14a572c78d2ccf36d03b6b20` |
+| `fixtures/sc-9/rejected-authority-renewal.json` | `24008d4b3031b57e04a59bdaf84d30d44b05dd303fad97b308a894e61e60a33e` |
 | `fixtures/sc-9/rejected-compact-as-rotation.json` | `df85ca05637ee253c2ed26e9996d78bcac1b1a8d5e084282c2aaf4538948b8b6` |
-| `fixtures/sc-9/rejected-duplicate-compaction-count.json` | `80fa6f766f8e92667d8c84e004aed84187166788e8969d359f296f0b2bcad2b4` |
+| `fixtures/sc-9/rejected-duplicate-compaction-count.json` | `c479ca8c788172783b3749807054a257666805aa273789f0b8404f4a2f947a93` |
 | `fixtures/sc-9/rejected-stale-note-overriding-pause.json` | `ac2972557e34dcee88e741199da8cd006bd25222ab8131d5e4006f2ab180f01a` |
 | `fixtures/sc-9/rejected-unknown-effect-replay.json` | `e4e7fc706a19e7a22f5c34b5bd49b36f199131f83d5bfc520a0488b3070d2668` |

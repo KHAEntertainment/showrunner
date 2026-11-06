@@ -1,0 +1,33 @@
+{
+  "sc": "SC-9",
+  "version": "recovery-receipt-v1",
+  "kind": "accepted",
+  "name": "accepted-missing-note-ledger-fallback",
+  "input": {
+    "run": "synthetic-run-045",
+    "session": "synthetic-session-045",
+    "event": "synthetic-event-045",
+    "adapter": "synthetic-adapter",
+    "version": "v0.2.1",
+    "note_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "freshness": "2099-01-02T00:00:00Z",
+    "authoritative_refs": [
+      "docs/ledger/2099-01-01-synthetic-checkpoint.md"
+    ],
+    "coverage": "excluded",
+    "degradation": "no_note",
+    "event_accounting": {
+      "result": "counted_once"
+    },
+    "admission_outcome": "fallback_ledger_recovery"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: no usable handoff note exists, and the run is still allowed — the lead recovers from the ledger checkpoint under the resume admission order and reports `continuity: fallback`; H1 adds no new hard stop. The recorded revision and freshness are the ledger checkpoint's, `authoritative_refs` names it, the adapter's coverage of this session is `excluded` and the degradation records that no note was produced. The event is accounted exactly once (`counted_once`). A missing note is not a rejection: an emergency compaction that produced no note is recorded the same way, and `recovery_evidence_unavailable` applies only when neither a usable note nor a usable ledger checkpoint exists (SC-9 accepted example, SDP l.548; SDP l.471; H1 l.486; resume admission order at l.477 step 1).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
+    "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",
+    "sdp_line": 548
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

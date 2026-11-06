@@ -69,7 +69,7 @@
     "report_ref": "synthetic-report-001"
   },
   "expected_outcome": "accept",
-  "expected_reason": "Accepted: a documented skip below the QA triggers, with the remaining mandatory review still required and attributed to an independent evaluator, and all six Foreman checklist marks mapped to their Dev applicability (SC-4 accepted example, SDP l.543; STATUS_UPDATE.md l.26–l.34).",
+  "expected_reason": "Accepted: a documented skip below the QA triggers, with the remaining mandatory review still required and attributed to an independent evaluator, and all six Foreman checklist marks mapped to their Dev applicability (SC-4 accepted example, SDP l.543; STATUS_UPDATE.md l.26–l.34). This is the legacy-compatibility accepted case: the review entry carries no `evaluator_identity`, in the form a v1 record had before the field was added. Its absence never rejects a v1 record on its own — the independent-review mark is established through the `evaluator` and `report_ref` references, which a consumer resolves against the producer's identity record (D2 l.269).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",

@@ -37,7 +37,7 @@
 
 - `top_level` — the adapter covers the top-level session
 - `child` — the adapter covers the child session
-- `excluded` — the adapter excludes that session from coverage
+- `excluded` — the adapter does not cover that session: an excluded session, or handoff missing or degraded so that no note was produced for it
 
 `event_accounting.result` — how the event was counted (l.477 step 3, "count the actual event once"; l.548):
 
@@ -47,20 +47,22 @@
 `admission_outcome` — the result of the recovery admission:
 
 - `restored_then_current_state_check` — accept: context restored, then current-state checks run (l.548 accepted example; l.477 steps 1–6)
+- `fallback_ledger_recovery` — accept: no usable handoff note — handoff is missing or degraded, or an emergency compaction produced no note — so the lead recovers from the ledger checkpoint under the resume admission order and reports `continuity: fallback`; the run is still allowed and H1 adds no new hard stop (l.471; H1 l.486; l.477 step 1)
 - `pause_honored_recovery_only` — accept: an owner pause is in force, so recovery proceeds while owner-paused work does not (l.477, "a plugin resume prompt wakes recovery, not owner-paused work"; the pause/resume coexistence case)
 - `rotation_due_rotation_applied` — accept: a due rotation was applied, and the successor restored context and ran current-state checks (l.477 step 3; l.754, "paused/rotation-due recovery")
 - `resume_overrides_pause` — reject: the resume resumes over an owner pause (l.548; l.477 step 2)
-- `authority_renewed_by_activity` — reject: the resumed run's activity is treated as renewing existing authority (l.548, "authority renewal"; D2 l.240, "activity does not renew it")
+- `authority_renewed_by_activity` — reject: the resumed run's activity is treated as renewing existing authority (l.548, "authority renewal"; D2 l.239, "activity does not renew it")
 - `unknown_effect_replay` — reject: a consequential action is repeated before an unknown prior outcome is reconciled (l.548, "unknown effect replay"; l.477 step 4)
 - `compaction_counts_as_rotation` — reject: a compaction is treated as satisfying a due rotation (l.548, "compact-as-rotation"; l.477, "a due rotation is not satisfied by compacting again")
-- `emergency_compaction_without_note` — reject: an emergency compaction produced no note, so there is no checkpoint identity or freshness to recover (l.471; l.477 step 1)
-- `missing_note` — reject: the note is missing, so checkpoint identity and freshness cannot be recovered (l.477 step 1)
+- `recovery_evidence_unavailable` — reject: there is no authoritative recovery evidence — no usable note and no usable ledger checkpoint — so the resume admission order has nothing to recover from (l.477 step 1; H1 l.486 falls back to a ledger checkpoint, so this applies only when that checkpoint is missing too)
 
 The five rejections named at l.548 map onto these lists: `resume_overrides_pause`, `duplicate_compaction_count` (in `event_accounting.result`), `authority_renewed_by_activity`, `unknown_effect_replay` and `compaction_counts_as_rotation`.
 
-**Accepted example.** Restored context followed by current-state checks (l.548); and a checkpoint reference to a current note.
+**A missing note is not a rejection.** Handoff that is missing or degraded still allows the run: the lead recovers from the ledger checkpoint under the resume admission order and reports `continuity: fallback` (l.471; H1 l.486), so `fallback_ledger_recovery` is the outcome whenever a usable ledger checkpoint exists. An emergency compaction that produced no note is recorded the same way — it is the reason the note is missing, not a separate rejection — so its outcome is `fallback_ledger_recovery`. Only when neither a usable note nor a usable ledger checkpoint exists does `recovery_evidence_unavailable` apply.
 
-**Rejected example.** Stale note overriding a pause; duplicate compaction count; authority renewal; unknown-effect replay; compact-as-rotation (l.548).
+**Accepted example.** Restored context followed by current-state checks (l.548); a checkpoint reference to a current note; and a missing or degraded handoff recovered from the ledger checkpoint (`continuity: fallback`).
+
+**Rejected example.** Stale note overriding a pause; duplicate compaction count; authority renewal; unknown-effect replay; compact-as-rotation (l.548); and a recovery with no authoritative evidence at all.
 
 **Edge cases.**
 
@@ -69,14 +71,15 @@ The five rejections named at l.548 map onto these lists: `resume_overrides_pause
 - authority renewal → `reject`
 - unknown-effect replay → `reject`
 - compact-as-rotation → `reject`
-- emergency compaction without a note → `reject` (l.471)
-- missing note → `reject` (l.477 step 1)
+- missing note, or an emergency compaction that produced no note → `fallback_ledger_recovery` (accept): the run is still allowed, the lead recovers from the ledger checkpoint and reports `continuity: fallback` (l.471; H1 l.486)
+- no usable note and no usable ledger checkpoint → `recovery_evidence_unavailable` (reject)
 - pause and resume coexist → the pause is honored, so recovery runs and owner-paused work does not (l.477)
 
 **Fixtures.**
 
 - `fixtures/sc-9/accepted-restored-context-current-state-check.json` (accept — `recovery-receipt-v1`)
 - `fixtures/sc-9/accepted-checkpoint-reference-current-note.json` (accept — `checkpoint-reference-v1`)
+- `fixtures/sc-9/accepted-missing-note-ledger-fallback.json` (accept — no usable handoff note; the run is still allowed and the lead recovers from the ledger checkpoint)
 - `fixtures/sc-9/rejected-stale-note-overriding-pause.json` (reject — a stale note applied over an owner pause)
 - `fixtures/sc-9/rejected-duplicate-compaction-count.json` (reject — the event is counted more than once)
 - `fixtures/sc-9/rejected-authority-renewal.json` (reject — resumed activity is treated as renewing existing authority)
