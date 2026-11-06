@@ -49,6 +49,7 @@ REQUIRED = {
     "scripts/goal_run.py",
     "scripts/goal_authority.py",
     "scripts/goal_recovery.py",
+    "scripts/verify_goal_completion.py",
     "graft.md",
 }
 

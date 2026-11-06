@@ -1,0 +1,183 @@
+{
+  "_comment": "Synthetic GV base scenario: one Issue, one PR, a merged-tree rerun pass, and one criterion per evaluator type. The test renders this into a ledger in the YAML subset. Every name and object id is synthetic.",
+  "schema_version": 2,
+  "workers": [
+    {
+      "role": "worker",
+      "issue": "OWNER/synthetic-repo#1",
+      "agent_id": "worker-agent-1",
+      "pr": 10
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 10,
+      "profile_version": "completion-evidence-v1",
+      "scope": "pr_assurance",
+      "repository": "OWNER/synthetic-repo",
+      "issue": "OWNER/synthetic-repo#1",
+      "parent_ref": "OWNER/synthetic-repo#1",
+      "criteria_ref": "sha256:9f3c000000000000000000000000000000000000000000000000000000000000",
+      "criteria_ids": ["AC-1@9f3c", "AC-2@9f3c", "AC-3@9f3c"],
+      "policy_ref": {"ref": "PROJECT_CONTEXT.md#verification-gate", "rev": "3c1e9a0"},
+      "headRefOid": "4e683b4",
+      "base_oid": "b720c68",
+      "target_branch": "main",
+      "reviewer_agent_id": "reviewer-lane-1",
+      "ci_runs": [
+        {
+          "run": 123,
+          "job": "build",
+          "attempt": 1,
+          "definition_ref": {"ref": ".github/workflows/ci.yml#build", "rev": "2ab2b59"},
+          "tested_subject": {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4", "base_oid": "b720c68"},
+          "environment": "ubuntu-latest",
+          "conclusion": "success",
+          "observed_at": "2099-01-01T12:00:00Z",
+          "applicability": {"to": "4e683b4", "established": true}
+        },
+        {
+          "run": 130,
+          "job": "build",
+          "attempt": 1,
+          "definition_ref": {"ref": ".github/workflows/ci.yml#build", "rev": "2ab2b59"},
+          "tested_subject": {"sha": "d44f1e0", "kind": "head"},
+          "environment": "ubuntu-latest",
+          "conclusion": "success",
+          "observed_at": "2099-01-02T00:25:00Z",
+          "applicability": {"to": "d44f1e0", "established": true}
+        }
+      ],
+      "checks": [
+        {
+          "id": "build",
+          "definition_ref": {"ref": ".github/workflows/ci.yml#build", "rev": "2ab2b59"},
+          "executor": "ci",
+          "tested_subject": "7a0b5d1",
+          "environment": "ci",
+          "outcome": "pass",
+          "evidence_ref": "run 123 attempt 1",
+          "observed_at": "2099-01-01T12:00:00Z"
+        }
+      ],
+      "criteria": [
+        {"id": "AC-1@9f3c", "evaluator": {"type": "test", "id": "unittest tests/test_synthetic.py"}, "outcome": "pass", "evidence_ref": "run 123 attempt 1"},
+        {"id": "AC-2@9f3c", "evaluator": {"type": "independent_reviewer", "id": "coderabbitai[bot]"}, "outcome": "pass", "evidence_ref": "review 2201"},
+        {"id": "AC-3@9f3c", "evaluator": {"type": "demonstration", "id": "worker-agent-1"}, "outcome": "pass", "evidence_ref": "PR body demonstration, revision 4e683b4"}
+      ],
+      "review": {
+        "source": "coderabbit",
+        "qualified": true,
+        "head": "4e683b4",
+        "evidence_ref": {"review_id": 2201},
+        "unresolved_material": 0,
+        "observed_at": "2099-01-01T13:00:00Z"
+      },
+      "demonstrated": {
+        "what": "synthetic endpoint returns the new slug",
+        "where": "worker dev server",
+        "revision": "4e683b4",
+        "how": "curl output in the PR body"
+      },
+      "assurance": {
+        "outcome": "pass",
+        "reason": "all contributed criteria pass by assigned evaluator; no unresolved material finding",
+        "revision": "4e683b4",
+        "observed_at": "2099-01-01T14:00:00Z",
+        "current": true,
+        "stale_reason": null
+      },
+      "post_merge": [
+        {
+          "merge_sha": "d44f1e0",
+          "merged_at": "2099-01-02T00:10:00Z",
+          "tested_vs_merged": "differs",
+          "action": "full_required_gate_rerun",
+          "run": {
+            "run": 130,
+            "job": "build",
+            "attempt": 1,
+            "tested_subject": {"sha": "d44f1e0", "kind": "head"},
+            "conclusion": "success",
+            "observed_at": "2099-01-02T00:25:00Z"
+          },
+          "gate_result": "rerun_pass",
+          "criteria_verdict": "confirmed",
+          "checks": [
+            {"id": "build", "at": "d44f1e0", "outcome": "pass", "basis": "fresh", "evidence_ref": "run 130 attempt 1"}
+          ],
+          "criteria": [
+            {"id": "AC-1@9f3c", "at": "d44f1e0", "outcome": "pass", "basis": "fresh", "evaluator": {"type": "test"}, "evidence_ref": "run 130 attempt 1"},
+            {"id": "AC-2@9f3c", "at": "d44f1e0", "outcome": "pass", "basis": "reused", "evaluator": {"type": "independent_reviewer"}, "justification": "review at head 4e683b4; base advance touched docs only", "evidence_ref": "review 2201"},
+            {"id": "AC-3@9f3c", "at": "d44f1e0", "outcome": "pass", "basis": "reused", "evaluator": {"type": "demonstration"}, "justification": "same empty diff on the endpoint path", "evidence_ref": "PR body demonstration, revision 4e683b4"}
+          ]
+        }
+      ],
+      "integrated": {
+        "current": {"branch": "main", "merge_sha": "d44f1e0", "revision": "4e683b4"},
+        "history": []
+      },
+      "limitations": [],
+      "host_load_at_launch": null
+    }
+  ],
+  "parent_acceptance": [
+    {
+      "profile_version": "completion-evidence-v1",
+      "scope": "parent_acceptance",
+      "parent": "OWNER/synthetic-repo#1",
+      "mode": "standalone",
+      "criteria_ref": "sha256:9f3c000000000000000000000000000000000000000000000000000000000000",
+      "criteria_map": [],
+      "contributions": [
+        {
+          "pr": 10,
+          "issue": "OWNER/synthetic-repo#1",
+          "criteria": ["AC-1", "AC-2", "AC-3"],
+          "assurance": {"outcome": "pass", "revision": "4e683b4", "current": true},
+          "integrated": "d44f1e0"
+        }
+      ],
+      "criteria": [
+        {"id": "AC-1@9f3c", "evaluator": {"type": "test"}, "outcome": "pass"},
+        {"id": "AC-2@9f3c", "evaluator": {"type": "independent_reviewer", "id": "coderabbitai[bot]"}, "outcome": "pass"},
+        {"id": "AC-3@9f3c", "evaluator": {"type": "demonstration"}, "outcome": "pass"},
+        {"id": "AC-4@9f3c", "evaluator": {"type": "human", "id": "owner"}, "outcome": "pass"}
+      ],
+      "outcome": "pass",
+      "reason": null,
+      "observed_at": "2099-01-03T01:00:00Z",
+      "goal_completion_ref": null
+    }
+  ],
+  "defect_episodes": [],
+  "goal_run": {
+    "repo": "OWNER/synthetic-repo",
+    "run": "synthetic-run-195",
+    "mode": "standalone",
+    "lead": {"agent_id": "lead-agent", "harness": "claude", "model": "synthetic-model"},
+    "plan_ref": {
+      "origin": "traycer-artifact:synthetic-epic/synthetic-plan/index.md",
+      "source_revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "approved_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "approval": {
+        "authority": {"agent_id": "synthetic-owner"},
+        "evidence": {
+          "reference": "OWNER/synthetic-repo@0123456789abcdef0123456789abcdef01234567",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "producer": {"session": "synthetic-session-195", "harness": "claude"}
+    },
+    "source": "docs/plans/synthetic-plan.md@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "approval_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "fixed_issues": ["OWNER/synthetic-repo#1"],
+    "coordinator": null,
+    "charter_revision": null,
+    "contract_refs": [],
+    "approval_time": "2099-01-01T00:00:00Z"
+  },
+  "run_id": "synthetic-run-195",
+  "run_status": "active",
+  "updated_at": "2099-01-03T02:00:00Z"
+}
