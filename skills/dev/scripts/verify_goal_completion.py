@@ -60,15 +60,22 @@ runner). ``ci:<runner>`` needs the entry's environment to name ``<runner>`` as
 its first non-empty token (split on whitespace, ``,`` and ``/``). ``host:<id>`` is valid only
 for an approved local fallback: the entry records ``executor`` and
 ``fallback_approved_by``, and the executor is ``<id>`` or ``host:<id>``. A named
-environment (for example a preview) is never test proof. A missing check
+environment (for example a preview) is never test proof. An entry is LOCAL
+when it records a non-CI ``executor``, a ``host:`` environment, or a run id that
+is not a GitHub run id; a LOCAL entry never satisfies ``ci`` or ``ci:<runner>``
+(``local_run_not_ci``), whether or not it is approved. A missing check
 environment, or a missing runner descriptor where ``ci:<runner>`` needs one, is
 ``inconclusive``. A different executor class or runner never verifies.
 ``fallback_approved_by`` is GV's spelling; the template does not define it yet.
 
-Prior gate (B2). ``applies_verbatim`` needs the latest ``ci_runs`` attempt of
-every job at the PR head to have concluded ``success``, whatever the criterion
-evaluators are, and each of those tested subjects to be tree-equivalent to the
-merge commit.
+Prior gate (B2). ``applies_verbatim`` selects ``ci_runs`` entries by subject
+first (the post-merge ``tested_subject`` when recorded, else the runs at the PR
+head). Per job, the latest run by ``observed_at`` governs; attempts order only
+within one run id; an order that cannot be established is ``inconclusive``
+(``prior_gate_ambiguous``). Every governing run must have concluded
+``success``, whatever the criterion evaluators are, and its tested subject must
+be tree-equivalent to the merge commit. A tree that cannot be read is
+``inconclusive`` (``tree_unreadable``).
 
 Consistency (B3). The PR record, the parent record and its contribution must
 agree on ``criteria_ref``, the head (assurance and integration revisions) and
@@ -167,9 +174,12 @@ _ACCEPT_RE = re.compile(r"^/accept\s+(\S+)\s*$")
 _REVERT_RE = re.compile(r"This reverts commit ([0-9a-fA-F]{7,40})")
 # GitHub's UI revert PR, squash-merged: "Reverts OWNER/REPO#N".
 _REVERT_PR_RE = re.compile(r"^Reverts ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)\s*$", re.MULTILINE)
-# A CI evidence_ref: "run 130 attempt 1 (...)" or "<run>/<job>/attempt-<n>".
-_RUN_REF_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)\b(?:\s+job\s+(?P<job>[^,()]+?))?"
-                         r"(?:\s+attempt\s+#?(?P<attempt>[0-9]+))?\b")
+# A CI evidence_ref: "run 130 [job <name>] attempt 1 (...)" or "<run>/<job>/attempt-<n>".
+# The text form anchors on the trailing "attempt <n>", so a job name may hold
+# hyphens and spaces. "run <id>" with no attempt parses with attempt None.
+_RUN_REF_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?:\s+job\s+(?P<job>\S.*?))?"
+                         r"\s+attempt\s+#?(?P<attempt>[0-9]+)(?![0-9A-Za-z_-])")
+_RUN_BARE_RE = re.compile(r"^\s*run\s+#?(?P<run>[A-Za-z0-9_.-]+)(?![0-9A-Za-z_-])")
 _RUN_PATH_RE = re.compile(r"^(?P<run>[^/\s]+)/(?P<job>[^/]+)/attempt-(?P<attempt>[0-9]+)$")
 _COMMENT_REF_RE = re.compile(r"issuecomment-([0-9]+)")
 _REVIEW_REF_RE = re.compile(r"pullrequestreview-([0-9]+)")
@@ -526,23 +536,69 @@ def _run_identity(evidence_ref):
         return None
     text = evidence_ref.strip()
     match = _RUN_PATH_RE.match(text) or _RUN_REF_RE.match(text)
-    if not match:
+    if match:
+        job = match.group("job").strip() if match.group("job") else None
+        return match.group("run"), job or None, int(match.group("attempt"))
+    bare = _RUN_BARE_RE.match(text)
+    return (bare.group("run"), None, None) if bare else None
+
+
+def _latest_run(runs):
+    """The governing run among one job's runs, or None when the order is unknown."""
+    if len(runs) == 1:
+        return runs[0]
+    if len({str(r.get("run")) for r in runs}) == 1:
+        attempts = [r.get("attempt") for r in runs]
+        if all(isinstance(a, int) and not isinstance(a, bool) for a in attempts) and len(set(attempts)) == len(attempts):
+            return max(runs, key=lambda r: r.get("attempt"))
+    times = [_parse_utc(r.get("observed_at")) for r in runs]
+    if any(t is None for t in times):
         return None
-    job = match.group("job").strip() if match.group("job") else None
-    attempt = int(match.group("attempt")) if match.group("attempt") else None
-    return match.group("run"), job, attempt
+    newest = max(times)
+    top = [r for r, t in zip(runs, times) if t == newest]
+    if len(top) == 1:
+        return top[0]
+    if len({r.get("conclusion") for r in top}) == 1:
+        return top[0]
+    return None
 
 
-def _environment_verdict(check_env, entry, fallback):
+def _is_local(entry) -> bool:
+    """A ``ci_runs`` entry is LOCAL when it records a non-CI executor, a ``host:``
+    environment, or a run id that is not a GitHub run id. Approval does not
+    change the class."""
+    if not isinstance(entry, dict):
+        return True
+    executor = entry.get("executor")
+    if executor is not None and not (isinstance(executor, str)
+                                     and (executor == "ci" or executor.startswith("ci:"))):
+        return True
+    environment = entry.get("environment")
+    if isinstance(environment, str) and environment.strip().startswith("host:"):
+        return True
+    run_id = entry.get("run")
+    if isinstance(run_id, bool) or not (isinstance(run_id, int) or (isinstance(run_id, str) and run_id.isdigit())):
+        return True
+    return False
+
+
+def _is_approved_fallback(entry) -> bool:
+    return (_is_local(entry) and isinstance(entry.get("executor"), str) and bool(entry.get("executor"))
+            and bool(entry.get("fallback_approved_by")))
+
+
+def _environment_verdict(check_env, entry):
     """The D4.4 environment rule (see the module docstring). None when satisfied,
     otherwise (cls, code, detail)."""
     if not isinstance(check_env, str) or not check_env.strip():
         return INCONCLUSIVE, "check_environment_missing", {}
     check_env = check_env.strip()
     run_env = entry.get("environment")
+    local = _is_local(entry)
     if check_env == "ci" or check_env.startswith("ci:"):
-        if fallback:
-            return NOT_COMPLETE, "environment_mismatch", {"check": check_env, "run": "local fallback"}
+        if local:
+            return NOT_COMPLETE, "local_run_not_ci", {"check": check_env, "run": entry.get("run"),
+                                                      "executor": entry.get("executor"), "environment": run_env}
         if check_env == "ci":
             return None
         if not isinstance(run_env, str) or not run_env.strip():
@@ -554,7 +610,9 @@ def _environment_verdict(check_env, entry, fallback):
         return None
     if check_env.startswith("host:"):
         host = check_env[5:].strip()
-        if not fallback:
+        if not local:
+            return NOT_COMPLETE, "environment_mismatch", {"check": check_env, "run": "ci"}
+        if not _is_approved_fallback(entry):
             return NOT_COMPLETE, "local_run_without_fallback", {"check": check_env}
         if entry.get("executor") not in (host, f"host:{host}"):
             return NOT_COMPLETE, "environment_mismatch", {"check": check_env, "executor": entry.get("executor")}
@@ -695,7 +753,8 @@ def read_result(record):
     if not isinstance(fact_prs, list) or not all(isinstance(p, dict) for p in fact_prs):
         reasons.append("malformed_container:repository_facts.pull_requests")
         fact_prs = []
-    if not isinstance(fact_issues, list) or not all(isinstance(i, dict) for i in fact_issues):
+    if not isinstance(fact_issues, list) or not all(
+            isinstance(i, dict) and isinstance(i.get("issue"), str) for i in fact_issues):
         reasons.append("malformed_container:repository_facts.closed_issues")
         fact_issues = []
     producer = record["producer"]
@@ -706,7 +765,8 @@ def read_result(record):
     criteria = record["criteria"]
     ids = []
     for item in criteria:
-        if not isinstance(item, dict) or not item.get("id") or not item.get("evaluator") \
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item.get("id") \
+                or not isinstance(item.get("evaluator"), str) or not item.get("evaluator") \
                 or item.get("state") not in ("met", "unmet", "inconclusive"):
             reasons.append("malformed_criterion_line")
             break
@@ -724,6 +784,9 @@ def read_result(record):
         if not fact_prs or any(p.get("reachable_from_destination") is not True or not p.get("merge_sha")
                                for p in fact_prs):
             reasons.append("success_without_confirmed_floor_fact")
+        if any((p.get("gate_result") == "applies_verbatim" or "tree_equivalent" in p)
+               and p.get("tree_equivalent") is not True for p in fact_prs):
+            reasons.append("success_without_tree_equivalence")
         states = {i.get("issue"): i.get("state") for i in fact_issues}
         if any(issue not in states or states[issue] is None for issue in issues):
             reasons.append("success_without_confirmed_floor_fact")
@@ -831,7 +894,7 @@ class _Evaluation:
         for item in pull_requests or []:
             if not isinstance(item, dict) or "profile_version" not in item:
                 continue
-            if item.get("issue") not in by_issue:
+            if not isinstance(item.get("issue"), str) or item.get("issue") not in by_issue:
                 continue
             identity = _pr_identity(item.get("number"), item.get("repository"))
             if item.get("profile_version") != EVIDENCE_PROFILE or item.get("scope") != "pr_assurance":
@@ -862,7 +925,11 @@ class _Evaluation:
             })
         self.records = records
 
-        parent_refs = {r.get("parent_ref") for r in records.values() if r.get("parent_ref") is not None}
+        parent_refs = {r.get("parent_ref") for r in records.values() if r.get("parent_ref") is not None
+                       and isinstance(r.get("parent_ref"), str)}
+        for prq, r in sorted(records.items()):
+            if r.get("parent_ref") is not None and not isinstance(r.get("parent_ref"), str):
+                self.add("malformed_evidence", INCONCLUSIVE, prs=[prq], field="parent_ref")
         if len(parent_refs) > 1:
             self.add("ambiguous_parent", INCONCLUSIVE, prs=sorted(records), parents=sorted(parent_refs))
         if len(parent_refs) == 1:
@@ -909,7 +976,7 @@ class _Evaluation:
                 if identity[0] != self.repo:
                     self.add("wrong_repository", NOT_COMPLETE, prs=[prq], issues=[issue],
                              expected=self.repo, found=identity[0])
-                elif issue not in by_issue:
+                elif not isinstance(issue, str) or issue not in by_issue:
                     self.add("contribution_outside_goal", INCONCLUSIVE, prs=[prq], issues=[issue])
                 elif prq not in records:
                     self.add("missing_pr_record", INCONCLUSIVE, prs=[prq], issues=[issue])
@@ -1001,6 +1068,7 @@ class _Evaluation:
             self.add("post_merge_ambiguous", INCONCLUSIVE, **tag)
         else:
             ctx["pm"] = entries[0]
+            fact["gate_result"] = entries[0].get("gate_result")
             self.check_gate(ctx, rec, entries[0], current, tag)
 
         assurance = rec.get("assurance") or {}
@@ -1111,10 +1179,12 @@ class _Evaluation:
                 self.add("gate_record_inconsistent", INCONCLUSIVE, gate_result=gate,
                          action=pm.get("action"), tested_vs_merged=pm.get("tested_vs_merged"), **tag)
             else:
-                runs = self.prior_gate_runs(rec)
+                runs, ambiguous = self.prior_gate_runs(rec, pm)
                 ctx["gate_runs"] = runs
-                if not runs:
-                    self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="no gate run at head", **tag)
+                for job in ambiguous:
+                    self.add("prior_gate_ambiguous", INCONCLUSIVE, job=job, **tag)
+                if not runs and not ambiguous:
+                    self.add("tree_unreadable", INCONCLUSIVE, why="no prior gate run for the tested subject", **tag)
                 for run in runs:
                     if run.get("conclusion") != "success":
                         self.add("prior_gate_not_success", NOT_COMPLETE, job=run.get("job"), run=run.get("run"),
@@ -1134,7 +1204,7 @@ class _Evaluation:
             elif not _sha_eq(subject.get("sha"), current.get("merge_sha")):
                 fail("rerun_subject_mismatch", NOT_COMPLETE, tested=subject.get("sha"),
                      merge=current.get("merge_sha"))
-            elif run.get("run") is None and not self.is_fallback(run):
+            elif run.get("run") is None and not _is_approved_fallback(run):
                 fail("local_run_without_fallback", NOT_COMPLETE)
             else:
                 entry, why = self.resolve_ci_run(rec, run.get("run"), run.get("job"), run.get("attempt"))
@@ -1196,23 +1266,38 @@ class _Evaluation:
         return None
 
     @staticmethod
-    def is_fallback(run):
-        return isinstance(run, dict) and bool(run.get("executor")) and bool(run.get("fallback_approved_by"))
+    def prior_gate_runs(rec, pm):
+        """The applicable prior gate runs: (runs, ambiguous jobs).
 
-    @staticmethod
-    def prior_gate_runs(rec):
-        """The latest recorded attempt of every job that ran at the PR head."""
-        latest = {}
+        Entries are selected by subject first: the ``tested_subject`` the
+        post-merge record names, or else the runs at the PR head. Per job, the
+        latest run by recorded completion time (``observed_at``) governs, so a
+        later failure is never masked by an earlier success. Attempts order only
+        within one run id. An order that cannot be established is ambiguous."""
+        named = pm.get("tested_subject")
+        named_sha = named.get("sha") if isinstance(named, dict) else named
+        groups = {}
         for run in rec.get("ci_runs") or []:
             if not isinstance(run, dict):
                 continue
-            if not _sha_eq((run.get("tested_subject") or {}).get("head"), rec.get("headRefOid")):
+            subject = run.get("tested_subject") if isinstance(run.get("tested_subject"), dict) else {}
+            if named_sha is not None:
+                if not _sha_eq(subject.get("sha"), named_sha):
+                    continue
+            elif not _sha_eq(subject.get("head"), rec.get("headRefOid")):
                 continue
             job = run.get("job")
-            attempt = run.get("attempt") if isinstance(run.get("attempt"), int) else -1
-            if job not in latest or attempt >= latest[job][0]:
-                latest[job] = (attempt, run)
-        return [run for _, run in latest.values()]
+            if not isinstance(job, str):
+                job = repr(job)
+            groups.setdefault(job, []).append(run)
+        chosen, ambiguous = [], []
+        for job, runs in groups.items():
+            latest = _latest_run(runs)
+            if latest is None:
+                ambiguous.append(job)
+            else:
+                chosen.append(latest)
+        return chosen, ambiguous
 
     @staticmethod
     def resolve_ci_run(rec, run_id, job, attempt):
@@ -1247,21 +1332,25 @@ class _Evaluation:
         for run in runs:
             tested = _sha((run.get("tested_subject") or {}).get("sha"))
             if tested is None:
-                self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="tested subject unrecorded",
+                self.add("tree_unreadable", INCONCLUSIVE, why="tested subject unrecorded",
                          job=run.get("job"), **tag)
                 verdicts.append(None)
                 continue
             tested_tree = self.tree_of(tested, tag)
             if tested_tree is None or merge_tree is None:
-                if tested_tree is not None or merge_tree is not None:
-                    self.add("tree_equivalence_unverifiable", INCONCLUSIVE, why="tree unreadable", **tag)
+                unread = [f"tree:{sha}" for sha, tree in ((tested, tested_tree), (ctx["merge"], merge_tree))
+                          if tree is None]
+                self.add("tree_unreadable", INCONCLUSIVE, reads=unread, job=run.get("job"), **tag)
                 verdicts.append(None)
                 continue
             verdicts.append(tested_tree == merge_tree)
             if tested_tree != merge_tree:
                 self.add("tree_not_equivalent", NOT_COMPLETE, tested=tested, merge=ctx["merge"],
                          job=run.get("job"), **tag)
-        ctx["tree_equivalent"] = all(v is True for v in verdicts) if verdicts else None
+        if any(v is None for v in verdicts):
+            ctx["tree_equivalent"] = None
+        else:
+            ctx["tree_equivalent"] = all(verdicts)
         self.facts["pull_requests"][-1]["tree_equivalent"] = ctx["tree_equivalent"]
 
     def scan_reverts(self, ctx, branch, tag):
@@ -1310,6 +1399,8 @@ class _Evaluation:
         seen = set()
         for item in items:
             cid = item.get("id") if isinstance(item, dict) else None
+            if not isinstance(cid, str):
+                cid = None if cid is None else repr(cid)  # never hashed raw; reported as malformed below
             if cid in seen:
                 self.add("duplicate_criterion_id", NOT_COMPLETE, criteria=[cid])
                 continue
@@ -1420,7 +1511,7 @@ class _Evaluation:
             tested_tree = self.tree_of(_sha(subject.get("sha")), {"prs": [ctx["prq"]]})
             merge_tree = self.tree_of(ctx["merge"], {"prs": [ctx["prq"]]})
             if tested_tree is None or merge_tree is None:
-                return INCONCLUSIVE, "tree_equivalence_unverifiable", None, {}
+                return INCONCLUSIVE, "tree_unreadable", None, {"tested": subject.get("sha")}
             if tested_tree != merge_tree:
                 return NOT_COMPLETE, "test_subject_mismatch", None, {"tested": subject.get("sha")}
             applicability = entry.get("applicability")
@@ -1434,7 +1525,7 @@ class _Evaluation:
                 check["definition_ref"].get("ref"), check["definition_ref"].get("rev")):
             return NOT_COMPLETE, "definition_mismatch", None, {"run": definition,
                                                               "check": check["definition_ref"]}
-        environment = _environment_verdict(check.get("environment"), entry, self.is_fallback(entry))
+        environment = _environment_verdict(check.get("environment"), entry)
         if environment is not None:
             return environment[0], environment[1], None, environment[2]
         pm_check = _find(pm.get("checks"), "id", job)
@@ -1448,7 +1539,7 @@ class _Evaluation:
                  "run": {"run": entry.get("run"), "job": job, "attempt": entry.get("attempt")},
                  "environment": entry.get("environment"), "check_environment": check.get("environment"),
                  "evidence_ref": item.get("evidence_ref"), "pr": ctx["prq"]}
-        if self.is_fallback(entry):
+        if _is_approved_fallback(entry):
             proof["fallback"] = {"executor": entry.get("executor"),
                                  "approved_by": entry.get("fallback_approved_by")}
         return None, "ok", proof, {}
@@ -1480,9 +1571,15 @@ class _Evaluation:
             return INCONCLUSIVE, "reviewer_unidentified", None, {}
         if not self.workers_readable:
             return INCONCLUSIVE, "implementer_identity_unreadable", None, {}
-        implementers = {w.get("agent_id") for w in self.workers or []
-                        if isinstance(w, dict) and str(w.get("role", "")).startswith("worker")
-                        and (w.get("issue") == rec.get("issue") or w.get("pr") in (ctx["number"], ctx["prq"]))}
+        workers = self.workers or []
+        if any(not isinstance(w, dict) for w in workers):
+            return INCONCLUSIVE, "implementer_identity_unreadable", None, {}
+        relevant = [w for w in workers if str(w.get("role", "")).startswith("worker")
+                    and (w.get("issue") == rec.get("issue") or w.get("pr") in (ctx["number"], ctx["prq"]))]
+        if any(not isinstance(w.get("agent_id"), str) or not w.get("agent_id") for w in relevant):
+            # A malformed worker identity could be the reviewer's; never drop it silently.
+            return INCONCLUSIVE, "implementer_identity_unreadable", None, {}
+        implementers = {w["agent_id"] for w in relevant}
         if reviewer == self.lead_id or reviewer in implementers:
             return NOT_COMPLETE, "reviewer_not_independent", None, {"reviewer": reviewer}
         if not isinstance(review, dict):
