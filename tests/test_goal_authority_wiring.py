@@ -27,6 +27,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 import dev_state  # noqa: E402
 import goal_run  # noqa: E402
+import goal_recovery  # noqa: E402
 
 PHASE4 = (DEV_DIR / "phases" / "phase4.md").read_text(encoding="utf-8")
 GOAL = (DEV_DIR / "phases" / "goal.md").read_text(encoding="utf-8")
@@ -149,8 +150,13 @@ class AC4DocsNameRealFunctionsAndOutcomes(unittest.TestCase):
         decide_only = set(re.findall(r'_confirm_each\("([a-z_]+)"', inspect.getsource(ga.decide_merge)))
         self.assertLessEqual(decide_only, bullet_reasons("confirm_each") | {"now_not_timezone_qualified"})
 
-    def test_goal_md_names_no_goal_recovery_call(self):
-        self.assertNotIn("goal_recovery", GOAL)
+    def test_goal_md_names_only_real_goal_recovery_api(self):
+        public = set(goal_recovery.__all__)
+        names = set(re.findall(r"`([a-z_][a-z0-9_]*)`", GOAL))
+        used = {n for n in names if n in public}
+        self.assertTrue(used, "goal.md names no goal_recovery public API")
+        for name in used:
+            self.assertTrue(callable(getattr(goal_recovery, name)), name)
         for name in ("reconcile", "resume_admission", "admit_resume"):
             self.assertNotIn(f"`{name}", GOAL_STEP7)
 

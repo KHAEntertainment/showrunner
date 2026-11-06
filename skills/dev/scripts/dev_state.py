@@ -17,6 +17,7 @@ import math
 import re
 import sys
 from pathlib import Path
+from types import MappingProxyType
 
 
 VALID_RUN_STATUSES = frozenset({"active", "blocked", "recovering", "complete", "standby"})
@@ -191,6 +192,8 @@ _GOAL_RUN_STATE_KEYS = (
     "approval_time", "next_wake_at", "paused", "policy", "counters",
     # Issue #194 lane L4: optional grant and gate records (absent or null is valid).
     "grant", "merge_ledger", "gate_evidence", "delegated_records",
+    # Issue #196 lane L6: optional recovery records (absent or null is valid).
+    "obligations", "custody", "event_ledger", "recovery_receipts", "unknown_effects",
 )
 _GOAL_POLICY_KEYS = ("run_time_hours", "dispatch_cap_per_issue", "gv_retries", "spend_cap")
 _GOAL_COUNTER_KEYS = (
@@ -763,6 +766,234 @@ def merge_ledger_clear_halt(state: MergeLedgerState, triage_ref):
     return dataclasses.replace(result, value=MergeLedgerState(result.value, dict(state.halt_history), cleared))
 
 
+# --- Goal-run recovery records (Issue #196, lane L6) -------------------------
+#
+# Optional and additive: each key may be absent or null, so a pre-L6 block (the
+# L2 16-key or L4 20-key block) validates unchanged. Shapes follow the merged
+# goal_recovery.py public records so they round-trip: `obligations` is an
+# `Obligations` snapshot (owed replies restated first), `event_ledger` an
+# `EventLedger` (counted event identities), `recovery_receipts` a map of
+# recovery-receipt-v1 records (checkpoint reference embedded), `custody` the
+# classify_lineage inputs and their Result outcome/reason, and `unknown_effects`
+# the unknown-effect outcomes with their blocked dependents. goal_recovery.py is
+# imported, never copied.
+
+_GOAL_RECOVERY_KEYS = (
+    "obligations", "custody", "event_ledger", "recovery_receipts", "unknown_effects",
+)
+_GOAL_OBLIGATIONS_KEYS = (
+    "children", "owed_replies", "original_request", "responsible_party",
+    "evidence", "consumed_allowances", "worker_count", "defect_episode",
+    "fix_batch_count", "owner_escalation",
+)
+_GOAL_OBLIGATION_STR_LISTS = ("children", "owed_replies", "evidence", "consumed_allowances")
+_GOAL_OBLIGATION_STRINGS = ("original_request", "responsible_party")
+_GOAL_OBLIGATION_COUNTS = ("worker_count", "defect_episode", "fix_batch_count")
+_GOAL_CUSTODY_KEYS = ("prior_session_id", "current_session_id", "claim", "outcome", "reason")
+_GOAL_CUSTODY_CLAIMS = ("successor", "takeover")
+_GOAL_CUSTODY_OUTCOMES = ("accept", "invalid")
+_GOAL_EVENT_LEDGER_KEYS = ("seen", "duplicates")
+_GOAL_UNKNOWN_EFFECT_KEYS = ("state", "blocked", "evidence")
+_GOAL_UNKNOWN_EFFECT_STATES = ("unknown", "resolved")
+
+
+def _load_goal_recovery_module():
+    """Import the merged goal_recovery.py from this script's own directory."""
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import goal_recovery  # noqa: PLC0415 - only recovery-bearing ledgers need it
+    except ImportError as exc:
+        raise GoalRunError(GOAL_RUN_KEY, f"goal_recovery.py is unavailable ({exc})") from exc
+    return goal_recovery
+
+
+def obligations_to_record(obligations) -> dict:
+    """Write an ``Obligations`` snapshot as the ledger's ``obligations`` map."""
+    recovery = _load_goal_recovery_module()
+    if not isinstance(obligations, recovery.Obligations):
+        raise TypeError("obligations_to_record takes a goal_recovery.Obligations")
+    return {
+        "children": list(obligations.children),
+        "owed_replies": list(obligations.owed_replies),
+        "original_request": obligations.original_request,
+        "responsible_party": obligations.responsible_party,
+        "evidence": list(obligations.evidence),
+        "consumed_allowances": list(obligations.consumed_allowances),
+        "worker_count": obligations.worker_count,
+        "defect_episode": obligations.defect_episode,
+        "fix_batch_count": obligations.fix_batch_count,
+        "owner_escalation": obligations.owner_escalation,
+    }
+
+
+def obligations_from_record(record):
+    """Rebuild an ``Obligations`` from a validated ``obligations`` map."""
+    _validate_goal_obligations(record)
+    recovery = _load_goal_recovery_module()
+    return recovery.Obligations(
+        children=tuple(record["children"]),
+        owed_replies=tuple(record["owed_replies"]),
+        original_request=record["original_request"],
+        responsible_party=record["responsible_party"],
+        evidence=tuple(record["evidence"]),
+        consumed_allowances=tuple(record["consumed_allowances"]),
+        worker_count=record["worker_count"],
+        defect_episode=record["defect_episode"],
+        fix_batch_count=record["fix_batch_count"],
+        owner_escalation=record["owner_escalation"],
+    )
+
+
+def event_ledger_to_record(ledger) -> dict:
+    """Write an ``EventLedger`` as the ledger's ``event_ledger`` map."""
+    recovery = _load_goal_recovery_module()
+    if not isinstance(ledger, recovery.EventLedger):
+        raise TypeError("event_ledger_to_record takes a goal_recovery.EventLedger")
+    return {"seen": list(ledger.seen), "duplicates": dict(ledger.duplicates)}
+
+
+def event_ledger_from_record(record):
+    """Rebuild an ``EventLedger`` from a validated ``event_ledger`` map."""
+    _validate_goal_event_ledger(record)
+    recovery = _load_goal_recovery_module()
+    return recovery.EventLedger(
+        seen=tuple(record["seen"]), duplicates=MappingProxyType(dict(record["duplicates"]))
+    )
+
+
+def _validate_goal_obligations(value) -> None:
+    base = f"{GOAL_RUN_KEY}.obligations"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    _closed_map(value, base, _GOAL_OBLIGATIONS_KEYS, "obligations")
+    for key in _GOAL_OBLIGATION_STR_LISTS:
+        items = value[key]
+        if not isinstance(items, list) or any(
+            not isinstance(i, str) or not i for i in items
+        ):
+            raise GoalRunError(f"{base}.{key}", "must be a list of non-empty strings")
+    for key in _GOAL_OBLIGATION_STRINGS:
+        if not isinstance(value[key], str):
+            raise GoalRunError(f"{base}.{key}", "must be a string")
+    for key in _GOAL_OBLIGATION_COUNTS:
+        if not _is_count(value[key]):
+            raise GoalRunError(f"{base}.{key}", "must be an integer >= 0")
+    if not isinstance(value["owner_escalation"], bool):
+        raise GoalRunError(f"{base}.owner_escalation", "must be true or false")
+
+
+def _validate_goal_custody(value, recovery) -> None:
+    base = f"{GOAL_RUN_KEY}.custody"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    _closed_map(value, base, _GOAL_CUSTODY_KEYS, "custody")
+    for key in ("prior_session_id", "current_session_id", "reason"):
+        if value[key] is not None and not isinstance(value[key], str):
+            raise GoalRunError(f"{base}.{key}", "must be a string or null")
+    claim = value["claim"]
+    if claim is not None and (not isinstance(claim, str) or claim not in _GOAL_CUSTODY_CLAIMS):
+        raise GoalRunError(f"{base}.claim", "must be 'successor', 'takeover' or null")
+    outcome = value["outcome"]
+    if outcome not in _GOAL_CUSTODY_OUTCOMES:
+        raise GoalRunError(f"{base}.outcome", "must be 'accept' or 'invalid'")
+    result = recovery.classify_lineage(
+        value["prior_session_id"], value["current_session_id"], claim
+    )
+    if bool(result.may_proceed) != (outcome == "accept"):
+        raise GoalRunError(f"{base}.outcome", "does not match classify_lineage")
+    if not result.may_proceed and value["reason"] != result.reason:
+        raise GoalRunError(f"{base}.reason", "does not match classify_lineage")
+
+
+def _validate_goal_event_ledger(value) -> None:
+    base = f"{GOAL_RUN_KEY}.event_ledger"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    _closed_map(value, base, _GOAL_EVENT_LEDGER_KEYS, "event ledger")
+    seen = value["seen"]
+    if not isinstance(seen, list) or any(not isinstance(i, str) or not i for i in seen):
+        raise GoalRunError(f"{base}.seen", "must be a list of non-empty event identities")
+    if len(set(seen)) != len(seen):
+        raise GoalRunError(f"{base}.seen", "an event identity must not be counted twice")
+    duplicates = value["duplicates"]
+    if not isinstance(duplicates, dict):
+        raise GoalRunError(f"{base}.duplicates", "must be a map")
+    for identity, count in duplicates.items():
+        if not isinstance(identity, str) or not identity:
+            raise GoalRunError(f"{base}.duplicates", "identity must be a non-empty string")
+        if not _is_count(count) or count == 0:
+            raise GoalRunError(
+                f"{base}.duplicates", f"{identity} duplicate count must be a positive integer"
+            )
+        if identity not in seen:
+            raise GoalRunError(f"{base}.duplicates", f"{identity} is not a counted event")
+
+
+def _validate_goal_recovery_receipts(value, recovery) -> None:
+    base = f"{GOAL_RUN_KEY}.recovery_receipts"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    for receipt_id, record in value.items():
+        if not isinstance(receipt_id, str) or not receipt_id:
+            raise GoalRunError(base, "receipt id must be a non-empty string")
+        check = recovery.validate_sc9_record("recovery-receipt-v1", record)
+        if not check.ok:
+            raise GoalRunError(f"{base}.{receipt_id}", check.reason)
+
+
+def _validate_goal_unknown_effects(value) -> None:
+    base = f"{GOAL_RUN_KEY}.unknown_effects"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    for effect_id, entry in value.items():
+        if not isinstance(effect_id, str) or not effect_id:
+            raise GoalRunError(base, "effect id must be a non-empty string")
+        if not isinstance(entry, dict):
+            raise GoalRunError(f"{base}.{effect_id}", "must be a map")
+        for key in entry:
+            if key not in _GOAL_UNKNOWN_EFFECT_KEYS:
+                raise GoalRunError(f"{base}.{effect_id}.{key}", "unknown effect field")
+        for key in _GOAL_UNKNOWN_EFFECT_KEYS:
+            if key not in entry:
+                raise GoalRunError(f"{base}.{effect_id}.{key}", "missing required field")
+        state = entry["state"]
+        if state not in _GOAL_UNKNOWN_EFFECT_STATES:
+            raise GoalRunError(f"{base}.{effect_id}.state", "must be 'unknown' or 'resolved'")
+        blocked = entry["blocked"]
+        if not isinstance(blocked, list) or any(not isinstance(b, str) or not b for b in blocked):
+            raise GoalRunError(f"{base}.{effect_id}.blocked", "must be a list of non-empty strings")
+        evidence = entry["evidence"]
+        if evidence is not None and not isinstance(evidence, str):
+            raise GoalRunError(f"{base}.{effect_id}.evidence", "must be a string or null")
+        if state == "resolved":
+            if not evidence or not evidence.strip():
+                raise GoalRunError(f"{base}.{effect_id}", "a resolved unknown effect needs evidence")
+            if blocked:
+                raise GoalRunError(
+                    f"{base}.{effect_id}.blocked", "a resolved effect cannot block dependents"
+                )
+
+
+def _validate_goal_recovery_records(block, goal_run) -> None:
+    """Validate the L6 recovery keys. Absent or all-null means a pre-L6 block and
+    returns without importing goal_recovery.py."""
+    if all(block.get(key) is None for key in _GOAL_RECOVERY_KEYS):
+        return
+    recovery = _load_goal_recovery_module()
+    if block.get("obligations") is not None:
+        _validate_goal_obligations(block["obligations"])
+    if block.get("custody") is not None:
+        _validate_goal_custody(block["custody"], recovery)
+    if block.get("event_ledger") is not None:
+        _validate_goal_event_ledger(block["event_ledger"])
+    if block.get("recovery_receipts") is not None:
+        _validate_goal_recovery_receipts(block["recovery_receipts"], recovery)
+    if block.get("unknown_effects") is not None:
+        _validate_goal_unknown_effects(block["unknown_effects"])
+
+
 def validate_goal_run(block) -> None:
     """Validate a goal-run block (a plain dict). Raises ``GoalRunError``.
 
@@ -817,6 +1048,7 @@ def validate_goal_run(block) -> None:
 
     _validate_goal_counters(block.get("counters"), block["fixed_issues"], goal_run)
     _validate_goal_authority_records(block, goal_run, applied.value)
+    _validate_goal_recovery_records(block, goal_run)
 
 
 def validate_goal_run_text(text: str, data: dict) -> None:

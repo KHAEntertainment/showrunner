@@ -80,7 +80,7 @@ Before dispatch, read `${CLAUDE_SKILL_DIR}/backends/contract.md` and run `${CLAU
 - Claude parallel execution uses Agent Teams; they run in-process and do not require tmux/iTerm. Traycer uses receive-capable Chat/GUI child agents.
 - Do not silently change backend or topology. Mark unverified adapter operations `incomplete` and pause.
 
-Recovery state: initialize `.agent/dev-state.md` from `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`. The lead is the sole ledger writer.
+Recovery state: initialize `.agent/dev-state.md` from `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`. The lead is the sole ledger writer. For a goal run, recovery follows the **Recovery and resume** section of the goal-run phase.
 
 ---
 
