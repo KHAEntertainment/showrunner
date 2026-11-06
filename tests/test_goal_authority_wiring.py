@@ -10,12 +10,14 @@ ledger is persisted through dev_state.py between steps, as the docs say.
 """
 
 import copy
+import dataclasses
 import inspect
 import json
 import re
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 DEV_DIR = ROOT / "skills" / "dev"
@@ -24,6 +26,7 @@ FIXTURES = ROOT / "tests" / "fixtures" / "authority"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 import dev_state  # noqa: E402
+import goal_run  # noqa: E402
 
 PHASE4 = (DEV_DIR / "phases" / "phase4.md").read_text(encoding="utf-8")
 GOAL = (DEV_DIR / "phases" / "goal.md").read_text(encoding="utf-8")
@@ -32,7 +35,10 @@ EXTERNAL = (DEV_DIR / "phases" / "external-review.md").read_text(encoding="utf-8
 
 REAL_OUTCOMES = ("accept", "invalid", "confirm_each", "safe_point_only", "protected_stop", "blocked")
 DECIDE_MERGE_OUTCOMES = ("accept", "confirm_each", "blocked", "invalid")
-DEV_STATE_HELPERS = ("merge_ledger_to_record", "merge_ledger_from_record")
+DEV_STATE_HELPERS = (
+    "merge_ledger_to_record", "merge_ledger_from_record", "merge_ledger_with",
+    "merge_ledger_record_failure", "merge_ledger_clear_halt",
+)
 FUNCTION_PREFIXES = (
     "check_", "record_", "validate_", "decide_", "revoke_", "carry_", "clear_",
     "dispose_", "proceed_", "amend_", "merge_ledger_",
@@ -257,9 +263,48 @@ class AC5DocRowsTraceToGateInventory(unittest.TestCase):
         self.assertIn("never a force-push, deletion or bypass", REPLY_D2)
 
 
+def synthetic_block(grant) -> dict:
+    """An armed goal_run block bound to the fixture grant's run, repo and Issues."""
+    entry = {
+        "repo": grant["repository"],
+        "run": grant["run_id"],
+        "mode": "standalone",
+        "lead": {"agent_id": "lead-1", "harness": "claude", "model": "example-model"},
+        "plan_ref": {
+            "origin": "docs/plans/goal.md",
+            "source_revision": "4f3c2a1",
+            "approved_revision": "4f3c2a1",
+            "approval": {
+                "authority": {"agent_id": "owner"},
+                "evidence": {"reference": "approval comment", "digest": "sha256-x"},
+            },
+            "producer": {"session": "planner-1", "harness": "claude"},
+        },
+        "source": "docs/plans/goal.md@4f3c2a1",
+        "approval_revision": "4f3c2a1",
+        "fixed_issues": list(grant["eligible_issues"]),
+    }
+    armed = goal_run.arm(entry, project_policy={"run_time_hours": 24.0})
+    assert armed.may_proceed, armed
+    block = armed.value.assignment.to_dict()
+    block.update({
+        "approval_time": "2099-01-01T00:00:00Z",
+        "next_wake_at": None,
+        "paused": False,
+        "policy": dataclasses.asdict(armed.value.policy),
+        "counters": {
+            "usage_measured": False, "spend": "unknown", "gv_retries_used": 0,
+            "dispatch_counts": {}, "dispatch_request_ids": {}, "request_issues": {},
+        },
+        "grant": copy.deepcopy(grant),
+    })
+    return block
+
+
 class AC6D2CasesThroughTheDocumentedPath(unittest.TestCase):
-    """Each D2 case, with the MergeLedger persisted through dev_state between
-    steps (as phase4 says), yields the outcome phase4 step 3 states for it."""
+    """Each D2 case, with the merge state written, validated and rebuilt
+    through dev_state between steps (as phase4 says), yields the outcome
+    phase4 step 3 states for it."""
 
     NOW = "2099-01-01T12:00:00Z"
 
@@ -268,11 +313,25 @@ class AC6D2CasesThroughTheDocumentedPath(unittest.TestCase):
         self.request = _fixture("merge-request-valid.json")["request"]
         self.record = _fixture("conformance-different-family.json")["record"]
 
-    def persist(self, ledger):
-        return dev_state.merge_ledger_from_record(dev_state.merge_ledger_to_record(ledger))
+    def persist_record(self, record):
+        """Validate a merge_ledger record inside its goal_run block, then rebuild."""
+        block = synthetic_block(self.grant)
+        block["merge_ledger"] = record
+        dev_state.validate_goal_run(block)
+        return dev_state.merge_ledger_from_record(record)
 
-    def ledger(self, **changes):
-        return self.persist(GA().MergeLedger(run_id=self.grant["run_id"], **changes))
+    def persist(self, state):
+        rebuilt = self.persist_record(dev_state.merge_ledger_to_record(state))
+        self.assertEqual(rebuilt, state)
+        return rebuilt
+
+    def carry(self, state, result):
+        carried = dev_state.merge_ledger_with(state, result)
+        self.assertEqual(carried.outcome, "accept", carried)
+        return self.persist(carried.value)
+
+    def state(self, **changes):
+        return self.persist(dev_state.MergeLedgerState(GA().MergeLedger(run_id=self.grant["run_id"], **changes)))
 
     def gates(self, **overrides):
         kwargs = dict(
@@ -285,10 +344,10 @@ class AC6D2CasesThroughTheDocumentedPath(unittest.TestCase):
         kwargs.update(overrides)
         return GA().check_gates(copy.deepcopy(self.record), **kwargs)
 
-    def decide(self, grant="default", ledger=None, request=None, now=None, gates=None, mode="standalone"):
+    def decide(self, grant="default", state=None, request=None, now=None, gates=None, mode="standalone"):
         return GA().decide_merge(
             self.grant if grant == "default" else grant,
-            ledger if ledger is not None else self.ledger(),
+            (state if state is not None else self.state()).ledger,
             dict(self.request, **(request or {})),
             now or self.NOW,
             gates if gates is not None else self.gates(),
@@ -317,8 +376,8 @@ class AC6D2CasesThroughTheDocumentedPath(unittest.TestCase):
         self.assert_documented(self.decide(now="2099-01-02T00:00:00Z"), "confirm_each", "grant_expired")
 
     def test_cap_reached(self):
-        full = self.ledger(consumed=((1, "a"), (2, "b"), (3, "c")))
-        self.assert_documented(self.decide(ledger=full), "confirm_each", "cap_reached")
+        full = self.state(consumed=((1, "a"), (2, "b"), (3, "c")))
+        self.assert_documented(self.decide(state=full), "confirm_each", "cap_reached")
 
     def test_unlisted_closing_issue(self):
         request = {"closing_issues": ["OWNER/synthetic-repo#1", "OWNER/synthetic-repo#9"]}
@@ -331,44 +390,65 @@ class AC6D2CasesThroughTheDocumentedPath(unittest.TestCase):
                                "blocked", "stale_gate_result")
 
     def test_revocation_recorded_before_next_merge(self):
-        revoked = self.persist(GA().revoke_grant(self.ledger(), "2099-01-01T11:00:00Z").value)
-        self.assert_documented(self.decide(ledger=revoked), "confirm_each", "grant_revoked")
+        state = self.state()
+        revoked = self.carry(state, GA().revoke_grant(state.ledger, "2099-01-01T11:00:00Z"))
+        self.assert_documented(self.decide(state=revoked), "confirm_each", "grant_revoked")
 
     def test_restart_keeps_grant_takeover_without_custody_does_not(self):
         ga = GA()
-        used = self.ledger(consumed=((5, "x"),))
+        used = self.state(consumed=((5, "x"),))
         for transition in ("restart", "compaction"):
             with self.subTest(transition=transition):
-                carried = self.persist(ga.carry_grant(self.grant, used, transition).value)
-                self.assert_documented(self.decide(ledger=carried), "accept")
-        lost = self.persist(ga.carry_grant(self.grant, used, "takeover", custody_passed=False).value)
-        self.assert_documented(self.decide(ledger=lost), "confirm_each", "grant_not_in_force")
+                carried = self.carry(used, ga.carry_grant(self.grant, used.ledger, transition))
+                self.assert_documented(self.decide(state=carried), "accept")
+        lost = self.carry(used, ga.carry_grant(self.grant, used.ledger, "takeover", custody_passed=False))
+        self.assert_documented(self.decide(state=lost), "confirm_each", "grant_not_in_force")
 
     def test_atomicity_replay_consumes_one_slot(self):
         ga = GA()
         event = {"pr": 11, "outcome": "merged", "merge_sha": "aaa"}
-        first = self.persist(ga.record_merge(self.ledger(), event).value)
-        replay = ga.record_merge(first, event)
+        first = self.carry(self.state(), ga.record_merge(self.state().ledger, event))
+        replay = ga.record_merge(first.ledger, event)
         self.assertTrue(replay.detail["replay"])
-        self.assertEqual(self.persist(replay.value).slots_used, 1)
-        failed = ga.record_merge(self.ledger(), {"pr": 11, "outcome": "failed"})
+        self.assertEqual(self.carry(first, replay).ledger.slots_used, 1)
+        failed = ga.record_merge(self.state().ledger, {"pr": 11, "outcome": "failed"})
         self.assertEqual(failed.value.slots_used, 0)
         self.assertIn("replaying the same PR and merge SHA consumes nothing", MERGE_GRANT)
 
-    def test_post_merge_failure_halts_until_clear_halt(self):
+    def test_post_merge_failure_halts_until_clear_halt_and_carries_triage(self):
         ga = GA()
-        halted = self.persist(ga.record_post_merge_failure(self.ledger(), "OWNER/synthetic-repo#1", "fail-1").value)
+        halted = dev_state.merge_ledger_record_failure(self.state(), "OWNER/synthetic-repo#1", "fail-1")
+        halted = self.persist(halted.value)
         request = {"pr": 12, "closing_issues": ["OWNER/synthetic-repo#2"]}
-        self.assert_documented(self.decide(ledger=halted, request=request), "blocked", "post_merge_failure_halt")
-        self.assertTrue(ga.check_action(halted, "dispatch").may_proceed)
-        cleared = self.persist(ga.clear_halt(halted, "triage-1").value)
-        self.assert_documented(self.decide(ledger=cleared, request=request), "accept")
+        self.assert_documented(self.decide(state=halted, request=request), "blocked", "post_merge_failure_halt")
+        self.assertTrue(ga.check_action(halted.ledger, "dispatch").may_proceed)
+        cleared = self.persist(dev_state.merge_ledger_clear_halt(halted, "triage-1").value)
+        self.assertEqual(cleared.cleared_halts, {"fail-1": "triage-1"})
+        self.assert_documented(self.decide(state=cleared, request=request), "accept")
+        self.assertIn("`merge_ledger_clear_halt(state, triage_ref)`", MERGE_GRANT)
+
+    def test_premature_clear_never_reaches_decide_merge(self):
+        halted = self.persist(
+            dev_state.merge_ledger_record_failure(self.state(), "OWNER/synthetic-repo#1", "fail-1").value
+        )
+        record = dev_state.merge_ledger_to_record(halted)
+        record.update({"halted": False, "halt_ref": None})
+        ga = GA()
+        with mock.patch.object(ga, "decide_merge") as decide:
+            with self.assertRaises(dev_state.GoalRunError) as raised:
+                state = self.persist_record(record)
+                ga.decide_merge(self.grant, state.ledger, self.request, self.NOW, self.gates())
+            decide.assert_not_called()
+        self.assertEqual(
+            str(raised.exception),
+            "goal_run.merge_ledger.cleared_halts: fail-1 was cleared without triage evidence",
+        )
+        self.assertIn("A halt reset any other way fails ledger validation", MERGE_GRANT)
 
     def test_failing_gate_blocks_and_managed_needs_coordinator_grant(self):
         self.assert_documented(self.decide(gates=self.gates(external_review="pending")),
                                "blocked", "gates_not_satisfied")
         self.assert_documented(self.decide(mode="managed"), "invalid", "foreman_grant_missing")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,9 @@
 AC5: the SKILL.md router gains exactly one goal-run row, pointing to
 phases/goal.md, and the rest of the table is unchanged.
 AC6: every goal_run name, outcome and reason code goal.md uses exists in the
-merged goal_run.py, and goal.md calls nothing from goal_authority/goal_recovery.
+merged goal_run.py, and goal.md calls nothing from goal_recovery. Since #194
+lane L4, goal.md step 7 may also name goal_authority.py's public API (functions,
+outcome constants, GATE_INVENTORY and reason strings that exist in it).
 """
 
 from __future__ import annotations
@@ -25,6 +27,9 @@ TEMPLATE = SKILL_DIR / "templates" / "DEV_STATE_TEMPLATE.md"
 
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 import goal_run  # noqa: E402
+import goal_authority  # noqa: E402
+
+GOAL_AUTHORITY = SKILL_DIR / "scripts" / "goal_authority.py"
 
 ROUTER_HEADER = "| Type | Criteria | Path |"
 PRE_L2_ROUTER_TYPES = [
@@ -99,6 +104,24 @@ def goal_run_vocabulary() -> set[str]:
     return names
 
 
+def goal_authority_vocabulary() -> set[str]:
+    """Names goal_authority.py itself defines (#194 L4), built the same way as
+    goal_run_vocabulary: public API, public dataclass fields, public function
+    parameters, and its string literals and double-backticked tokens (outcome
+    constants, reason codes, gate ids)."""
+    names = set(goal_authority.__all__)
+    for public in goal_authority.__all__:
+        obj = getattr(goal_authority, public)
+        if dataclasses.is_dataclass(obj):
+            names |= {f.name for f in dataclasses.fields(obj)}
+        elif inspect.isfunction(obj):
+            names |= set(inspect.signature(obj).parameters)
+    source = GOAL_AUTHORITY.read_text(encoding="utf-8")
+    names |= set(re.findall(r"""["']([a-z_][a-z0-9_]*)["']""", source))
+    names |= set(re.findall(r"``([a-z_][a-z0-9_]*)``", source))
+    return names
+
+
 def ledger_goal_fields() -> set[str]:
     """Keys of the documented goal_run worked example in the template."""
     block = re.search(
@@ -126,20 +149,26 @@ class GoalPhaseApiTests(unittest.TestCase):
             calls |= set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\(", token))
         self.assertTrue(calls, "goal.md names no calls")
         methods = {"to_dict", "dispatch_count"}
-        unknown = sorted(c for c in calls if c not in goal_run.__all__ and c not in methods)
+        public = set(goal_run.__all__) | set(goal_authority.__all__)
+        unknown = sorted(c for c in calls if c not in public and c not in methods)
         self.assertEqual(unknown, [])
         for name in calls - methods:
-            self.assertTrue(callable(getattr(goal_run, name)), name)
+            module = goal_run if name in goal_run.__all__ else goal_authority
+            self.assertTrue(callable(getattr(module, name)), name)
 
     def test_every_named_identifier_exists_in_goal_run_or_the_ledger(self):
-        allowed = goal_run_vocabulary() | ledger_goal_fields() | DEV_NAMES
+        allowed = (
+            goal_run_vocabulary() | goal_authority_vocabulary() | ledger_goal_fields() | DEV_NAMES
+        )
         identifiers = {t for t in self.tokens if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t)}
         # All-caps tokens are marker words and UTC suffixes (`WAKE`, `Z`): they
         # must occur literally in goal_run.py's source.
         source = GOAL_RUN.read_text(encoding="utf-8")
         literal_caps = {t for t in identifiers if t.isupper() and t in source}
         unknown = sorted(identifiers - allowed - literal_caps)
-        self.assertEqual(unknown, [], "goal.md names identifiers goal_run.py does not define")
+        self.assertEqual(
+            unknown, [], "goal.md names identifiers goal_run.py and goal_authority.py do not define"
+        )
 
     def test_outcomes_named_are_the_documented_vocabulary(self):
         doc = goal_run.__doc__
@@ -152,9 +181,15 @@ class GoalPhaseApiTests(unittest.TestCase):
         self.assertNotIn("`unavailable`", self.text)
 
     def test_no_authority_or_recovery_module_call(self):
-        self.assertNotIn("goal_authority", self.text)
+        """goal_recovery stays forbidden (L6 owns recovery). Since #194 L4,
+        goal_authority appears only as its script path; its calls are checked
+        against its public API by the two tests above."""
         self.assertNotIn("goal_recovery", self.text)
         self.assertNotIn("TBD", self.text)
+        mentions = re.findall(r"\S*goal_authority\S*", self.text)
+        self.assertTrue(mentions)
+        for mention in mentions:
+            self.assertEqual(mention, "`${CLAUDE_SKILL_DIR}/scripts/goal_authority.py`", mention)
 
     def test_continuation_is_gated_by_outcome_not_ok(self):
         """Fix batch 1 A1: may_proceed only for accept-returning calls; the
