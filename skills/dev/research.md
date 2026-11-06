@@ -23,7 +23,8 @@ Read-only throughout: no writes, no installs, no network-mutating calls, no prov
 
 ## C2 — the pinned provider
 
-The pin below is **proposed — the owner confirms it before C2 is used**.
+The pin below is **confirmed by the owner** — `ruling-207-pin-2026-11-05`
+(2026-11-05). C2 may activate against this pin.
 
 - **skill**: `advise-project-approach`
 - **commit**: none (unversioned local copy at `~/.agents/skills/advise-project-approach`)
@@ -40,9 +41,9 @@ VCS metadata.
 
 ### Calling the locator
 
-Precondition: C2 runs only once the pin is owner-confirmed. While the pin is
-still proposed, the lead skips C2 and records a fallback with result type
-`not_available`, cause `pin_unconfirmed`.
+Precondition: C2 runs only once the pin is owner-confirmed. A pin that is not
+owner-confirmed — a new pin, or after drift until re-confirmed — skips C2 and
+records a fallback with result type `not_available`, cause `pin_unconfirmed`.
 
 The lead passes an explicit list of harness skill directories as repeatable
 `--root`: `~/.agents/skills`, `~/.claude/skills`, `<repo>/.claude/skills`, `~/.claude/plugins/cache`. The locator skips missing roots. The lead never adds other paths, and nothing is searched automatically beyond that list.
