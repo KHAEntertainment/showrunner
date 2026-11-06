@@ -706,5 +706,86 @@ class TestGoalRunParserFailsClosed(unittest.TestCase):
                     self.assertIn("FAIL: goal_run: goal_run.py is unavailable", done.stderr)
 
 
+
+class TestGoalRunFixBatch1(unittest.TestCase):
+    """PR #226 fix batch 1: R1 header-based null, R2 tabs, R3 exponent numbers."""
+
+    def assert_fails_closed(self, content: str, expected: str = "FAIL: goal_run"):
+        code, _, stderr = run_validator(content)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn(expected, stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_r1_literal_block_goal_run_fails(self):
+        """The flat reader drops `goal_run: |`; it must not read as null."""
+        self.assert_fails_closed(
+            ledger_with("goal_run: |\n  mode: broken\n  fixed_issues: []\n"),
+            "FAIL: goal_run: must be a block map or null",
+        )
+
+    def test_r1_non_null_scalars_and_shapes_fail(self):
+        for header in ("goal_run: >", "goal_run: >-", "goal_run: 0", "goal_run: false",
+                       "goal_run: []", "goal_run: {}", 'goal_run: "null"', "goal_run: none"):
+            with self.subTest(header=header):
+                self.assert_fails_closed(
+                    ledger_with(header + "\n"), "FAIL: goal_run: must be a block map or null"
+                )
+
+    def test_r1_explicit_null_forms_skip(self):
+        for header in ("goal_run: null", "goal_run: ~", "goal_run: null   "):
+            with self.subTest(header=header):
+                code, _, stderr = run_validator(ledger_with(header + "\n"))
+                self.assertEqual(code, 0, stderr)
+
+    def test_r2_tab_after_a_complete_block_fails(self):
+        self.assert_fails_closed(
+            ledger_with(goal_example() + "\tpaused: true\n"),
+            "FAIL: goal_run: tab indentation",
+        )
+
+    def test_r2_other_malformed_tails_after_a_complete_block_fail(self):
+        tails = {
+            "  \tpaused: true\n": "FAIL: goal_run: tab indentation",
+            "        deep: 1\n": "FAIL: goal_run",
+            "  paused: true\n": "FAIL: goal_run.paused: duplicate key",
+            "  - stray\n": "FAIL: goal_run",
+            "  run: [x]\n": "FAIL: goal_run.run",
+            " x: 1\n": "FAIL:",
+        }
+        for tail, expected in tails.items():
+            with self.subTest(tail=tail):
+                self.assert_fails_closed(ledger_with(goal_example() + tail), expected)
+
+    def test_r3_exponent_numbers_parse_and_non_finite_fail(self):
+        for raw, value in (("1e-06", 1e-06), ("2.5E+3", 2500.0), ("-3e2", -300.0), ("0.5", 0.5)):
+            with self.subTest(raw=raw):
+                self.assertEqual(dev_state._goal_scalar(raw, "goal_run.x", 1), value)
+        with self.assertRaises(dev_state.GoalRunError) as raised:
+            dev_state._goal_scalar("1e999", "goal_run.counters.spend", 7)
+        self.assertEqual(raised.exception.field, "goal_run.counters.spend")
+        for raw in ("inf", "nan", "-inf"):
+            with self.subTest(raw=raw):
+                self.assertEqual(dev_state._goal_scalar(raw, "goal_run.x", 1), raw)
+
+    def test_r3_tiny_measured_spend_round_trips(self):
+        block = armed_block(spend=0.000001)
+        text = ledger_with(render_goal_run(block))
+        self.assertIn("spend: 1e-06", text)
+        self.assertEqual(dev_state.parse_goal_run_block(text), block)
+        code, stdout, stderr = run_validator(text)
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("OK:", stdout)
+
+    def test_r3_non_finite_measured_spend_fails(self):
+        for raw in ("inf", "nan", "1e999"):
+            with self.subTest(raw=raw):
+                text = ledger_with(render_goal_run(armed_block(spend=1.5)))
+                self.assertIn("spend: 1.5", text)
+                self.assert_fails_closed(
+                    text.replace("spend: 1.5", f"spend: {raw}", 1),
+                    "FAIL: goal_run.counters.spend",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

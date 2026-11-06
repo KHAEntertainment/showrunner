@@ -19,7 +19,11 @@ import goal_run
 PY
 ```
 
-Every call returns a `Result` with `outcome`, `reason`, `value` and `detail`. Proceed on a step only when `may_proceed` is true (outcome `accept`). `ok` only means "not `invalid`" and is never permission.
+Every call returns a `Result` with `outcome`, `reason`, `value` and `detail`. `ok` only means "not `invalid`" and is never permission.
+
+- **Calls whose success outcome is `accept`** (`arm`, `normalize_entry`, `apply_policy`, `guard_frozen_scope`, `account_dispatch`, `extend_limit`, `classify_input`, `classify_question`, `make_handback`): proceed only when `may_proceed` is true.
+- **`evaluate_limits` gates continuation by its own outcomes:** `complete` means continue; `incomplete` means stop the affected scope and report the limit named by `reason`; `invalid` (for example a malformed `approval_time`) stops the run. Its `may_proceed` is always false, so read `outcome`.
+- **`parse_turn_end_marker`** returns `accept` only for a matching `WAKE`; `claim_requires_gv` and `protected_stop` are handled as step 4 says.
 
 ## Ledger fields this phase writes
 
@@ -44,15 +48,16 @@ After every write, run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state
 
 The Issue set and the mode are frozen at arming. Before acting on anything that would change either, call `guard_frozen_scope(scope, mode, fixed_issues)` with the frozen `Assignment` or `ArmedRun` as `scope`. On `invalid` (`managed_to_standalone`, `standalone_to_managed`, `mode_change`, `scope_growth`), refuse the change and keep the frozen scope. A request outside the frozen set becomes a handback (step 6); it never grows `fixed_issues` and never silently downgrades the mode.
 
-Each frozen Issue runs its own Phase 0 row, in the order recorded at arming, from Phase 2 onward (Phase 3.5 per risk tier, then Phase 4 and Phase 5).
+Each frozen Issue then follows its full normal Phase 0 row, in the order recorded at arming, including Phase 1.5 where that row has it, under the existing approved-plan and no-reask rules (the lead never re-asks a locked decision). A goal run skips no phase that an Issue's row requires: Phase 3.5 runs per risk tier, then Phase 4 and Phase 5.
 
 ## 3. Bounds (D3)
 
 Rebuild a `RunCounters` from `counters` (each `dispatch_request_ids` list back to a set) before each call, and write the counters back after it.
 
 1. **Every dispatch.** Before starting any agent for an Issue (worker, QA, reviewer, fix worker or substitute), call `account_dispatch(counters, issue, request_id)` with the backend's request or response id. A repeated `request_id` counts once. `request_id_conflict` is `invalid`: stop and report.
-2. **Every dispatch and step boundary.** Call `evaluate_limits(policy, counters, approval_time, now, dependencies)`. `dependencies` maps an Issue to the Issues it depends on.
+2. **Every dispatch and step boundary.** Call `evaluate_limits(policy, counters, approval_time, now, dependencies)`. `dependencies` maps an Issue to the Issues it depends on. This outcome, not `ok` or `may_proceed`, decides whether the next dispatch or step may start:
    - `complete`: continue.
+   - `invalid`: stop the run and repair the input it names; start nothing.
    - `incomplete`: a limit is reached, named by `reason` (`run_time_exceeded`, `spend_cap_exceeded`, `dispatch_cap_exceeded`). Follow D3. Finish or roll back the step in hand to a safe point. Start no new work and make no merges for the affected scope: the whole run, or for `dispatch_cap_exceeded` only the `incomplete_issues` (the `continue_issues` go on). Save the counters, and report the run or Issue as incomplete, naming the limit.
    - Unknown `spend` never stops a run. Run time and dispatches bound it instead, and the report says so (`spend_cap_enforceable` is false).
 3. **Extensions.** Only the owner extends a limit. Apply the owner's new value with `extend_limit(policy, field, new_value)`, write the returned policy, and leave `counters` untouched. A compaction, wake, restart or lead change never renews a limit or resets a counter.

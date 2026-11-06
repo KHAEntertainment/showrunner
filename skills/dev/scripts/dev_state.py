@@ -202,7 +202,9 @@ _GOAL_REASON_FIELDS = {
 }
 _GOAL_KEY_RE = re.compile(r'^(?:"([^"]+)"|([A-Za-z0-9_][A-Za-z0-9_.\-/#]*)):(?:\s+(.*))?$')
 _GOAL_INT_RE = re.compile(r"^-?[0-9]+$")
-_GOAL_FLOAT_RE = re.compile(r"^-?[0-9]+\.[0-9]+$")
+# Finite decimals and exponent forms (repr() writes 1e-06, 2.5e+30); inf/nan are
+# never numbers here.
+_GOAL_FLOAT_RE = re.compile(r"^-?(?:[0-9]+\.[0-9]+|[0-9]+(?:\.[0-9]+)?[eE][-+]?[0-9]+)$")
 
 
 class GoalRunError(Exception):
@@ -236,7 +238,10 @@ def _goal_scalar(raw: str, path: str, lineno: int):
     if _GOAL_INT_RE.match(raw):
         return int(raw)
     if _GOAL_FLOAT_RE.match(raw):
-        return float(raw)
+        number = float(raw)
+        if not math.isfinite(number):
+            raise GoalRunError(path, f"number is not finite (line {lineno})")
+        return number
     return raw
 
 
@@ -299,10 +304,12 @@ def parse_goal_run_block(text: str) -> dict:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if not line.startswith(" "):
-            break
+        # Tabs are refused before the boundary test: a tab-led line must never
+        # be mistaken for the next top-level key and silently end the block.
         if "\t" in line[: len(line) - len(line.lstrip())]:
             raise GoalRunError(GOAL_RUN_KEY, f"tab indentation on line {i + 2}")
+        if not line.startswith(" "):
+            break
         tokens.append((len(line) - len(line.lstrip(" ")), stripped, i + 2))
     if not tokens:
         raise GoalRunError(GOAL_RUN_KEY, "block is empty")
@@ -459,16 +466,17 @@ def validate_goal_run(block) -> None:
 
 
 def validate_goal_run_text(text: str, data: dict) -> None:
-    """Entry point from main(): a no-op unless ``goal_run`` is present and not
-    null, so ledgers without goal fields are untouched. The frontmatter is also
-    scanned for repeated top-level ``goal_run:`` lines, because the flat reader
-    keeps only the last one (a trailing ``goal_run: null`` must not hide a block)."""
+    """Entry point from main(): a no-op unless the frontmatter has a top-level
+    ``goal_run:`` header that is not explicitly null, so ledgers without goal
+    fields are untouched. The decision reads the raw header lines, not the flat
+    reader's ``data``: that reader drops ``goal_run: |`` (a literal block) and
+    keeps only the last of repeated keys, so neither may decide "null"."""
     end = text.find("\n---\n")
     frontmatter = text[4:end] if end != -1 else ""
-    occurrences = len(re.findall(rf"^{GOAL_RUN_KEY}:", frontmatter, re.M))
-    if occurrences == 0:
+    headers = re.findall(rf"^{GOAL_RUN_KEY}:(.*)$", frontmatter, re.M)
+    if not headers:
         return
-    if occurrences == 1 and data.get(GOAL_RUN_KEY) is None:
+    if len(headers) == 1 and headers[0].strip() in ("null", "~"):
         return
     try:
         validate_goal_run(parse_goal_run_block(text))
@@ -505,7 +513,7 @@ def main() -> int:
         fail(f"profile validation error: {e}")
     
     validate_goal_run_text(content, data)
-    
+
     print(f"OK: {path}")
     return 0
 

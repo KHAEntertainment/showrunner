@@ -54,8 +54,8 @@ class RouterRowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.paths = _router_paths()
 
-    def test_six_request_types(self) -> None:
-        self.assertEqual(len(self.paths), 6)
+    def test_seven_request_types(self) -> None:
+        self.assertEqual(len(self.paths), 7)
 
     def test_planning_types_route_through_phase_1_5(self) -> None:
         for request_type in (

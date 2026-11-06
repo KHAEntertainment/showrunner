@@ -66,6 +66,11 @@ class RouterRowTests(unittest.TestCase):
         _, criteria, path = cells(goal_rows[0])
         self.assertTrue(path.startswith("`phases/goal.md`"), path)
         self.assertIn("3.5 (per risk tier) → 4 → 5", path)
+        # The tier rule (#107) holds for the new row: exactly one 3.5 mention.
+        self.assertEqual(path.count("3.5 (per risk tier)"), 1)
+        self.assertEqual(path.count("3.5"), 1)
+        # Not a Phase 1.5 bypass: the row defers to each Issue's own row.
+        self.assertIn("its own row", path)
         self.assertIn("approved", criteria.lower())
         self.assertIn("OWNER/REPO#N", criteria)
 
@@ -150,6 +155,20 @@ class GoalPhaseApiTests(unittest.TestCase):
         self.assertNotIn("goal_authority", self.text)
         self.assertNotIn("goal_recovery", self.text)
         self.assertNotIn("TBD", self.text)
+
+    def test_continuation_is_gated_by_outcome_not_ok(self):
+        """Fix batch 1 A1: may_proceed only for accept-returning calls; the
+        bounds decision gates continuation by evaluate_limits' outcome."""
+        self.assertNotIn("Proceed on a step only when", self.text)
+        self.assertIn("**Calls whose success outcome is `accept`**", self.text)
+        self.assertIn("`complete` means continue; `incomplete` means stop", self.text)
+        self.assertIn("This outcome, not `ok` or `may_proceed`, decides", self.text)
+
+    def test_issues_follow_their_full_row_including_phase_1_5(self):
+        """Fix batch 1 A2: no Phase 1.5 bypass."""
+        self.assertNotIn("from Phase 2 onward", self.text)
+        self.assertIn("including Phase 1.5 where that row has it", self.text)
+        self.assertIn("never re-asks a locked decision", self.text)
 
     def test_states_runtime_dependency_and_sole_writer(self):
         self.assertIn("scripts/goal_run.py", self.text)
