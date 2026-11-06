@@ -784,7 +784,7 @@ _GOAL_RECOVERY_KEYS = (
 _GOAL_OBLIGATIONS_KEYS = (
     "children", "owed_replies", "original_request", "responsible_party",
     "evidence", "consumed_allowances", "worker_count", "defect_episode",
-    "fix_batch_count", "owner_escalation",
+    "defect_episode_ref", "fix_batch_count", "owner_escalation",
 )
 _GOAL_OBLIGATION_STR_LISTS = ("children", "owed_replies", "evidence", "consumed_allowances")
 _GOAL_OBLIGATION_STRINGS = ("original_request", "responsible_party")
@@ -813,12 +813,14 @@ def _load_goal_recovery_module():
     return goal_recovery
 
 
-def obligations_to_record(obligations) -> dict:
+def obligations_to_record(obligations, defect_episodes=None) -> dict:
     """Write an ``Obligations`` snapshot as the ledger's ``obligations`` map.
 
-    ``defect_episode`` is written ``null``: the canonical episode id is a
-    ledger-only link the lead fills from the top-level ``defect_episodes``
-    record (the ``Obligations`` dataclass ordinal is not the id)."""
+    ``defect_episode`` (the 1-based ordinal of the canonical episode, 0 = none)
+    and ``fix_batch_count`` carry the dataclass ints unchanged (lossless).
+    ``defect_episode_ref`` is the ledger-only id of the episode at that ordinal,
+    filled from ``defect_episodes`` (``parse_defect_episodes``) when given and
+    in range, else ``null``; it has no dataclass field."""
     recovery = _load_goal_recovery_module()
     if not isinstance(obligations, recovery.Obligations):
         raise TypeError("obligations_to_record takes a goal_recovery.Obligations")
@@ -830,17 +832,24 @@ def obligations_to_record(obligations) -> dict:
         "evidence": list(obligations.evidence),
         "consumed_allowances": list(obligations.consumed_allowances),
         "worker_count": obligations.worker_count,
-        "defect_episode": None,
+        "defect_episode": obligations.defect_episode,
+        "defect_episode_ref": _episode_ref(obligations.defect_episode, defect_episodes),
         "fix_batch_count": obligations.fix_batch_count,
         "owner_escalation": obligations.owner_escalation,
     }
 
 
+def _episode_ref(ordinal, defect_episodes):
+    if _is_count(ordinal) and defect_episodes and 0 < ordinal <= len(defect_episodes):
+        return defect_episodes[ordinal - 1][0]
+    return None
+
+
 def obligations_from_record(record, defect_episodes=None):
-    """Rebuild an ``Obligations`` from a validated ``obligations`` map. The
-    canonical ``defect_episode`` id does not round-trip into the dataclass
-    ordinal (it is ledger-only), so the ordinal is left at its default 0."""
-    _validate_goal_obligations(record, defect_episodes or {})
+    """Rebuild an ``Obligations`` from a validated ``obligations`` map. The int
+    ``defect_episode`` and ``fix_batch_count`` round-trip unchanged; the
+    ledger-only ``defect_episode_ref`` is not a dataclass field."""
+    _validate_goal_obligations(record, defect_episodes or [])
     recovery = _load_goal_recovery_module()
     return recovery.Obligations(
         children=tuple(record["children"]),
@@ -850,7 +859,7 @@ def obligations_from_record(record, defect_episodes=None):
         evidence=tuple(record["evidence"]),
         consumed_allowances=tuple(record["consumed_allowances"]),
         worker_count=record["worker_count"],
-        defect_episode=0,
+        defect_episode=record["defect_episode"],
         fix_batch_count=record["fix_batch_count"],
         owner_escalation=record["owner_escalation"],
     )
@@ -873,32 +882,123 @@ def event_ledger_from_record(record):
     )
 
 
-def parse_defect_episodes(text: str) -> dict:
-    """Return ``{episode_id: fix_batches}`` from the top-level ``defect_episodes``
-    list, the sole counter authority for fix batches. A ledger without the block
-    yields ``{}``; a block whose episodes lack a ``fix_batches`` records them with
-    ``None``, which the obligations cross-check then rejects."""
+class DefectEpisode(tuple):
+    """One canonical ``defect_episodes`` entry: ``(id, fix_batches, bound, body)``.
+    ``body`` is the episode's raw field lines (diagnoses included), so the whole
+    canonical record compares equal or not. Index 0/1 are the id and counter."""
+
+    __slots__ = ()
+
+    def __new__(cls, episode_id, fix_batches, bound, body):
+        return super().__new__(cls, (episode_id, fix_batches, bound, tuple(body)))
+
+    id = property(lambda self: self[0])
+    fix_batches = property(lambda self: self[1])
+    bound = property(lambda self: self[2])
+    body = property(lambda self: self[3])
+
+
+_DEFECT_EPISODES_KEY = "defect_episodes"
+# Episode-level keys read as scalars; every other episode field is kept raw.
+_DEFECT_EPISODE_COUNT_KEYS = ("fix_batches", "bound")
+
+
+def parse_defect_episodes(text: str) -> list:
+    """Return the ordered ``DefectEpisode`` list of the top-level
+    ``defect_episodes`` block, the sole counter authority for fix batches. An
+    episode's 1-based ordinal is its list position.
+
+    The block is read structurally, never by searching for a key anywhere: each
+    episode opens with a two-space ``- id: <scalar>`` item, and its fields are read
+    only at the four-space field indentation, so a ``fix_batches:`` line inside a
+    deeper value (a diagnosis ``what_failed: |`` narrative) is never the counter.
+    Unsupported or ambiguous shapes fail closed as ``defect_episodes: <reason>``: a
+    repeated header, a flow or scalar header value, tab or odd indentation, an item
+    that does not open with ``id``, a repeated episode field or id, and an
+    ``id``/``fix_batches``/``bound`` that is not a plain scalar of the right type.
+    A ledger with no block, ``defect_episodes: []`` or ``null`` yields ``[]``."""
+    key = _DEFECT_EPISODES_KEY
     end = text.find("\n---\n")
-    frontmatter = text[4:end] if end != -1 else ""
-    episodes: dict = {}
-    current = None
-    in_block = False
-    for line in frontmatter.split("\n"):
-        if re.match(r"^defect_episodes:", line):
-            in_block = True
+    lines = text[4:end].split("\n") if end != -1 else []
+    starts = [i for i, line in enumerate(lines) if re.match(rf"^{key}:", line)]
+    if not starts:
+        return []
+    if len(starts) > 1:
+        raise GoalRunError(key, f"duplicate key on line {starts[1] + 2}")
+    header = lines[starts[0]][len(key) + 1:].strip()
+    if header in ("[]", "null", "~"):
+        return []
+    if header:
+        raise GoalRunError(key, f"must be a block list of episodes (line {starts[0] + 2})")
+
+    episodes: list = []
+    current = None  # [id, {field: value}, body lines]
+
+    def close():
+        if current is not None:
+            fields = current[1]
+            episodes.append(DefectEpisode(
+                current[0], fields.get("fix_batches"), fields.get("bound"), current[2]
+            ))
+
+    for i in range(starts[0] + 1, len(lines)):
+        line = lines[i]
+        lineno = i + 2
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip(" "))
+        if not stripped:
             continue
-        if in_block:
-            if line and not line.startswith(" ") and not line.startswith("\t"):
-                break
-            stripped = line.strip()
-            m = re.match(r"^-\s*id:\s*(.+)$", stripped)
-            if m:
-                current = m.group(1).strip().strip('"').strip("'")
-                episodes[current] = None
+        if "\t" in line[: len(line) - len(line.lstrip())]:
+            raise GoalRunError(key, f"tab indentation on line {lineno}")
+        if indent == 0:
+            if stripped.startswith("#"):
                 continue
-            m = re.match(r"^fix_batches:\s*(\d+)$", stripped)
-            if m and current is not None:
-                episodes[current] = int(m.group(1))
+            break
+        if indent > 4:
+            if current is None:
+                raise GoalRunError(key, f"unexpected indentation on line {lineno}")
+            current[2].append(line)
+            continue
+        if stripped.startswith("#"):
+            continue
+        if indent == 2:
+            match = re.match(r"^- id:\s+(.+)$", stripped)
+            if not match:
+                raise GoalRunError(key, f"each episode must open with '- id:' (line {lineno})")
+            episode_id = _goal_scalar(match.group(1).strip(), key, lineno)
+            if (
+                not isinstance(episode_id, str) or not episode_id.strip()
+                or episode_id[0] in "|>"
+            ):
+                raise GoalRunError(key, f"episode id must be a non-empty string (line {lineno})")
+            close()
+            current = [episode_id, {}, []]
+            continue
+        if indent != 4 or current is None:
+            raise GoalRunError(key, f"unexpected indentation on line {lineno}")
+        match = _GOAL_KEY_RE.match(stripped)
+        if not match:
+            raise GoalRunError(key, f"malformed episode field on line {lineno}")
+        field = match.group(1) if match.group(1) is not None else match.group(2)
+        if field == "id" or field in current[1]:
+            raise GoalRunError(key, f"duplicate {field} for episode {current[0]} (line {lineno})")
+        raw = (match.group(3) or "").strip()
+        if field in _DEFECT_EPISODE_COUNT_KEYS:
+            value = _goal_scalar(raw, key, lineno) if raw else None
+            if not _is_count(value):
+                raise GoalRunError(
+                    key, f"{field} for episode {current[0]} must be an integer >= 0 (line {lineno})"
+                )
+        else:
+            value = raw
+        current[1][field] = value
+        current[2].append(line)
+    close()
+    seen = set()
+    for episode in episodes:
+        if episode[0] in seen:
+            raise GoalRunError(key, f"duplicate episode id {episode[0]}")
+        seen.add(episode[0])
     return episodes
 
 
@@ -921,24 +1021,44 @@ def _validate_goal_obligations(value, defect_episodes) -> None:
             raise GoalRunError(f"{base}.{key}", "must be an integer >= 0")
     if not isinstance(value["owner_escalation"], bool):
         raise GoalRunError(f"{base}.owner_escalation", "must be true or false")
-    # The snapshot must link to the canonical defect-episode record, never keep a
-    # second counter. defect_episode names the episode id (or null); fix_batch_count
-    # must equal that episode's fix_batches (or 0 with no episode).
+    # The snapshot links to the canonical defect-episode record by ordinal and id,
+    # never keeps a second counter. defect_episode is the 1-based position of the
+    # episode in the append-only defect_episodes list (0 = none); defect_episode_ref
+    # is that episode's id; fix_batch_count must equal its fix_batches.
     defect_episode = value["defect_episode"]
+    ref = value["defect_episode_ref"]
     fix_batch_count = value["fix_batch_count"]
-    if defect_episode is None:
-        if not _is_count(fix_batch_count) or fix_batch_count != 0:
+    if not _is_count(defect_episode):
+        raise GoalRunError(f"{base}.defect_episode", "must be an integer >= 0 (0 = no episode)")
+    if ref is not None and (not isinstance(ref, str) or not ref.strip()):
+        raise GoalRunError(f"{base}.defect_episode_ref", "must be an episode id or null")
+    if not _is_count(fix_batch_count):
+        raise GoalRunError(f"{base}.fix_batch_count", "must be an integer >= 0")
+    if defect_episode == 0:
+        if ref is not None:
+            raise GoalRunError(f"{base}.defect_episode_ref", "must be null when defect_episode is 0")
+        if fix_batch_count != 0:
             raise GoalRunError(f"{base}.fix_batch_count", "must be 0 when no defect episode is named")
-    elif not isinstance(defect_episode, str) or not defect_episode.strip():
-        raise GoalRunError(f"{base}.defect_episode", "must be an episode id or null")
-    elif defect_episode not in defect_episodes:
+        return
+    if ref is None:
+        raise GoalRunError(f"{base}.defect_episode_ref", "must name the episode when defect_episode is non-zero")
+    if defect_episode > len(defect_episodes):
         raise GoalRunError(f"{base}.defect_episode", f"{defect_episode} is not a recorded defect episode")
-    else:
-        canonical = defect_episodes[defect_episode]
-        if not _is_count(fix_batch_count) or fix_batch_count != canonical:
-            raise GoalRunError(
-                f"{base}.fix_batch_count", f"must equal the episode's fix_batches ({canonical})"
-            )
+    episode = defect_episodes[defect_episode - 1]
+    episode_id, canonical = episode[0], episode[1]
+    if ref != episode_id:
+        raise GoalRunError(
+            f"{base}.defect_episode_ref",
+            f"{ref} does not match the episode at ordinal {defect_episode} ({episode_id})",
+        )
+    if canonical is None:
+        raise GoalRunError(
+            f"{base}.fix_batch_count", f"episode {episode_id} records no fix_batches"
+        )
+    if fix_batch_count != canonical:
+        raise GoalRunError(
+            f"{base}.fix_batch_count", f"must equal the episode's fix_batches ({canonical})"
+        )
 
 
 def _validate_goal_custody(value, recovery) -> None:
@@ -958,26 +1078,38 @@ def _validate_goal_custody(value, recovery) -> None:
     liveness = value["previous_lead_liveness"]
     if liveness is not None and liveness not in _GOAL_CUSTODY_LIVENESS:
         raise GoalRunError(f"{base}.previous_lead_liveness", "must be 'live', 'unknown', 'ended' or null")
-    result = recovery.classify_lineage(
-        value["prior_session_id"], value["current_session_id"], claim
-    )
-    if bool(result.may_proceed) != (outcome == "accept"):
-        raise GoalRunError(f"{base}.outcome", "does not match classify_lineage")
-    if not result.may_proceed and value["reason"] != result.reason:
-        raise GoalRunError(f"{base}.reason", "does not match classify_lineage")
-    if outcome == "accept" and _nonempty(value["reason"]):
-        raise GoalRunError(f"{base}.reason", "must be null or empty when outcome is accept")
-    # Fail closed on a lead change: custody may only be accepted when the previous
-    # lead is verified ended (its live state read from `agent list`). A same-session
-    # resume needs no liveness; a takeover with a live, unknown or absent liveness
-    # blocks.
     prior = value["prior_session_id"]
     current = value["current_session_id"]
-    is_takeover = prior is not None and prior != current
-    if is_takeover and outcome == "accept" and liveness != "ended":
-        raise GoalRunError(
-            f"{base}.previous_lead_liveness", "a takeover needs the previous lead verified ended"
-        )
+    reason = value["reason"]
+    # Custody is accepted only on (i) a same-session resume: both session ids
+    # nonempty and equal, no claim; or (ii) a takeover: both nonempty and
+    # distinct, an explicit valid claim and previous_lead_liveness ended.
+    # custody_unknown and a bare new-session lineage are never accepted
+    # transfers; classify_lineage's may_proceed alone is not relied on.
+    if outcome == "accept":
+        if not _nonempty(prior):
+            raise GoalRunError(f"{base}.prior_session_id", "accept needs nonempty prior and current session ids")
+        if not _nonempty(current):
+            raise GoalRunError(f"{base}.current_session_id", "accept needs nonempty prior and current session ids")
+        if prior == current:
+            if claim is not None:
+                raise GoalRunError(f"{base}.claim", "a same-session resume cannot carry a custody claim")
+        else:
+            if claim not in _GOAL_CUSTODY_CLAIMS:
+                raise GoalRunError(f"{base}.claim", "a takeover needs an explicit custody claim")
+            if liveness != "ended":
+                raise GoalRunError(
+                    f"{base}.previous_lead_liveness", "a takeover needs the previous lead verified ended"
+                )
+        if _nonempty(reason):
+            raise GoalRunError(f"{base}.reason", "must be null or empty when outcome is accept")
+        return
+    # outcome invalid: a non-accepted state (custody_unknown, a bare new-session
+    # lineage, an unverified takeover) is recordable; a lineage classify_lineage
+    # itself refuses must carry its reason.
+    result = recovery.classify_lineage(prior, current, claim)
+    if not result.may_proceed and reason != result.reason:
+        raise GoalRunError(f"{base}.reason", "does not match classify_lineage")
 
 
 def _validate_goal_event_ledger(value) -> None:
@@ -1123,7 +1255,7 @@ def validate_goal_run(block, defect_episodes=None) -> None:
 
     _validate_goal_counters(block.get("counters"), block["fixed_issues"], goal_run)
     _validate_goal_authority_records(block, goal_run, applied.value)
-    _validate_goal_recovery_records(block, goal_run, defect_episodes or {})
+    _validate_goal_recovery_records(block, goal_run, defect_episodes or [])
 
 
 def validate_goal_run_text(text: str, data: dict) -> None:

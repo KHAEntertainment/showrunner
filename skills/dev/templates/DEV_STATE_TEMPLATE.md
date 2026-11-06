@@ -767,8 +767,8 @@ first.
 
 | Field | Meaning |
 |---|---|
-| `obligations` | The `Obligations` snapshot recovery must preserve unchanged: `children`, `owed_replies` (restated first), `original_request`, `responsible_party`, `evidence`, `consumed_allowances`, `worker_count`, `defect_episode`, `fix_batch_count`, `owner_escalation`. A duplicate event or handoff leaves it equal. `defect_episode` names the canonical top-level `defect_episodes` entry (its `id`) or is `null`; `fix_batch_count` must equal that episode's `fix_batches` (or `0` when `defect_episode` is `null`). The snapshot keeps no second counter authority. |
-| `custody` | The `classify_lineage` claim: `prior_session_id`, `current_session_id`, `claim` (`successor`, `takeover`, or `null`), `outcome` (`accept` or `invalid`), `reason`, and the ledger-only `previous_lead_liveness` (`live`, `unknown`, `ended`, or `null`). On a takeover (prior session differs), an `accept` outcome validates only when `previous_lead_liveness` is `ended`; a live or unknown previous lead blocks it. |
+| `obligations` | The `Obligations` snapshot recovery must preserve unchanged: `children`, `owed_replies` (restated first), `original_request`, `responsible_party`, `evidence`, `consumed_allowances`, `worker_count`, `defect_episode`, `fix_batch_count`, `owner_escalation`. A duplicate event or handoff leaves it equal. `defect_episode` is the 1-based ordinal of the canonical top-level `defect_episodes` entry (0 = no episode); `defect_episode_ref` is that episode's `id` (null when the ordinal is 0); `fix_batch_count` must equal its `fix_batches` (0 with no episode). The snapshot keeps no second counter authority. `defect_episodes` is read structurally: each episode opens with `- id:`, and `fix_batches`/`bound` are read only at the episode's field indentation, never from a diagnosis narrative; a repeated field or id, or an unsupported shape, fails as `defect_episodes: <reason>`. |
+| `custody` | The `classify_lineage` claim: `prior_session_id`, `current_session_id`, `claim` (`successor`, `takeover`, or `null`), `outcome` (`accept` or `invalid`), `reason`, and the ledger-only `previous_lead_liveness` (`live`, `unknown`, `ended`, or `null`). `accept` validates only on a same-session resume (both ids nonempty and equal) or a verified takeover (both nonempty and distinct, an explicit claim, and `previous_lead_liveness: ended`); a live or unknown previous lead blocks it. |
 | `event_ledger` | The `EventLedger`: `seen` (counted event identities, unique) and `duplicates` (identity → re-delivery count). Counts the event once; a duplicate changes no counter. |
 | `recovery_receipts` | Receipt id → a `recovery-receipt-v1` record (the `checkpoint-reference-v1` fields plus `event_accounting.result` and `admission_outcome`), checked by `validate_sc9_record`. |
 | `unknown_effects` | Effect id → `state` (`unknown` or `resolved`), `blocked` (the dependents it blocks), `evidence` (required to mark an effect resolved; a resolved effect cannot block dependents). |
@@ -777,7 +777,9 @@ Malformed recovery records fail as `goal_run.<field>: <reason>`, for example
 `goal_run.event_ledger.seen: an event identity must not be counted twice`,
 `goal_run.obligations.owed_replies: must be a list of non-empty strings`,
 `goal_run.obligations.fix_batch_count: must equal the episode's fix_batches (2)`,
-`goal_run.obligations.defect_episode: ep-9 is not a recorded defect episode`, or
+`goal_run.obligations.defect_episode_ref: ep-9 does not match the episode at ordinal 1 (ep-1)`,
+`goal_run.obligations.defect_episode: 3 is not a recorded defect episode`,
+`defect_episodes: duplicate fix_batches for episode ep-1 (line 7)`, or
 `goal_run.custody.previous_lead_liveness: a takeover needs the previous lead verified ended`.
 
 ```yaml
@@ -886,7 +888,8 @@ goal_run:
     consumed_allowances:
       - "fix-batch-1"
     worker_count: 1
-    defect_episode: null
+    defect_episode: 0
+    defect_episode_ref: null
     fix_batch_count: 0
     owner_escalation: false
   custody:
