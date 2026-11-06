@@ -750,9 +750,10 @@ exactly as before. Its shape is closed:
 One count per completed context-reset transition: a compaction counts once; a
 harness, model or provider change counts once only when it resets context; a
 change that preserves context counts zero; uncertain evidence stays `unknown`,
-never `0`. Raise the count only when the event accounting result is
-`counted_once`, so a duplicate notice of one compaction adds no count. When
-`measured` is `false`, `count` must be `unknown`: `0` fails as
+never `0`. Increment the count only when `account_event` returns `counted_once`
+and `counted: true`. A duplicate notice of one compaction also returns
+`counted_once`, but with `counted: false` and `duplicate: true`, so it adds
+nothing. When `measured` is `false`, `count` must be `unknown`: `0` fails as
 `goal_run.context_resets.count: unmeasured context resets must be unknown,
 never 0` and any other number fails as `goal_run.context_resets.count:
 unmeasured context resets must be unknown, never a number`. When `measured` is

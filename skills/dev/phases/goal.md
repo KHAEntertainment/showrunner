@@ -103,7 +103,7 @@ Merges stay protected. The only exception is a D2 bounded grant: the lead fills 
 
 This section states the owner's settled D7.1 (SDP l.518–533) as procedure. It enforces nothing by itself and grants no authority.
 
-**Counting rule.** One count per completed context-reset transition. A compaction counts once. A harness, model or provider change counts once only when it resets context; its summary or restart notice adds nothing. A change that preserves context counts zero. Uncertain evidence stays `unknown`, never 0. A duplicate notice of one compaction adds no count: raise the count only when the event accounting result is `counted_once`.
+**Counting rule.** One count per completed context-reset transition. A compaction counts once. A harness, model or provider change counts once only when it resets context; its summary or restart notice adds nothing. A change that preserves context counts zero. Uncertain evidence stays `unknown`, never 0. Increment `context_resets.count` only when `account_event` returns `counted_once` and `counted: true`. A duplicate notice of one compaction also returns `counted_once`, but with `counted: false` and `duplicate: true`, so it adds nothing.
 
 **Managed mode.** The run follows Foreman's orchestrator clock: prepare, retire at a clean point, hard stop. Foreman owns those values; Dev does not copy or override them. Dev records its own reset count in the ledger under `context_resets`, where Foreman reads it. The ledger holds no Foreman clock value.
 

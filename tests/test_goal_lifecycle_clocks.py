@@ -77,6 +77,18 @@ def _template_goal_run_section() -> str:
     )
 
 
+def _template_lifecycle_counters_section() -> str:
+    """The Lifecycle clock counters subsection of the goal-run schema."""
+    section = _template_goal_run_section()
+    match = re.search(
+        r"\*\*Lifecycle clock counters \(Issue #196, D7\.1\)\.\*\*\s*(.*?)(?=\n\n\*\*|\Z)",
+        section,
+        re.S,
+    )
+    assert match is not None, "the lifecycle clock counters subsection is missing"
+    return match.group(1)
+
+
 # The five L6 recovery records, written as literal ledger records. They are
 # literal on purpose: dev_state's own loader and another module can end up
 # holding different goal_recovery module objects (tests/test_goal_recovery.py
@@ -391,6 +403,17 @@ class TestDuplicateCompactionAddsNoCount(unittest.TestCase):
         code, stdout, stderr = run_validator(ledger_with(render_goal_run(block)))
         self.assertEqual(code, 0, stderr)
         self.assertIn("OK:", stdout)
+
+    def test_both_texts_guard_the_count_on_counted_true(self):
+        """A duplicate notice also returns `counted_once`, so both texts must
+        name `counted: true` as part of the guard, not the result alone."""
+        for label, text in (
+            ("goal.md", _goal_lifecycle_section()),
+            ("template", _template_lifecycle_counters_section()),
+        ):
+            with self.subTest(text=label):
+                self.assertIn("counted_once", text)
+                self.assertIn("counted: true", text)
 
 
 class TestForemanClocksDistinctFrom112(unittest.TestCase):
