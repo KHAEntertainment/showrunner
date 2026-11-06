@@ -764,5 +764,58 @@ class ListedSkillsTests(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
 
 
+GOAL_RUN_REQUIRED = (
+    "phases/goal.md",
+    "scripts/goal_run.py",
+    "scripts/goal_authority.py",
+    "scripts/goal_recovery.py",
+)
+
+
+class GoalRunRequiredTests(unittest.TestCase):
+    """Issue #193 lane L2 (AC4): the goal-run files are REQUIRED, so the
+    validator passes with them and fails when any one goes missing."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.staged = Path(tmp.name) / "skills" / "dev"
+        shutil.copytree(SKILL, self.staged)
+
+    def run_validator(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(VALIDATOR), "--skill-dir", str(self.staged)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_required_set_names_the_four_goal_files(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("validate_skill_l2", VALIDATOR)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for relative in GOAL_RUN_REQUIRED:
+            self.assertIn(relative, module.REQUIRED)
+
+    def test_passes_with_all_goal_files(self) -> None:
+        completed = self.run_validator()
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
+    def test_fails_when_any_goal_file_is_missing(self) -> None:
+        for relative in GOAL_RUN_REQUIRED:
+            with self.subTest(relative=relative):
+                target = self.staged / relative
+                saved = target.read_bytes()
+                target.unlink()
+                try:
+                    completed = self.run_validator()
+                    self.assertEqual(1, completed.returncode)
+                    self.assertIn(f"missing required file: {relative}", completed.stderr)
+                finally:
+                    target.write_bytes(saved)
+
+
 if __name__ == "__main__":
     unittest.main()
