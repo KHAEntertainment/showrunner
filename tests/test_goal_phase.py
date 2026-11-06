@@ -28,8 +28,10 @@ TEMPLATE = SKILL_DIR / "templates" / "DEV_STATE_TEMPLATE.md"
 sys.path.insert(0, str(SKILL_DIR / "scripts"))
 import goal_run  # noqa: E402
 import goal_authority  # noqa: E402
+import goal_recovery  # noqa: E402
 
 GOAL_AUTHORITY = SKILL_DIR / "scripts" / "goal_authority.py"
+GOAL_RECOVERY = SKILL_DIR / "scripts" / "goal_recovery.py"
 
 ROUTER_HEADER = "| Type | Criteria | Path |"
 PRE_L2_ROUTER_TYPES = [
@@ -122,6 +124,24 @@ def goal_authority_vocabulary() -> set[str]:
     return names
 
 
+def goal_recovery_vocabulary() -> set[str]:
+    """Names goal_recovery.py itself defines (#196 L6), built the same way as
+    goal_run_vocabulary: public API, public dataclass fields, public function
+    parameters, and its string literals and double-backticked tokens (outcome
+    constants, reason codes)."""
+    names = set(goal_recovery.__all__)
+    for public in goal_recovery.__all__:
+        obj = getattr(goal_recovery, public)
+        if dataclasses.is_dataclass(obj):
+            names |= {f.name for f in dataclasses.fields(obj)}
+        elif inspect.isfunction(obj):
+            names |= set(inspect.signature(obj).parameters)
+    source = GOAL_RECOVERY.read_text(encoding="utf-8")
+    names |= set(re.findall(r"""["']([a-z_][a-z0-9_]*)["']""", source))
+    names |= set(re.findall(r"``([a-z_][a-z0-9_]*)``", source))
+    return names
+
+
 def ledger_goal_fields() -> set[str]:
     """Keys of the documented goal_run worked example in the template."""
     block = re.search(
@@ -149,16 +169,22 @@ class GoalPhaseApiTests(unittest.TestCase):
             calls |= set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\(", token))
         self.assertTrue(calls, "goal.md names no calls")
         methods = {"to_dict", "dispatch_count"}
-        public = set(goal_run.__all__) | set(goal_authority.__all__)
+        public = set(goal_run.__all__) | set(goal_authority.__all__) | set(goal_recovery.__all__)
         unknown = sorted(c for c in calls if c not in public and c not in methods)
         self.assertEqual(unknown, [])
         for name in calls - methods:
-            module = goal_run if name in goal_run.__all__ else goal_authority
+            module = goal_run if name in goal_run.__all__ else (
+                goal_authority if name in goal_authority.__all__ else goal_recovery
+            )
             self.assertTrue(callable(getattr(module, name)), name)
 
     def test_every_named_identifier_exists_in_goal_run_or_the_ledger(self):
         allowed = (
-            goal_run_vocabulary() | goal_authority_vocabulary() | ledger_goal_fields() | DEV_NAMES
+            goal_run_vocabulary()
+            | goal_authority_vocabulary()
+            | goal_recovery_vocabulary()
+            | ledger_goal_fields()
+            | DEV_NAMES
         )
         identifiers = {t for t in self.tokens if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t)}
         # All-caps tokens are marker words and UTC suffixes (`WAKE`, `Z`): they
@@ -180,12 +206,15 @@ class GoalPhaseApiTests(unittest.TestCase):
             self.assertIn(f"`{outcome}`", self.text)
         self.assertNotIn("`unavailable`", self.text)
 
-    def test_no_authority_or_recovery_module_call(self):
-        """goal_recovery stays forbidden (L6 owns recovery). Since #194 L4,
-        goal_authority appears only as its script path; its calls are checked
-        against its public API by the two tests above."""
-        self.assertNotIn("goal_recovery", self.text)
+    def test_goal_md_names_only_real_goal_recovery_api(self):
+        """L6: goal.md names only goal_recovery public functions and outcomes
+        that exist. goal_authority still appears only as its script path."""
         self.assertNotIn("TBD", self.text)
+        public = set(goal_recovery.__all__)
+        used = {t for t in self.tokens if t in public}
+        self.assertTrue(used, "goal.md names no goal_recovery public API")
+        for name in used:
+            self.assertTrue(callable(getattr(goal_recovery, name)), name)
         mentions = re.findall(r"\S*goal_authority\S*", self.text)
         self.assertTrue(mentions)
         for mention in mentions:

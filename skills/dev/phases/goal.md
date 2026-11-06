@@ -103,5 +103,18 @@ Merges stay protected. The only exception is a D2 bounded grant: the lead fills 
 
 A goal run grants no release, credential or other Tier C authority, and no merge authority beyond a D2 bounded grant checked by `decide_merge` (step 7). Delegation never renews an exhausted budget. For the following, existing Dev gates govern:
 
-- **Recovery and resume** after a restart, compaction or lead change: the existing recovery procedure from `.agent/dev-state.md` in `SKILL.md`. Counters persist and are never renewed.
+- **Recovery and resume** after a restart, compaction or lead change: see **Recovery and resume** below.
 - **GV:** completion stays a claim until the existing gates verify every frozen Issue.
+
+## Recovery and resume
+
+On a restart, compaction or lead change in a goal run, before any action:
+
+1. **Restate owed replies first.** List every owed reply from the ledger's `obligations.owed_replies` before admitting recovery or acting on anything else.
+2. Build a `RecoveryInput` from the ledger and call `admit_recovery` once. It runs one ordered evaluator: it recovers the checkpoint, classifies the handoff note with `classify_note` (a stale note never overrides a pause), counts the event once with `account_event`, and preserves the obligations with `preserve_obligations` (a duplicate event or lead handoff keeps the original request, responsible party, evidence and consumed allowances unchanged). A failure names its step and no later step runs. Accounting, note classification and obligation preservation are internal stages of that one call — never re-account the same delivery.
+3. Persist what `admit_recovery` returned: the recovery receipt (into `recovery_receipts`) and the updated `EventLedger` it returned (into `event_ledger`). Nothing is renewed: counters persist and grants follow the existing `carry_grant` step (step 7).
+4. `reconcile_unknown_effect` inspects the destination before any repeat; an unresolved outcome stays `unknown` and blocks its dependents, and is never replayed.
+5. `reuse_evidence` with `pending_ci=True` never treats pending CI as a local-fallback trigger.
+6. Write the recovery records (`obligations`, `custody`, `event_ledger`, `recovery_receipts`, `unknown_effects`) back to the ledger and re-run `${CLAUDE_SKILL_DIR}/scripts/dev_state.py --validate`.
+
+Two automatic fix batches, then lead diagnosis, remain the bound; recovery grants no extra retry allowance and never resets the defect episode.

@@ -17,6 +17,7 @@ import math
 import re
 import sys
 from pathlib import Path
+from types import MappingProxyType
 
 
 VALID_RUN_STATUSES = frozenset({"active", "blocked", "recovering", "complete", "standby"})
@@ -191,6 +192,8 @@ _GOAL_RUN_STATE_KEYS = (
     "approval_time", "next_wake_at", "paused", "policy", "counters",
     # Issue #194 lane L4: optional grant and gate records (absent or null is valid).
     "grant", "merge_ledger", "gate_evidence", "delegated_records",
+    # Issue #196 lane L6: optional recovery records (absent or null is valid).
+    "obligations", "custody", "event_ledger", "recovery_receipts", "unknown_effects",
 )
 _GOAL_POLICY_KEYS = ("run_time_hours", "dispatch_cap_per_issue", "gv_retries", "spend_cap")
 _GOAL_COUNTER_KEYS = (
@@ -763,14 +766,462 @@ def merge_ledger_clear_halt(state: MergeLedgerState, triage_ref):
     return dataclasses.replace(result, value=MergeLedgerState(result.value, dict(state.halt_history), cleared))
 
 
-def validate_goal_run(block) -> None:
+# --- Goal-run recovery records (Issue #196, lane L6) -------------------------
+#
+# Optional and additive: each key may be absent or null, so a pre-L6 block (the
+# L2 16-key or L4 20-key block) validates unchanged. Shapes follow the merged
+# goal_recovery.py public records so they round-trip: `obligations` is an
+# `Obligations` snapshot (owed replies restated first), `event_ledger` an
+# `EventLedger` (counted event identities), `recovery_receipts` a map of
+# recovery-receipt-v1 records (checkpoint reference embedded), `custody` the
+# classify_lineage inputs and their Result outcome/reason, and `unknown_effects`
+# the unknown-effect outcomes with their blocked dependents. goal_recovery.py is
+# imported, never copied.
+
+_GOAL_RECOVERY_KEYS = (
+    "obligations", "custody", "event_ledger", "recovery_receipts", "unknown_effects",
+)
+_GOAL_OBLIGATIONS_KEYS = (
+    "children", "owed_replies", "original_request", "responsible_party",
+    "evidence", "consumed_allowances", "worker_count", "defect_episode",
+    "defect_episode_ref", "fix_batch_count", "owner_escalation",
+)
+_GOAL_OBLIGATION_STR_LISTS = ("children", "owed_replies", "evidence", "consumed_allowances")
+_GOAL_OBLIGATION_STRINGS = ("original_request", "responsible_party")
+_GOAL_OBLIGATION_COUNTS = ("worker_count",)
+_GOAL_CUSTODY_KEYS = (
+    "prior_session_id", "current_session_id", "claim", "outcome", "reason",
+    "previous_lead_liveness",
+)
+_GOAL_CUSTODY_CLAIMS = ("successor", "takeover")
+_GOAL_CUSTODY_OUTCOMES = ("accept", "invalid")
+_GOAL_CUSTODY_LIVENESS = ("live", "unknown", "ended")
+_GOAL_EVENT_LEDGER_KEYS = ("seen", "duplicates")
+_GOAL_UNKNOWN_EFFECT_KEYS = ("state", "blocked", "evidence")
+_GOAL_UNKNOWN_EFFECT_STATES = ("unknown", "resolved")
+
+
+def _load_goal_recovery_module():
+    """Import the merged goal_recovery.py from this script's own directory."""
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import goal_recovery  # noqa: PLC0415 - only recovery-bearing ledgers need it
+    except ImportError as exc:
+        raise GoalRunError(GOAL_RUN_KEY, f"goal_recovery.py is unavailable ({exc})") from exc
+    return goal_recovery
+
+
+def obligations_to_record(obligations, defect_episodes=None) -> dict:
+    """Write an ``Obligations`` snapshot as the ledger's ``obligations`` map.
+
+    ``defect_episode`` (the 1-based ordinal of the canonical episode, 0 = none)
+    and ``fix_batch_count`` carry the dataclass ints unchanged (lossless).
+    ``defect_episode_ref`` is the ledger-only id of the episode at that ordinal,
+    filled from ``defect_episodes`` (``parse_defect_episodes``) when given and
+    in range, else ``null``; it has no dataclass field."""
+    recovery = _load_goal_recovery_module()
+    if not isinstance(obligations, recovery.Obligations):
+        raise TypeError("obligations_to_record takes a goal_recovery.Obligations")
+    return {
+        "children": list(obligations.children),
+        "owed_replies": list(obligations.owed_replies),
+        "original_request": obligations.original_request,
+        "responsible_party": obligations.responsible_party,
+        "evidence": list(obligations.evidence),
+        "consumed_allowances": list(obligations.consumed_allowances),
+        "worker_count": obligations.worker_count,
+        "defect_episode": obligations.defect_episode,
+        "defect_episode_ref": _episode_ref(obligations.defect_episode, defect_episodes),
+        "fix_batch_count": obligations.fix_batch_count,
+        "owner_escalation": obligations.owner_escalation,
+    }
+
+
+def _episode_ref(ordinal, defect_episodes):
+    if _is_count(ordinal) and defect_episodes and 0 < ordinal <= len(defect_episodes):
+        return defect_episodes[ordinal - 1][0]
+    return None
+
+
+def obligations_from_record(record, defect_episodes=None):
+    """Rebuild an ``Obligations`` from a validated ``obligations`` map. The int
+    ``defect_episode`` and ``fix_batch_count`` round-trip unchanged; the
+    ledger-only ``defect_episode_ref`` is not a dataclass field."""
+    _validate_goal_obligations(record, defect_episodes or [])
+    recovery = _load_goal_recovery_module()
+    return recovery.Obligations(
+        children=tuple(record["children"]),
+        owed_replies=tuple(record["owed_replies"]),
+        original_request=record["original_request"],
+        responsible_party=record["responsible_party"],
+        evidence=tuple(record["evidence"]),
+        consumed_allowances=tuple(record["consumed_allowances"]),
+        worker_count=record["worker_count"],
+        defect_episode=record["defect_episode"],
+        fix_batch_count=record["fix_batch_count"],
+        owner_escalation=record["owner_escalation"],
+    )
+
+
+def event_ledger_to_record(ledger) -> dict:
+    """Write an ``EventLedger`` as the ledger's ``event_ledger`` map."""
+    recovery = _load_goal_recovery_module()
+    if not isinstance(ledger, recovery.EventLedger):
+        raise TypeError("event_ledger_to_record takes a goal_recovery.EventLedger")
+    return {"seen": list(ledger.seen), "duplicates": dict(ledger.duplicates)}
+
+
+def event_ledger_from_record(record):
+    """Rebuild an ``EventLedger`` from a validated ``event_ledger`` map."""
+    _validate_goal_event_ledger(record)
+    recovery = _load_goal_recovery_module()
+    return recovery.EventLedger(
+        seen=tuple(record["seen"]), duplicates=MappingProxyType(dict(record["duplicates"]))
+    )
+
+
+class DefectEpisode(tuple):
+    """One canonical ``defect_episodes`` entry: ``(id, fix_batches, bound, body)``.
+    ``body`` is the episode's raw field lines (diagnoses included), so the whole
+    canonical record compares equal or not. Index 0/1 are the id and counter."""
+
+    __slots__ = ()
+
+    def __new__(cls, episode_id, fix_batches, bound, body):
+        return super().__new__(cls, (episode_id, fix_batches, bound, tuple(body)))
+
+    id = property(lambda self: self[0])
+    fix_batches = property(lambda self: self[1])
+    bound = property(lambda self: self[2])
+    body = property(lambda self: self[3])
+
+
+_DEFECT_EPISODES_KEY = "defect_episodes"
+# Episode-level keys read as scalars; every other episode field is kept raw.
+_DEFECT_EPISODE_COUNT_KEYS = ("fix_batches", "bound")
+
+
+def parse_defect_episodes(text: str) -> list:
+    """Return the ordered ``DefectEpisode`` list of the top-level
+    ``defect_episodes`` block, the sole counter authority for fix batches. An
+    episode's 1-based ordinal is its list position.
+
+    The block is read structurally, never by searching for a key anywhere: each
+    episode is a two-space ``- <field>: <value>`` map item (fields in any order,
+    exactly one ``id``), and its fields are read only at the episode's field
+    indentation, so a ``fix_batches:`` line inside a deeper value (a diagnosis
+    ``what_failed: |`` narrative) is never the counter. Unsupported or ambiguous
+    shapes fail closed as ``defect_episodes: <reason>``: a repeated header, a flow
+    or scalar header value, tab or odd indentation, a bare ``-`` item, an episode
+    without an id, a repeated episode field or id, and an
+    ``id``/``fix_batches``/``bound`` that is not a plain scalar of the right type.
+    Only a ledger whose goal_run carries an ``obligations`` snapshot is read here.
+    A ledger with no block, ``defect_episodes: []`` or ``null`` yields ``[]``."""
+    key = _DEFECT_EPISODES_KEY
+    end = text.find("\n---\n")
+    lines = text[4:end].split("\n") if end != -1 else []
+    starts = [i for i, line in enumerate(lines) if re.match(rf"^{key}:", line)]
+    if not starts:
+        return []
+    if len(starts) > 1:
+        raise GoalRunError(key, f"duplicate key on line {starts[1] + 2}")
+    header = lines[starts[0]][len(key) + 1:].strip()
+    if header in ("[]", "null", "~"):
+        return []
+    if header:
+        raise GoalRunError(key, f"must be a block list of episodes (line {starts[0] + 2})")
+
+    episodes: list = []
+    current = None  # [id, {field: value}, body lines]
+
+    def label():
+        return current[0] if current[0] is not None else f"#{len(episodes) + 1}"
+
+    def close():
+        if current is not None:
+            if current[0] is None:
+                raise GoalRunError(key, f"episode {label()} has no id")
+            fields = current[1]
+            episodes.append(DefectEpisode(
+                current[0], fields.get("fix_batches"), fields.get("bound"), current[2]
+            ))
+
+    for i in range(starts[0] + 1, len(lines)):
+        line = lines[i]
+        lineno = i + 2
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip(" "))
+        if not stripped:
+            continue
+        if "\t" in line[: len(line) - len(line.lstrip())]:
+            raise GoalRunError(key, f"tab indentation on line {lineno}")
+        if indent == 0:
+            if stripped.startswith("#"):
+                continue
+            break
+        if indent > 4:
+            if current is None:
+                raise GoalRunError(key, f"unexpected indentation on line {lineno}")
+            current[2].append(line)
+            continue
+        if stripped.startswith("#"):
+            continue
+        if indent == 2:
+            # A list item opens an episode map; its first key may be any field.
+            if not stripped.startswith("- "):
+                raise GoalRunError(
+                    key, f"each episode must be a '- <field>: <value>' map item (line {lineno})"
+                )
+            close()
+            current = [None, {}, []]
+            stripped = stripped[2:].strip()
+            line = "    " + stripped
+        elif indent != 4 or current is None:
+            raise GoalRunError(key, f"unexpected indentation on line {lineno}")
+        match = _GOAL_KEY_RE.match(stripped)
+        if not match:
+            raise GoalRunError(key, f"malformed episode field on line {lineno}")
+        field = match.group(1) if match.group(1) is not None else match.group(2)
+        if field in current[1] or (field == "id" and current[0] is not None):
+            raise GoalRunError(key, f"duplicate {field} for episode {label()} (line {lineno})")
+        raw = (match.group(3) or "").strip()
+        if field == "id":
+            episode_id = _goal_scalar(raw, key, lineno) if raw else None
+            if (
+                not isinstance(episode_id, str) or not episode_id.strip()
+                or episode_id[0] in "|>"
+            ):
+                raise GoalRunError(key, f"episode id must be a non-empty string (line {lineno})")
+            current[0] = episode_id
+            continue
+        if field in _DEFECT_EPISODE_COUNT_KEYS:
+            value = _goal_scalar(raw, key, lineno) if raw else None
+            if not _is_count(value):
+                raise GoalRunError(
+                    key, f"{field} for episode {label()} must be an integer >= 0 (line {lineno})"
+                )
+        else:
+            value = raw
+        current[1][field] = value
+        current[2].append(line)
+    close()
+    seen = set()
+    for episode in episodes:
+        if episode[0] in seen:
+            raise GoalRunError(key, f"duplicate episode id {episode[0]}")
+        seen.add(episode[0])
+    return episodes
+
+
+def _validate_goal_obligations(value, defect_episodes) -> None:
+    base = f"{GOAL_RUN_KEY}.obligations"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    _closed_map(value, base, _GOAL_OBLIGATIONS_KEYS, "obligations")
+    for key in _GOAL_OBLIGATION_STR_LISTS:
+        items = value[key]
+        if not isinstance(items, list) or any(
+            not isinstance(i, str) or not i.strip() for i in items
+        ):
+            raise GoalRunError(f"{base}.{key}", "must be a list of non-empty strings")
+    for key in _GOAL_OBLIGATION_STRINGS:
+        if not isinstance(value[key], str):
+            raise GoalRunError(f"{base}.{key}", "must be a string")
+    for key in _GOAL_OBLIGATION_COUNTS:
+        if not _is_count(value[key]):
+            raise GoalRunError(f"{base}.{key}", "must be an integer >= 0")
+    if not isinstance(value["owner_escalation"], bool):
+        raise GoalRunError(f"{base}.owner_escalation", "must be true or false")
+    # The snapshot links to the canonical defect-episode record by ordinal and id,
+    # never keeps a second counter. defect_episode is the 1-based position of the
+    # episode in the append-only defect_episodes list (0 = none); defect_episode_ref
+    # is that episode's id; fix_batch_count must equal its fix_batches.
+    defect_episode = value["defect_episode"]
+    ref = value["defect_episode_ref"]
+    fix_batch_count = value["fix_batch_count"]
+    if not _is_count(defect_episode):
+        raise GoalRunError(f"{base}.defect_episode", "must be an integer >= 0 (0 = no episode)")
+    if ref is not None and (not isinstance(ref, str) or not ref.strip()):
+        raise GoalRunError(f"{base}.defect_episode_ref", "must be an episode id or null")
+    if not _is_count(fix_batch_count):
+        raise GoalRunError(f"{base}.fix_batch_count", "must be an integer >= 0")
+    if defect_episode == 0:
+        if ref is not None:
+            raise GoalRunError(f"{base}.defect_episode_ref", "must be null when defect_episode is 0")
+        if fix_batch_count != 0:
+            raise GoalRunError(f"{base}.fix_batch_count", "must be 0 when no defect episode is named")
+        return
+    if ref is None:
+        raise GoalRunError(f"{base}.defect_episode_ref", "must name the episode when defect_episode is non-zero")
+    if defect_episode > len(defect_episodes):
+        raise GoalRunError(f"{base}.defect_episode", f"{defect_episode} is not a recorded defect episode")
+    episode = defect_episodes[defect_episode - 1]
+    episode_id, canonical = episode[0], episode[1]
+    if ref != episode_id:
+        raise GoalRunError(
+            f"{base}.defect_episode_ref",
+            f"{ref} does not match the episode at ordinal {defect_episode} ({episode_id})",
+        )
+    if canonical is None:
+        raise GoalRunError(
+            f"{base}.fix_batch_count", f"episode {episode_id} records no fix_batches"
+        )
+    if fix_batch_count != canonical:
+        raise GoalRunError(
+            f"{base}.fix_batch_count", f"must equal the episode's fix_batches ({canonical})"
+        )
+
+
+def _validate_goal_custody(value, recovery) -> None:
+    base = f"{GOAL_RUN_KEY}.custody"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    _closed_map(value, base, _GOAL_CUSTODY_KEYS, "custody")
+    for key in ("prior_session_id", "current_session_id", "reason"):
+        if value[key] is not None and not isinstance(value[key], str):
+            raise GoalRunError(f"{base}.{key}", "must be a string or null")
+    claim = value["claim"]
+    if claim is not None and (not isinstance(claim, str) or claim not in _GOAL_CUSTODY_CLAIMS):
+        raise GoalRunError(f"{base}.claim", "must be 'successor', 'takeover' or null")
+    outcome = value["outcome"]
+    if outcome not in _GOAL_CUSTODY_OUTCOMES:
+        raise GoalRunError(f"{base}.outcome", "must be 'accept' or 'invalid'")
+    liveness = value["previous_lead_liveness"]
+    if liveness is not None and liveness not in _GOAL_CUSTODY_LIVENESS:
+        raise GoalRunError(f"{base}.previous_lead_liveness", "must be 'live', 'unknown', 'ended' or null")
+    prior = value["prior_session_id"]
+    current = value["current_session_id"]
+    reason = value["reason"]
+    # Custody is accepted only on (i) a same-session resume: both session ids
+    # nonempty and equal, no claim; or (ii) a takeover: both nonempty and
+    # distinct, an explicit valid claim and previous_lead_liveness ended.
+    # custody_unknown and a bare new-session lineage are never accepted
+    # transfers; classify_lineage's may_proceed alone is not relied on.
+    if outcome == "accept":
+        if not _nonempty(prior):
+            raise GoalRunError(f"{base}.prior_session_id", "accept needs nonempty prior and current session ids")
+        if not _nonempty(current):
+            raise GoalRunError(f"{base}.current_session_id", "accept needs nonempty prior and current session ids")
+        if prior == current:
+            if claim is not None:
+                raise GoalRunError(f"{base}.claim", "a same-session resume cannot carry a custody claim")
+        else:
+            if claim not in _GOAL_CUSTODY_CLAIMS:
+                raise GoalRunError(f"{base}.claim", "a takeover needs an explicit custody claim")
+            if liveness != "ended":
+                raise GoalRunError(
+                    f"{base}.previous_lead_liveness", "a takeover needs the previous lead verified ended"
+                )
+        if _nonempty(reason):
+            raise GoalRunError(f"{base}.reason", "must be null or empty when outcome is accept")
+        return
+    # outcome invalid: a non-accepted state (custody_unknown, a bare new-session
+    # lineage, an unverified takeover) is recordable; a lineage classify_lineage
+    # itself refuses must carry its reason.
+    result = recovery.classify_lineage(prior, current, claim)
+    if not result.may_proceed and reason != result.reason:
+        raise GoalRunError(f"{base}.reason", "does not match classify_lineage")
+
+
+def _validate_goal_event_ledger(value) -> None:
+    base = f"{GOAL_RUN_KEY}.event_ledger"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    _closed_map(value, base, _GOAL_EVENT_LEDGER_KEYS, "event ledger")
+    seen = value["seen"]
+    if not isinstance(seen, list) or any(not isinstance(i, str) or not i for i in seen):
+        raise GoalRunError(f"{base}.seen", "must be a list of non-empty event identities")
+    if len(set(seen)) != len(seen):
+        raise GoalRunError(f"{base}.seen", "an event identity must not be counted twice")
+    duplicates = value["duplicates"]
+    if not isinstance(duplicates, dict):
+        raise GoalRunError(f"{base}.duplicates", "must be a map")
+    for identity, count in duplicates.items():
+        if not isinstance(identity, str) or not identity:
+            raise GoalRunError(f"{base}.duplicates", "identity must be a non-empty string")
+        if not _is_count(count) or count == 0:
+            raise GoalRunError(
+                f"{base}.duplicates", f"{identity} duplicate count must be a positive integer"
+            )
+        if identity not in seen:
+            raise GoalRunError(f"{base}.duplicates", f"{identity} is not a counted event")
+
+
+def _validate_goal_recovery_receipts(value, recovery) -> None:
+    base = f"{GOAL_RUN_KEY}.recovery_receipts"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    for receipt_id, record in value.items():
+        if not isinstance(receipt_id, str) or not receipt_id:
+            raise GoalRunError(base, "receipt id must be a non-empty string")
+        check = recovery.validate_sc9_record("recovery-receipt-v1", record)
+        if not check.ok:
+            raise GoalRunError(f"{base}.{receipt_id}", check.reason)
+
+
+def _validate_goal_unknown_effects(value) -> None:
+    base = f"{GOAL_RUN_KEY}.unknown_effects"
+    if not isinstance(value, dict):
+        raise GoalRunError(base, "must be a map")
+    for effect_id, entry in value.items():
+        if not isinstance(effect_id, str) or not effect_id:
+            raise GoalRunError(base, "effect id must be a non-empty string")
+        if not isinstance(entry, dict):
+            raise GoalRunError(f"{base}.{effect_id}", "must be a map")
+        for key in entry:
+            if key not in _GOAL_UNKNOWN_EFFECT_KEYS:
+                raise GoalRunError(f"{base}.{effect_id}.{key}", "unknown effect field")
+        for key in _GOAL_UNKNOWN_EFFECT_KEYS:
+            if key not in entry:
+                raise GoalRunError(f"{base}.{effect_id}.{key}", "missing required field")
+        state = entry["state"]
+        if state not in _GOAL_UNKNOWN_EFFECT_STATES:
+            raise GoalRunError(f"{base}.{effect_id}.state", "must be 'unknown' or 'resolved'")
+        blocked = entry["blocked"]
+        if not isinstance(blocked, list) or any(not isinstance(b, str) or not b for b in blocked):
+            raise GoalRunError(f"{base}.{effect_id}.blocked", "must be a list of non-empty strings")
+        evidence = entry["evidence"]
+        if evidence is not None and not isinstance(evidence, str):
+            raise GoalRunError(f"{base}.{effect_id}.evidence", "must be a string or null")
+        if state == "resolved":
+            if not evidence or not evidence.strip():
+                raise GoalRunError(f"{base}.{effect_id}", "a resolved unknown effect needs evidence")
+            if blocked:
+                raise GoalRunError(
+                    f"{base}.{effect_id}.blocked", "a resolved effect cannot block dependents"
+                )
+
+
+def _validate_goal_recovery_records(block, goal_run, defect_episodes) -> None:
+    """Validate the L6 recovery keys. Absent or all-null means a pre-L6 block and
+    returns without importing goal_recovery.py."""
+    if all(block.get(key) is None for key in _GOAL_RECOVERY_KEYS):
+        return
+    recovery = _load_goal_recovery_module()
+    if block.get("obligations") is not None:
+        _validate_goal_obligations(block["obligations"], defect_episodes)
+    if block.get("custody") is not None:
+        _validate_goal_custody(block["custody"], recovery)
+    if block.get("event_ledger") is not None:
+        _validate_goal_event_ledger(block["event_ledger"])
+    if block.get("recovery_receipts") is not None:
+        _validate_goal_recovery_receipts(block["recovery_receipts"], recovery)
+    if block.get("unknown_effects") is not None:
+        _validate_goal_unknown_effects(block["unknown_effects"])
+
+
+def validate_goal_run(block, defect_episodes=None) -> None:
     """Validate a goal-run block (a plain dict). Raises ``GoalRunError``.
 
     The assignment fields are checked by goal_run.normalize_entry and must equal
     the normalized ``Assignment.to_dict()``; the policy by goal_run.apply_policy;
     the counters against goal_run.RunCounters' fields plus the two ledger-only
-    counters ``usage_measured`` and ``gv_retries_used``; and the optional grant
-    and gate records against goal_authority.py (Issue #194, lane L4)."""
+    counters ``usage_measured`` and ``gv_retries_used``; the optional grant and
+    gate records against goal_authority.py (Issue #194, lane L4); and the optional
+    recovery records against goal_recovery.py (Issue #196, lane L6), with the
+    obligations snapshot cross-checked against the canonical ``defect_episodes``."""
     if not isinstance(block, dict):
         raise GoalRunError(GOAL_RUN_KEY, "must be a map")
     for key in block:
@@ -817,6 +1268,7 @@ def validate_goal_run(block) -> None:
 
     _validate_goal_counters(block.get("counters"), block["fixed_issues"], goal_run)
     _validate_goal_authority_records(block, goal_run, applied.value)
+    _validate_goal_recovery_records(block, goal_run, defect_episodes or [])
 
 
 def validate_goal_run_text(text: str, data: dict) -> None:
@@ -833,7 +1285,15 @@ def validate_goal_run_text(text: str, data: dict) -> None:
     if len(headers) == 1 and headers[0].strip() in ("null", "~"):
         return
     try:
-        validate_goal_run(parse_goal_run_block(text))
+        block = parse_goal_run_block(text)
+        # The strict canonical-episode read serves only the obligations
+        # cross-check; without a snapshot the pre-L6 path is unchanged.
+        episodes = (
+            parse_defect_episodes(text)
+            if isinstance(block, dict) and block.get("obligations") is not None
+            else None
+        )
+        validate_goal_run(block, episodes)
     except GoalRunError as exc:
         fail(str(exc))
     except Exception as exc:  # fail closed, never a traceback

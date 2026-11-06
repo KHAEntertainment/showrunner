@@ -757,6 +757,31 @@ Malformed records fail as `goal_run.<field>: <reason>`, for example
 `goal_run.merge_ledger.slots_used: exceeds goal_run.grant.max_merges` or
 `goal_run.merge_ledger.consumed: 41 needs a merge SHA`.
 
+**Recovery records (Issue #196, SC-9).** Five optional keys hold the evidence
+`${CLAUDE_SKILL_DIR}/phases/goal.md` (Recovery and resume) records on a restart,
+compaction or lead change. Each may be absent or `null`; a block without them
+validates exactly as an L2 or L4 block. Their shapes are the merged
+`scripts/goal_recovery.py` records, so the lead rebuilds the objects from the
+ledger before each call and writes the results back. Owed replies are restated
+first.
+
+| Field | Meaning |
+|---|---|
+| `obligations` | The `Obligations` snapshot recovery must preserve unchanged: `children`, `owed_replies` (restated first), `original_request`, `responsible_party`, `evidence`, `consumed_allowances`, `worker_count`, `defect_episode`, `fix_batch_count`, `owner_escalation`. A duplicate event or handoff leaves it equal. `defect_episode` is the 1-based ordinal of the canonical top-level `defect_episodes` entry (0 = no episode); `defect_episode_ref` is that episode's `id` (null when the ordinal is 0); `fix_batch_count` must equal its `fix_batches` (0 with no episode). The snapshot keeps no second counter authority. When `obligations` is set, `defect_episodes` is read structurally: each episode is a `- <field>: <value>` map (fields in any order, exactly one `id`), and `fix_batches`/`bound` are read only at the episode's field indentation, never from a diagnosis narrative; a repeated field or id, a missing id, or an unsupported shape fails as `defect_episodes: <reason>`. Without `obligations` the episodes are not read by the goal-run check. |
+| `custody` | The `classify_lineage` claim: `prior_session_id`, `current_session_id`, `claim` (`successor`, `takeover`, or `null`), `outcome` (`accept` or `invalid`), `reason`, and the ledger-only `previous_lead_liveness` (`live`, `unknown`, `ended`, or `null`). `accept` validates only on a same-session resume (both ids nonempty and equal) or a verified takeover (both nonempty and distinct, an explicit claim, and `previous_lead_liveness: ended`); a live or unknown previous lead blocks it. |
+| `event_ledger` | The `EventLedger`: `seen` (counted event identities, unique) and `duplicates` (identity → re-delivery count). Counts the event once; a duplicate changes no counter. |
+| `recovery_receipts` | Receipt id → a `recovery-receipt-v1` record (the `checkpoint-reference-v1` fields plus `event_accounting.result` and `admission_outcome`), checked by `validate_sc9_record`. |
+| `unknown_effects` | Effect id → `state` (`unknown` or `resolved`), `blocked` (the dependents it blocks), `evidence` (required to mark an effect resolved; a resolved effect cannot block dependents). |
+
+Malformed recovery records fail as `goal_run.<field>: <reason>`, for example
+`goal_run.event_ledger.seen: an event identity must not be counted twice`,
+`goal_run.obligations.owed_replies: must be a list of non-empty strings`,
+`goal_run.obligations.fix_batch_count: must equal the episode's fix_batches (2)`,
+`goal_run.obligations.defect_episode_ref: ep-9 does not match the episode at ordinal 1 (ep-1)`,
+`goal_run.obligations.defect_episode: 3 is not a recorded defect episode`,
+`defect_episodes: duplicate fix_batches for episode ep-1 (line 7)`, or
+`goal_run.custody.previous_lead_liveness: a takeover needs the previous lead verified ended`.
+
 ```yaml
 goal_run:
   run: goal-2026-11-06-a
@@ -851,6 +876,55 @@ goal_run:
       reasoning: "Second opinion agreed the bound matches D3 defaults."
       evidence_pointer: "PR 41 review comment, head 3c4d5e6"
       reversal_path: "Raise the bound in a follow-up PR if the owner asks."
+  obligations:
+    children: []
+    owed_replies:
+      - "PR 41 review comments"
+      - "PR 42 QA questions"
+    original_request: "example-org/example-repo#11 approval"
+    responsible_party: lead-agent-id
+    evidence:
+      - "checkpoint note revision 4f3c2a1"
+    consumed_allowances:
+      - "fix-batch-1"
+    worker_count: 1
+    defect_episode: 0
+    defect_episode_ref: null
+    fix_batch_count: 0
+    owner_escalation: false
+  custody:
+    prior_session_id: lead-agent-id
+    current_session_id: lead-agent-id
+    claim: null
+    outcome: accept
+    reason: null
+    previous_lead_liveness: null
+  event_ledger:
+    seen:
+      - compaction-event-1
+    duplicates: {}
+  recovery_receipts:
+    compaction-event-1:
+      run: goal-2026-11-06-a
+      session: lead-agent-id
+      event: compaction-event-1
+      adapter: claude
+      version: checkpoint-reference-v1
+      note_revision: 4f3c2a1
+      freshness: "2026-11-06T12:00:00Z"
+      authoritative_refs:
+        - docs/plans/goal.md@4f3c2a1
+      coverage: top_level
+      degradation: null
+      event_accounting:
+        result: counted_once
+      admission_outcome: restored_then_current_state_check
+  unknown_effects:
+    pr42-merge:
+      state: unknown
+      blocked:
+        - pr43-release
+      evidence: null
 ```
 
 ## Recovery entries
