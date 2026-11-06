@@ -1,0 +1,8 @@
+{
+  "description": "Project-policy family map for the SC-4 contract fixtures, keyed by harness and model. The module never infers a family from a model id; tests pass this map so each SC-4 fixture evaluates to its expected_outcome.",
+  "entries": [
+    {"harness": "synthetic-harness-a", "model": "synthetic-family-a:synthetic-model-a", "family": "synthetic-family-a"},
+    {"harness": "synthetic-harness-b", "model": "synthetic-family-b:synthetic-model-b", "family": "synthetic-family-b"},
+    {"harness": "synthetic-harness-b", "model": "synthetic-family-b:synthetic-model-b-alt", "family": "synthetic-family-b"}
+  ]
+}

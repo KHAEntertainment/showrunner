@@ -1,0 +1,22 @@
+{
+  "description": "Stored context of an acknowledged Begin, matching the SC-2 contract fixtures' bindings (synthetic-grant-005).",
+  "acknowledged": {
+    "policy_ref": "synthetic-policy",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "actor": "synthetic-agent-005",
+    "run": "synthetic-run-005",
+    "operation": "merge",
+    "target": "OWNER/synthetic-repo",
+    "head": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "begin": {
+      "grant_id": "synthetic-grant-005",
+      "grant_kind": "bounded",
+      "grant_holder": "synthetic-agent-005",
+      "grant_epoch": 1,
+      "grant_state": "in_progress",
+      "grant_start": "2099-01-01T00:00:00Z",
+      "grant_expiry": "2099-01-02T00:00:00Z"
+    },
+    "result": "Begin"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "description": "SC-4 conformance-v1 record for one PR: QA passed at the head, independent review by a different family with explicit family values.",
+  "record": {
+    "workflow": "synthetic-workflow",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "run": "synthetic-run-194",
+    "lane": "synthetic-lane-194",
+    "head": "sha256:00000000000000000000000000000000000000000000000000000000000000a1",
+    "gate_applicability": "qa_required",
+    "evidence": [
+      {"gate": "qa", "state": "required", "evaluator": "synthetic-qa-1", "report_ref": "synthetic-qa-report-1",
+       "head": "sha256:00000000000000000000000000000000000000000000000000000000000000a1"},
+      {"gate": "review", "state": "required", "evaluator": "synthetic-reviewer-1", "report_ref": "synthetic-review-report-1",
+       "head": "sha256:00000000000000000000000000000000000000000000000000000000000000a1",
+       "evaluator_identity": {"agent_id": "synthetic-agent-r1", "harness": "synthetic-harness-b",
+                              "model": "synthetic-model-b", "family": "family-b", "route_source": "different_family"}},
+      {"gate": "post_merge", "state": "valid-skip", "reason": "no merge yet"},
+      {"gate": "lane_upkeep", "state": "valid-skip", "reason": "no outstanding lane obligation"}
+    ],
+    "marks": [
+      {"foreman_mark": "workflow phase reported", "dev_applicability": "recorded", "state": "required"},
+      {"foreman_mark": "acceptance lane", "dev_applicability": "current-head QA", "state": "required"},
+      {"foreman_mark": "independent review", "dev_applicability": "independent review", "state": "required"},
+      {"foreman_mark": "post-merge record for every merge", "dev_applicability": "post-merge record", "state": "valid-skip"},
+      {"foreman_mark": "seat receipts current", "dev_applicability": "seat identity", "state": "required"},
+      {"foreman_mark": "lane upkeep", "dev_applicability": "lane obligations", "state": "valid-skip"}
+    ],
+    "evaluator": "synthetic-lead-1",
+    "implementer_identity": {"agent_id": "synthetic-agent-i1", "harness": "synthetic-harness-a",
+                             "model": "synthetic-model-a", "family": "family-a"},
+    "report_ref": "synthetic-conformance-report-1"
+  }
+}

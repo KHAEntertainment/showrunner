@@ -1,0 +1,19 @@
+{
+  "description": "A complete D2 bounded per-run grant (SDP l.256-260). Synthetic values only.",
+  "grant": {
+    "run_id": "synthetic-run-194",
+    "host": "github.com",
+    "repository": "OWNER/synthetic-repo",
+    "base": "main",
+    "eligible_issues": ["OWNER/synthetic-repo#1", "OWNER/synthetic-repo#2"],
+    "max_merges": 3,
+    "expires_at": "2099-01-02T00:00:00Z",
+    "authorized_by": {
+      "who": "synthetic-owner",
+      "at": "2099-01-01T00:00:00Z",
+      "instruction": "approve the goal with the bounded merge grant shown"
+    },
+    "excluded_actions": ["external-review bypass", "force-push", "tag push", "release"],
+    "merge_method": "squash"
+  }
+}
