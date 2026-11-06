@@ -32,7 +32,8 @@ The lead is the sole writer of `.agent/dev-state.md`. This phase writes only the
 - the frozen scope: every key of `Assignment.to_dict()` (`run`, `mode`, `repo`, `fixed_issues`, `source`, `approval_revision`, `lead`, `plan_ref`, `coordinator`, `charter_revision`, `contract_refs`);
 - `approval_time`, `next_wake_at`, `paused`;
 - `policy`: the `BoundsPolicy` fields (`run_time_hours`, `dispatch_cap_per_issue`, `gv_retries`, `spend_cap`);
-- `counters`: the `RunCounters` fields (`dispatch_counts`, `dispatch_request_ids`, `request_issues`, `spend`) plus the ledger-only `usage_measured` and `gv_retries_used`.
+- `counters`: the `RunCounters` fields (`dispatch_counts`, `dispatch_request_ids`, `request_issues`, `spend`) plus the ledger-only `usage_measured` and `gv_retries_used`;
+- the grant and gate records (step 7): `grant`, `merge_ledger`, `gate_evidence` and `delegated_records`, each `null` until used.
 
 After every write, run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state.py" --validate .agent/dev-state.md`. A failure names the field (`goal_run.<field>: <reason>`); repair the ledger before any further step.
 
@@ -90,10 +91,17 @@ Classify each correlated input with `classify_input(payload)`, which needs an ex
 
 Return an out-of-scope request to the lead with `make_handback(request_ref, reason)`. The record carries `reference`, `reason` and `disposition` (`pending` until the lead disposes of it). A handback never grows `fixed_issues` and never escalates to the owner on its own.
 
+## 7. Merges and gate disposition (D2, D7.2)
+
+Merges stay protected. The only exception is a D2 bounded grant: the lead fills it in and shows it in the approval message, the owner's approval with their words is the authority, and it is recorded in `grant`. `${CLAUDE_SKILL_DIR}/scripts/goal_authority.py` checks it for each merge. Phase 4 **Merge Order** (Goal runs: bounded merge grant) is the procedure; in short:
+
+1. **Before any merge:** `check_gates` on the PR's current head, recorded in `gate_evidence`, then `decide_merge(grant, ledger, request, now, gates, mode)`. Only `accept` merges without per-push confirmation, bound to the head. `confirm_each` falls back to per-push confirmation; `blocked` and `invalid` stop that merge. With no grant, every merge uses per-push confirmation. APPROVE alone never merges.
+2. **After a merge:** `record_merge`, written to `merge_ledger`. A post-merge failure: `record_post_merge_failure` halts every remaining automatic merge until `clear_halt` with a triage ref. A user stop: `revoke_grant`, recorded before the next merge. A restart or compaction of the same run keeps the grant (`carry_grant`); it never renews.
+3. **Gate disposition:** every gate keeps its disposition in the gate inventory (`GATE_INVENTORY`, `dispose_gate`). The lead decides only the gates D7.2 delegates (technical ASK and COMMENT dispositions, external-review re-requests), each with a control record in `delegated_records` checked by `validate_delegated_record`. "Proceed unless stopped" (`proceed_unless_stopped`) applies only to delegated gates; it refuses a protected gate (`invalid` / `protected_gate`), and the lead asks the user. Product questions, external-review bypass, unknown reviewer identities and every other protected gate stay with the user. A gate whose value depends on an unresolved owner decision is never delegated.
+
 ## Where the existing Dev gates govern
 
-A goal run grants no merge, release, credential or other Tier C authority, and delegation never renews an exhausted budget. For the following, existing Dev gates govern:
+A goal run grants no release, credential or other Tier C authority, and no merge authority beyond a D2 bounded grant checked by `decide_merge` (step 7). Delegation never renews an exhausted budget. For the following, existing Dev gates govern:
 
-- **Merges and gate disposition:** the existing Phase 4 and Phase 5 merge rules and the user's merge authority.
 - **Recovery and resume** after a restart, compaction or lead change: the existing recovery procedure from `.agent/dev-state.md` in `SKILL.md`. Counters persist and are never renewed.
 - **GV:** completion stays a claim until the existing gates verify every frozen Issue.

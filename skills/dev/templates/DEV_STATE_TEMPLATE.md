@@ -737,6 +737,26 @@ an extension rewrites `policy` and never touches `counters`.
 Counters are monotonic. A compaction, wake, restart, lead change or extension
 never resets one.
 
+**Grant and gate records (Issue #194, D2 and D7.2).** Four optional keys hold
+the evidence `${CLAUDE_SKILL_DIR}/phases/phase4.md` (Merge Order, goal runs)
+records. Each may be absent or `null`; a block without them validates exactly as
+an L2 block. Their shapes are the merged `scripts/goal_authority.py` shapes, so
+the lead rebuilds the objects from the ledger before each call and writes the
+results back. Quote every commit SHA (`"9b1c2d3"`): an unquoted SHA can read as
+a number.
+
+| Field | Meaning |
+|---|---|
+| `grant` | The D2 bounded grant shown in the approval message, checked by `validate_grant`: `run_id` (equals `run`), `host`, `repository` (equals `repo`), `base`, `eligible_issues` (nonempty, unique, qualified, and within `fixed_issues`: nothing outside the frozen set becomes eligible), `max_merges` (positive), `expires_at` (absolute, timezone-qualified), `authorized_by` (`who`, `at`, `instruction`: the owner's words), `excluded_actions`, optional `merge_method` (default `squash`). `null` when the owner chose per-push confirmation. |
+| `merge_ledger` | The `MergeLedger`: `run_id` (equals `grant.run_id`), `consumed` (PR number → merge SHA, one per successful merge), `slots_used` (equals the number of `consumed` entries, never above `grant.max_merges`), `revoked_at` (`null`, or the timezone-qualified time of a user stop; then `grant_in_force` is `false`), `grant_in_force`, `halted` and `halt_ref` (a post-merge failure halts automatic merges and names its reference; `null` when not halted), `reopen_issues` (Issues flagged for reopening, within `fixed_issues`), and two ledger-only maps: `halt_history` (every post-merge failure ref → its Issue; each `reopen_issues` entry has one) and `cleared_halts` (halt ref → the triage ref `clear_halt` was given). Validation rejects a cleared halt whose recorded failure has no triage ref (`goal_run.merge_ledger.cleared_halts: <ref> was cleared without triage evidence`), an empty or unknown triage entry, and any `halt_history` / `reopen_issues` mismatch. The only permitted halt reset is `merge_ledger_clear_halt` with a triage ref. Failure history is append-only and written only by the lead through `merge_ledger_record_failure`; write the block only through that helper, `merge_ledger_clear_halt`, `merge_ledger_to_record` and `merge_ledger_from_record` in `scripts/dev_state.py`, which carry both maps. Validation cannot detect a coherent erasure of failure history; such an erasure breaches the single-writer rule and is not caught by the validator. Requires `grant`. |
+| `gate_evidence` | PR number → the last `check_gates` result for that PR: `checked_head`, `outcome` (`accept` or `blocked`), `failures` (the failing gate names, empty on `accept`), `checked_at` (strict UTC). `decide_merge` refuses a result checked at another head. |
+| `delegated_records` | Record id → one D7.2 control record, checked by `validate_delegated_record`: `gate` (a delegated gate such as `technical_ask_disposition` or `comment_decisions`), `decision`, `reasoning`, `evidence_pointer`, `reversal_path`. A protected gate, or one whose value depends on an unresolved decision, fails. |
+
+Malformed records fail as `goal_run.<field>: <reason>`, for example
+`goal_run.grant.expires_at: invalid_field`,
+`goal_run.merge_ledger.slots_used: exceeds goal_run.grant.max_merges` or
+`goal_run.merge_ledger.consumed: 41 needs a merge SHA`.
+
 ```yaml
 goal_run:
   run: goal-2026-11-06-a
@@ -786,6 +806,51 @@ goal_run:
         - request-1
     request_issues:
       request-1: "example-org/example-repo#12"
+  grant:
+    run_id: goal-2026-11-06-a
+    host: github.com
+    repository: example-org/example-repo
+    base: main
+    eligible_issues:
+      - example-org/example-repo#12
+      - example-org/example-repo#13
+    max_merges: 2
+    expires_at: "2026-11-07T10:00:00Z"
+    authorized_by:
+      who: owner
+      at: "2026-11-06T10:00:00Z"
+      instruction: "Approved. Merge Issues 12 and 13 after gates, at most 2 merges, for 24 hours."
+    excluded_actions:
+      - external_review_bypass
+      - force_push
+      - tag_push
+      - release
+    merge_method: squash
+  merge_ledger:
+    run_id: goal-2026-11-06-a
+    consumed:
+      "41": "9b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c"
+    slots_used: 1
+    revoked_at: null
+    grant_in_force: true
+    halted: false
+    halt_ref: null
+    reopen_issues: []
+    halt_history: {}
+    cleared_halts: {}
+  gate_evidence:
+    "41":
+      checked_head: "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d"
+      outcome: accept
+      failures: []
+      checked_at: "2026-11-06T14:00:00Z"
+  delegated_records:
+    pr41-ask-1:
+      gate: technical_ask_disposition
+      decision: "Keep the retry bound at 3."
+      reasoning: "Second opinion agreed the bound matches D3 defaults."
+      evidence_pointer: "PR 41 review comment, head 3c4d5e6"
+      reversal_path: "Raise the bound in a follow-up PR if the owner asks."
 ```
 
 ## Recovery entries

@@ -233,6 +233,16 @@ A current-head `CHANGES_REQUESTED` remains blocking even when its threads are
 dispositioned advisory or false positive; seek reviewer follow-up rather than
 silently overriding the inspector.
 
+## Goal-run gate inventory rows
+
+In a goal run (`${CLAUDE_SKILL_DIR}/phases/goal.md`), three gates in this file carry these dispositions from the gate inventory (`docs/v2.2/gate-inventory.md`; `GATE_INVENTORY` in `${CLAUDE_SKILL_DIR}/scripts/goal_authority.py`). Everything else in this file is unchanged, inside and outside goal runs.
+
+| Gate id | Disposition | In a goal run |
+|---|---|---|
+| `external_review_rerequest` | `delegated_d7_2` | The lead decides re-requests under the project's review policy (v2.1.3 T1: CI plus one qualified review) instead of asking the user, records each as a D7.2 control record in `goal_run.delegated_records`, and records potential credit usage as above. |
+| `external_review_bypass` | `protected` | Goal mode, a merge grant or "proceed unless stopped" never implies a bypass. A bypass needs the user's explicit approval under **Waiting and Explicit Decisions**; without it the gate stays `pending` or `incomplete` and the PR does not merge. |
+| `unknown_reviewer_identity` | `protected` | Ask the user as in **Ask once about unknown review bots, record the answer**. Until the user answers, the bot is never trusted and clears nothing (fail closed). |
+
 ## Result Routing
 
 - `not_applicable` or `clear` → continue to the final internal Review Rating.

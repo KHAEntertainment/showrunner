@@ -835,5 +835,426 @@ class TestGoalRunFixBatch2(unittest.TestCase):
             self.assertIn("OK:", stdout)
 
 
+
+# --- Issue #194 lane L4: goal-run grant and gate records ---------------------
+
+L2_STATE_KEYS = ("approval_time", "next_wake_at", "paused", "policy", "counters")
+L4_AUTHORITY_KEYS = ("grant", "merge_ledger", "gate_evidence", "delegated_records")
+
+
+def grant_record(**changes) -> dict:
+    grant = {
+        "run_id": "goal-roundtrip",
+        "host": "github.com",
+        "repository": "example-org/example-repo",
+        "base": "main",
+        "eligible_issues": ["example-org/example-repo#12", "example-org/example-repo#13"],
+        "max_merges": 2,
+        "expires_at": "2026-11-07T10:00:00Z",
+        "authorized_by": {
+            "who": "owner",
+            "at": "2026-11-06T10:00:00Z",
+            "instruction": "Approved. At most 2 merges for 24 hours.",
+        },
+        "excluded_actions": ["external_review_bypass", "force_push"],
+        "merge_method": "squash",
+    }
+    grant.update(changes)
+    return grant
+
+
+def authority_block() -> dict:
+    """An L2 block plus valid L4 records, produced through goal_authority."""
+    ga = dev_state._load_goal_authority_module()
+    ledger = ga.record_merge(
+        ga.MergeLedger(run_id="goal-roundtrip"),
+        {"pr": 41, "outcome": "merged", "merge_sha": "9b1c2d3e"},
+    ).value
+    block = armed_block()
+    block["grant"] = grant_record()
+    block["merge_ledger"] = dev_state.merge_ledger_to_record(dev_state.MergeLedgerState(ledger))
+    block["gate_evidence"] = {
+        "41": {
+            "checked_head": "3c4d5e6f",
+            "outcome": "accept",
+            "failures": [],
+            "checked_at": "2026-11-06T14:00:00Z",
+        }
+    }
+    block["delegated_records"] = {
+        "pr41-ask-1": {
+            "gate": "technical_ask_disposition",
+            "decision": "Keep the retry bound at 3.",
+            "reasoning": "Second opinion agreed.",
+            "evidence_pointer": "PR 41 review comment",
+            "reversal_path": "Raise the bound in a follow-up PR.",
+        }
+    }
+    return block
+
+
+def assert_goal_failure(test: unittest.TestCase, block: dict, expected: str) -> None:
+    with test.assertRaises(dev_state.GoalRunError) as raised:
+        dev_state.validate_goal_run(block)
+    test.assertEqual(str(raised.exception), expected)
+    code, _, stderr = run_validator(ledger_with(render_goal_run(block)))
+    test.assertEqual(code, 1)
+    test.assertIn(f"FAIL: {expected}", stderr)
+    test.assertNotIn("Traceback", stderr)
+
+
+class TestGoalRunAuthorityLedgerCompat(unittest.TestCase):
+    """AC1 (foreman condition, ledger-compat test): goal_run: null and the exact
+    L2 16-key block validate unchanged, without reaching the L4 code."""
+
+    def test_goal_run_null_validates_unchanged(self):
+        code, stdout, stderr = run_validator(ledger_with("goal_run: null\n"))
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("OK:", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_l2_sixteen_key_block_validates_unchanged(self):
+        block = armed_block()
+        self.assertEqual(len(block), 16)
+        self.assertEqual(
+            set(block), set(dev_state._GOAL_ASSIGNMENT_KEYS) | set(L2_STATE_KEYS)
+        )
+        self.assertFalse(set(block) & set(L4_AUTHORITY_KEYS))
+
+        def boom(*_args, **_kwargs):
+            raise AssertionError("L4 authority code reached")
+
+        saved = dev_state._load_goal_authority_module
+        dev_state._load_goal_authority_module = boom
+        try:
+            dev_state.validate_goal_run(copy.deepcopy(block))
+            nulls = dict(block, **{key: None for key in L4_AUTHORITY_KEYS})
+            dev_state.validate_goal_run(nulls)
+        finally:
+            dev_state._load_goal_authority_module = saved
+        code, stdout, stderr = run_validator(ledger_with(render_goal_run(block)))
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("OK:", stdout)
+        self.assertEqual(stderr, "")
+
+    def test_state_keys_are_l2_plus_four_authority_keys(self):
+        self.assertEqual(
+            dev_state._GOAL_RUN_STATE_KEYS, L2_STATE_KEYS + L4_AUTHORITY_KEYS
+        )
+
+
+class TestGoalRunAuthorityRecordsValidate(unittest.TestCase):
+    """AC2: valid grant and gate records validate; each malformed field fails
+    with a named goal_run.<field> error."""
+
+    def test_valid_records_validate(self):
+        block = authority_block()
+        dev_state.validate_goal_run(copy.deepcopy(block))
+        code, stdout, stderr = run_validator(ledger_with(render_goal_run(block)))
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("OK:", stdout)
+
+    def test_template_documents_the_authority_keys(self):
+        documented = set(re.findall(r"^  ([a-z_]+):", goal_example(), re.M))
+        self.assertTrue(set(L4_AUTHORITY_KEYS) <= documented)
+        text = TEMPLATE.read_text()
+        for key in L4_AUTHORITY_KEYS:
+            self.assertIn(f"| `{key}` |", text)
+
+    def test_malformed_records_fail_with_named_errors(self):
+        cases = [
+            (("grant", "expires_at"), "2026-11-07T10:00:00", "goal_run.grant.expires_at: invalid_field"),
+            (("grant", "eligible_issues"), [], "goal_run.grant.eligible_issues: invalid_field"),
+            (("grant", "eligible_issues"), ["#12"],
+             "goal_run.grant.eligible_issues: each item must be a qualified OWNER/REPO#N string"),
+            (("grant", "max_merges"), 0, "goal_run.grant.max_merges: invalid_field"),
+            (("grant", "max_merges"), -1, "goal_run.grant.max_merges: invalid_field"),
+            (("grant", "authorized_by", "at"), "2026-11-06T10:00:00",
+             "goal_run.grant.authorized_by: invalid_field"),
+            (("grant", "authorized_by", "role"), "owner",
+             "goal_run.grant.authorized_by.role: unknown authorized_by field"),
+            (("grant", "eligible_issues"), ["example-org/example-repo#99"],
+             "goal_run.grant.eligible_issues: example-org/example-repo#99 is not in fixed_issues"),
+            (("grant", "run_id"), "other-run", "goal_run.grant.run_id: does not match goal_run.run"),
+            (("grant", "scope"), "all", "goal_run.grant.scope: unknown grant field"),
+            (("merge_ledger", "consumed"), {"41": None},
+             "goal_run.merge_ledger.consumed: 41 needs a merge SHA"),
+            (("merge_ledger", "consumed"), {"41": ""},
+             "goal_run.merge_ledger.consumed: 41 needs a merge SHA"),
+            (("merge_ledger", "consumed"), {"pr41": "a1"},
+             "goal_run.merge_ledger.consumed: pr41 is not a PR number"),
+            (("merge_ledger", "slots_used"), 2, "goal_run.merge_ledger.slots_used: does not match consumed"),
+            (("merge_ledger", "run_id"), "other-run",
+             "goal_run.merge_ledger.run_id: does not match goal_run.grant.run_id"),
+            (("merge_ledger", "halted"), True,
+             "goal_run.merge_ledger.halt_ref: a halt needs its failure reference"),
+            (("merge_ledger", "halt_ref"), "fail-1",
+             "goal_run.merge_ledger.halt_ref: must be null when not halted"),
+            (("merge_ledger", "cleared_halts"), {"fail-1": None},
+             "goal_run.merge_ledger.cleared_halts: fail-1 needs a triage ref"),
+            (("merge_ledger", "revoked_at"), "2026-11-06T12:00:00Z",
+             "goal_run.merge_ledger.grant_in_force: must be false after a revocation"),
+            (("merge_ledger", "reopen_issues"), ["example-org/example-repo#99"],
+             "goal_run.merge_ledger.reopen_issues: example-org/example-repo#99 is not in fixed_issues"),
+            (("gate_evidence", "41", "outcome"), "maybe",
+             "goal_run.gate_evidence.41.outcome: must be accept or blocked"),
+            (("gate_evidence", "41", "failures"), ["qa"],
+             "goal_run.gate_evidence.41.failures: must be empty when outcome is accept"),
+            (("gate_evidence", "41", "failures"), ["vibes"],
+             "goal_run.gate_evidence.41.failures: must list check_gates gate names"),
+            (("gate_evidence", "41", "checked_at"), "2026-11-06T14:00:00+02:00",
+             "goal_run.gate_evidence.41.checked_at: must be a strict UTC ISO 8601 time"),
+            (("gate_evidence", "41", "checked_head"), "",
+             "goal_run.gate_evidence.41.checked_head: must name the checked head"),
+            (("delegated_records", "pr41-ask-1", "gate"), "merge",
+             "goal_run.delegated_records.pr41-ask-1: gate_not_delegable"),
+            (("delegated_records", "pr41-ask-1", "gate"), "product_ask_disposition",
+             "goal_run.delegated_records.pr41-ask-1: gate_not_delegable"),
+            (("delegated_records", "pr41-ask-1", "gate"), "express_issue_confirmation",
+             "goal_run.delegated_records.pr41-ask-1: unresolved_decision"),
+            (("delegated_records", "pr41-ask-1", "reasoning"), "",
+             "goal_run.delegated_records.pr41-ask-1.reasoning: missing_record_field"),
+        ]
+        for path, value, expected in cases:
+            with self.subTest(expected=expected):
+                block = authority_block()
+                target = block
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                assert_goal_failure(self, block, expected)
+
+    def test_count_above_max_merges_fails(self):
+        block = authority_block()
+        block["merge_ledger"]["consumed"] = {"41": "a1", "42": "b2", "43": "c3"}
+        block["merge_ledger"]["slots_used"] = 3
+        assert_goal_failure(
+            self, block, "goal_run.merge_ledger.slots_used: exceeds goal_run.grant.max_merges"
+        )
+
+    def test_repository_binding_and_missing_fields(self):
+        block = authority_block()
+        block["grant"]["repository"] = "other-org/other-repo"
+        block["grant"]["eligible_issues"] = ["other-org/other-repo#12"]
+        assert_goal_failure(self, block, "goal_run.grant.repository: does not match goal_run.repo")
+        block = authority_block()
+        del block["grant"]["expires_at"]
+        assert_goal_failure(self, block, "goal_run.grant.expires_at: missing required field")
+        block = authority_block()
+        del block["merge_ledger"]["cleared_halts"]
+        assert_goal_failure(self, block, "goal_run.merge_ledger.cleared_halts: missing required field")
+        block = authority_block()
+        block["gate_evidence"]["41"]["outcome"] = "blocked"
+        assert_goal_failure(
+            self, block, "goal_run.gate_evidence.41.failures: must name a gate when outcome is blocked"
+        )
+
+    def test_merge_ledger_requires_a_grant(self):
+        block = authority_block()
+        block["grant"] = None
+        assert_goal_failure(self, block, "goal_run.merge_ledger: requires a grant")
+        del block["merge_ledger"]
+        dev_state.validate_goal_run(block)  # no grant, no ledger: per-push confirmation
+
+    def test_naive_revocation_time_fails(self):
+        block = authority_block()
+        block["merge_ledger"]["revoked_at"] = "2026-11-06T12:00:00"
+        block["merge_ledger"]["grant_in_force"] = False
+        assert_goal_failure(
+            self, block, "goal_run.merge_ledger.revoked_at: must be a timezone-qualified ISO 8601 time"
+        )
+
+
+class TestGoalRunAuthorityRoundTrip(unittest.TestCase):
+    """AC3: a grant and MergeLedger produced by goal_authority.py validate
+    through dev_state.py and rebuild to the same state, ledger-only evidence
+    (halt_history, cleared_halts) included."""
+
+    def ga(self):
+        return dev_state._load_goal_authority_module()
+
+    def round_trip(self, state, grant):
+        block = armed_block()
+        block["grant"] = grant
+        block["merge_ledger"] = dev_state.merge_ledger_to_record(state)
+        text = ledger_with(render_goal_run(block))
+        parsed = dev_state.parse_goal_run_block(text)
+        self.assertEqual(parsed, block)
+        dev_state.validate_goal_run(parsed)
+        code, stdout, stderr = run_validator(text)
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("OK:", stdout)
+        rebuilt = dev_state.merge_ledger_from_record(parsed["merge_ledger"])
+        self.assertEqual(rebuilt, state)
+        self.assertEqual(dev_state.merge_ledger_to_record(rebuilt), block["merge_ledger"])
+        return rebuilt
+
+    def test_grant_from_goal_authority_and_merge_sequence(self):
+        ga = self.ga()
+        amended = ga.amend_grant(grant_record(), {"max_merges": 2})
+        self.assertEqual(amended.outcome, "accept")
+        grant = amended.value
+        state = dev_state.MergeLedgerState(ga.MergeLedger(run_id=grant["run_id"]))
+        self.round_trip(state, grant)
+        event = {"pr": 41, "outcome": "merged", "merge_sha": "9b1c2d3e"}
+        state = dev_state.merge_ledger_with(state, ga.record_merge(state.ledger, event)).value
+        replay = ga.record_merge(state.ledger, event)
+        self.assertTrue(replay.detail["replay"])
+        self.assertEqual(dev_state.merge_ledger_with(state, replay).value, state)
+        self.round_trip(state, grant)
+
+    def merged_state(self, grant):
+        ga = self.ga()
+        state = dev_state.MergeLedgerState(ga.MergeLedger(run_id=grant["run_id"]))
+        event = {"pr": 41, "outcome": "merged", "merge_sha": "9b1c2d3e"}
+        return dev_state.merge_ledger_with(state, ga.record_merge(state.ledger, event)).value
+
+    def test_halt_clear_revocation_and_takeover_states(self):
+        ga = self.ga()
+        grant = grant_record()
+        merged = self.merged_state(grant)
+        halted = dev_state.merge_ledger_record_failure(merged, "example-org/example-repo#12", "fail-1").value
+        self.assertEqual(halted.halt_history, {"fail-1": "example-org/example-repo#12"})
+        self.round_trip(halted, grant)
+        cleared = dev_state.merge_ledger_clear_halt(halted, "triage-1").value
+        self.round_trip(cleared, grant)
+        revoked = dev_state.merge_ledger_with(merged, ga.revoke_grant(merged.ledger, "2026-11-06T12:00:00Z")).value
+        self.round_trip(revoked, grant)
+        lost = dev_state.merge_ledger_with(
+            merged, ga.carry_grant(grant, merged.ledger, "takeover", custody_passed=False)
+        ).value
+        self.round_trip(lost, grant)
+
+
+class TestGoalRunClearedHaltEvidence(unittest.TestCase):
+    """Fix batch 1 B1: cleared-halt triage evidence is enforced and preserved."""
+
+    def halted_block(self):
+        block = authority_block()
+        ga = dev_state._load_goal_authority_module()
+        state = dev_state.merge_ledger_from_record(block["merge_ledger"])
+        halted = dev_state.merge_ledger_record_failure(state, "example-org/example-repo#12", "fail-1")
+        self.assertEqual(halted.outcome, "accept")
+        self.assertTrue(ga.check_action(halted.value.ledger, "merge").outcome == "blocked")
+        block["merge_ledger"] = dev_state.merge_ledger_to_record(halted.value)
+        return block
+
+    def test_genuine_clear_persists_and_survives_read_rebuild_write(self):
+        block = self.halted_block()
+        dev_state.validate_goal_run(copy.deepcopy(block))
+        state = dev_state.merge_ledger_from_record(block["merge_ledger"])
+        cleared = dev_state.merge_ledger_clear_halt(state, "triage-1").value
+        block["merge_ledger"] = dev_state.merge_ledger_to_record(cleared)
+        self.assertEqual(block["merge_ledger"]["cleared_halts"], {"fail-1": "triage-1"})
+        text = ledger_with(render_goal_run(block))
+        code, stdout, stderr = run_validator(text)
+        self.assertEqual(code, 0, stderr)
+        parsed = dev_state.parse_goal_run_block(text)
+        rebuilt = dev_state.merge_ledger_from_record(parsed["merge_ledger"])
+        self.assertEqual(rebuilt.cleared_halts, {"fail-1": "triage-1"})
+        self.assertEqual(dev_state.merge_ledger_to_record(rebuilt), block["merge_ledger"])
+
+    def test_premature_clear_by_hand_fails(self):
+        block = self.halted_block()
+        block["merge_ledger"]["halted"] = False
+        block["merge_ledger"]["halt_ref"] = None
+        assert_goal_failure(
+            self, block, "goal_run.merge_ledger.cleared_halts: fail-1 was cleared without triage evidence"
+        )
+
+    def test_dropping_the_history_still_fails(self):
+        block = self.halted_block()
+        block["merge_ledger"].update({"halted": False, "halt_ref": None, "halt_history": {}})
+        assert_goal_failure(
+            self, block,
+            "goal_run.merge_ledger.reopen_issues: example-org/example-repo#12 has no failure in halt_history",
+        )
+
+    def test_cleared_halts_entries_must_be_real_and_nonempty(self):
+        cases = [
+            ({"fail-1": ""}, False, "goal_run.merge_ledger.cleared_halts: fail-1 needs a triage ref"),
+            ({"fail-9": "triage-1"}, True, "goal_run.merge_ledger.cleared_halts: fail-9 is not in halt_history"),
+            ({"fail-1": "triage-1"}, True, "goal_run.merge_ledger.cleared_halts: fail-1 is still halted"),
+        ]
+        for cleared, halted, expected in cases:
+            with self.subTest(expected=expected):
+                block = self.halted_block()
+                block["merge_ledger"]["cleared_halts"] = cleared
+                if not halted:
+                    block["merge_ledger"].update({"halted": False, "halt_ref": None})
+                assert_goal_failure(self, block, expected)
+
+    def test_helpers_carry_both_maps_and_refuse_a_bare_ledger(self):
+        ga = dev_state._load_goal_authority_module()
+        with self.assertRaises(TypeError):
+            dev_state.merge_ledger_to_record(ga.MergeLedger(run_id="goal-roundtrip"))
+        block = self.halted_block()
+        record = dict(block["merge_ledger"])
+        del record["cleared_halts"]
+        with self.assertRaises(KeyError):
+            dev_state.merge_ledger_from_record(record)
+        state = dev_state.merge_ledger_from_record(block["merge_ledger"])
+        again = dev_state.merge_ledger_record_failure(state, "example-org/example-repo#13", "fail-1")
+        self.assertEqual((again.outcome, again.reason), ("invalid", "duplicate_halt_ref"))
+
+
+class TestGoalRunAuthorityElementTypes(unittest.TestCase):
+    """Fix batch 1 B2: element types are checked before validate_grant or any
+    set membership, so a list or map element is a named error, never TypeError."""
+
+    def cli_failure(self, block, sentinel_value, expected):
+        text = ledger_with(render_goal_run(block)).replace('"__ELEMENT__"', sentinel_value)
+        self.assertIn(f"- {sentinel_value}", text)
+        code, _, stderr = run_validator(text)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn(f"FAIL: {expected}", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("malformed block", stderr)
+
+    def test_list_and_map_elements_in_eligible_issues(self):
+        expected = "goal_run.grant.eligible_issues: each item must be a qualified OWNER/REPO#N string"
+        for element, text in (([], "[]"), ({}, "{}")):
+            with self.subTest(element=text):
+                block = authority_block()
+                block["grant"]["eligible_issues"] = ["example-org/example-repo#12", element]
+                with self.assertRaises(dev_state.GoalRunError) as raised:
+                    dev_state.validate_goal_run(block)
+                self.assertEqual(str(raised.exception), expected)
+                block["grant"]["eligible_issues"] = ["example-org/example-repo#12", "__ELEMENT__"]
+                self.cli_failure(block, text, expected)
+
+    def test_list_and_map_elements_in_reopen_issues(self):
+        expected = "goal_run.merge_ledger.reopen_issues: each item must be a qualified OWNER/REPO#N string"
+        for element, text in (([], "[]"), ({}, "{}")):
+            with self.subTest(element=text):
+                block = authority_block()
+                block["merge_ledger"]["reopen_issues"] = [element]
+                with self.assertRaises(dev_state.GoalRunError) as raised:
+                    dev_state.validate_goal_run(block)
+                self.assertEqual(str(raised.exception), expected)
+                block["merge_ledger"]["reopen_issues"] = ["__ELEMENT__"]
+                self.cli_failure(block, text, expected)
+
+    def test_other_scalar_boundaries_are_named(self):
+        cases = [
+            (("grant", "excluded_actions"), ["force_push", {}],
+             "goal_run.grant.excluded_actions: must be a list of strings"),
+            (("merge_ledger", "halt_history"), {"fail-1": []},
+             "goal_run.merge_ledger.halt_history: fail-1 must map to a qualified OWNER/REPO#N string"),
+            (("merge_ledger", "halt_ref"), {}, "goal_run.merge_ledger.halt_ref: must be null when not halted"),
+            (("gate_evidence", "41", "checked_at"), [],
+             "goal_run.gate_evidence.41.checked_at: must be a strict UTC ISO 8601 time"),
+        ]
+        for path, value, expected in cases:
+            with self.subTest(expected=expected):
+                block = authority_block()
+                target = block
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                with self.assertRaises(dev_state.GoalRunError) as raised:
+                    dev_state.validate_goal_run(block)
+                self.assertEqual(str(raised.exception), expected)
+
 if __name__ == "__main__":
     unittest.main()
