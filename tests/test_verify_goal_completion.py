@@ -1464,6 +1464,245 @@ class TestFixBatch2(unittest.TestCase):
         self.assertNotIn("criteria_ref_mismatch", codes(result))
         self.assertEqual(line(result, "AC-1@aaaa")["state"], "inconclusive")
 
+# --- Fix batch 3 (PR #237 round 3 R3-F1..F4): one function per invariant, tested by enumeration --
+# Each test reproduces a wrong outcome seen at d65ec5b and asserts the fixed one.
+
+
+def localize(entry, shape):
+    """Make one ci_runs entry LOCAL in one of the R2-F1 shapes, never approved."""
+    entry.pop("fallback_approved_by", None)
+    if shape == "unapproved_host_executor":  # the R3-F1 reproduction
+        entry.update(run=f"local-{entry['run']}", executor="host:mac-1", environment="host:mac-1")
+    elif shape == "host_environment_only":
+        entry.update(environment="host:mac-1")
+    elif shape == "executor_only":
+        entry.update(executor="host:mac-1")
+    elif shape == "negative_int_run_id":  # R3-F2
+        entry.update(run=-entry["run"])
+    else:
+        raise AssertionError(shape)
+    return entry["run"]
+
+
+LOCAL_SHAPES = ("unapproved_host_executor", "host_environment_only", "executor_only", "negative_int_run_id")
+
+
+def localize_run(data, run_id, shape):
+    """LOCAL-ize ci_runs entry ``run_id`` and point every ref (and the post-merge run) at it."""
+    entry = next(r for r in pr(data)["ci_runs"] if r["run"] == run_id)
+    new_id = localize(entry, shape)
+    if isinstance(pm(data).get("run"), dict) and pm(data)["run"].get("run") == run_id:
+        pm(data)["run"]["run"] = new_id
+    for item in pr(data)["checks"] + pr(data)["criteria"] + pm(data)["criteria"] + pm(data)["checks"]:
+        if item.get("evidence_ref") == f"run {run_id} attempt 1":
+            item["evidence_ref"] = f"run {new_id} attempt 1"
+
+
+def head_kind_subject(data, sha="4e683b4"):
+    """Record the prior gate run 123 as a direct-head build: {sha, kind: head}, no ``head`` member."""
+    entry = next(r for r in pr(data)["ci_runs"] if r["run"] == 123)
+    entry["tested_subject"] = {"sha": sha, "kind": "head"}
+
+
+def head_tree(responses):
+    responses[f"repos/{REPO}/commits/4e683b4"] = copy.deepcopy(responses[f"repos/{REPO}/commits/7a0b5d1"])
+
+
+class TestFixBatch3(unittest.TestCase):
+    tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+
+    def assertNotVerified(self, result, outcome, code):
+        self.assertEqual(result.kind, "result", result.record)
+        self.assertEqual(result.outcome, outcome, result.record.get("reason_codes"))
+        self.assertIn(code, codes(result), result.record.get("reason_codes"))
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertEqual(gv.read_result(result.record)[0], "accept", gv.read_result(result.record))
+
+    def _functions(self):
+        for node in ast.walk(self.tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield node
+
+    def _calls(self, name):
+        """(enclosing function, Call) for every call of ``name`` or ``self.name``."""
+        found = []
+        for fn in self._functions():
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call):
+                    f = node.func
+                    called = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+                    if called == name:
+                        found.append((fn.name, node))
+        return found
+
+    # R3-F1: one executor-class and authorization rule for every consumed run entry ----------
+
+    def test_r3f1_every_run_consumer_calls_the_one_authorization_function(self):
+        # Only two functions read ci_runs; only check_gate and proof_test call them.
+        readers = set()
+        for fn in self._functions():
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get" \
+                        and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "ci_runs":
+                    readers.add(fn.name)
+                if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                        and node.slice.value == "ci_runs":
+                    readers.add(fn.name)
+        self.assertEqual(readers, {"prior_gate_runs", "resolve_ci_run"})
+        callers = {fn for name in ("prior_gate_runs", "resolve_ci_run") for fn, _ in self._calls(name)}
+        self.assertEqual(callers, {"check_gate", "proof_test"})
+        # Each consumer names itself once; the names are exactly RUN_CONSUMERS.
+        sites = {}
+        for fn, call in self._calls("_authorize_run"):
+            consumer = call.args[2].value
+            self.assertNotIn(consumer, sites)
+            sites[consumer] = fn
+        self.assertEqual(sites, {"test_proof": "proof_test", "prior_gate": "check_gate",
+                                 "post_merge_rerun": "check_gate"})
+        self.assertEqual(set(sites), set(gv.RUN_CONSUMERS))
+        # The environment rule is reached only through the one function.
+        self.assertEqual({fn for fn, _ in self._calls("_environment_verdict")}, {"_authorize_run"})
+
+    def test_r3f1_unapproved_local_entry_never_verifies_on_any_consumer_path(self):
+        paths = {
+            # path: (ledger setup, run consumed, consumers that must name the LOCAL entry)
+            "demonstration_only_applies_verbatim": (demo_only_verbatim, 123, {"prior_gate"}),
+            "test_proof_applies_verbatim": (make_verbatim, 123, {"prior_gate", "test_proof"}),
+            "test_proof_after_rerun": (lambda d: None, 130, {"post_merge_rerun"}),
+            "rerun_without_test_criterion": (lambda d: only_criteria(d, "AC-2@9f3c", "AC-3@9f3c"), 130,
+                                             {"post_merge_rerun"}),
+        }
+        seen = set()
+        for path, (setup, run_id, consumers) in paths.items():
+            for shape in LOCAL_SHAPES:
+                with self.subTest(path=path, shape=shape):
+                    def mutate(d, s=setup, r=run_id, sh=shape):
+                        s(d)
+                        localize_run(d, r, sh)
+                    result, _, _ = scenario(mutate)
+                    self.assertNotVerified(result, "not_complete", "local_run_not_ci")
+                    named = {r["detail"].get("consumer") for r in result.record["reason_codes"]
+                             if r["code"] == "local_run_not_ci"}
+                    for item in result.record["criteria"]:
+                        for reason in item.get("reasons") or []:
+                            if isinstance(reason, dict) and reason.get("code") == "local_run_not_ci":
+                                named.add((reason.get("detail") or {}).get("consumer"))
+                    self.assertTrue(consumers <= named, (consumers, named))
+                    seen |= named
+        self.assertEqual(seen - {None}, set(gv.RUN_CONSUMERS))
+
+    def test_r3f1_approved_fallback_still_verifies_through_the_rerun_consumer(self):
+        result, _, _ = scenario(local_fallback)
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+
+    def test_r3f1_prior_gate_run_without_a_required_check_is_inconclusive(self):
+        def mutate(d):
+            demo_only_verbatim(d)
+            next(r for r in pr(d)["ci_runs"] if r["run"] == 123)["job"] = "unbound-job"
+        result, _, _ = scenario(mutate)
+        self.assertNotVerified(result, "inconclusive", "required_check_unbound")
+
+    def test_r3f1_authorize_run_table(self):
+        ci = {"run": 130, "job": "build", "environment": "ubuntu-latest"}
+        local = {"run": "local-7", "job": "build", "executor": "host:mac-1", "environment": "host:mac-1"}
+        approved = dict(local, fallback_approved_by=OWNER)
+        table = [
+            (ci, {"environment": "ci"}, None),
+            (ci, {"environment": "ci:ubuntu-latest"}, None),
+            (approved, {"environment": "host:mac-1"}, None),
+            (local, {"environment": "ci"}, "local_run_not_ci"),
+            (approved, {"environment": "ci"}, "local_run_not_ci"),
+            (approved, {"environment": "ci:ubuntu-latest"}, "local_run_not_ci"),
+            (local, {"environment": "host:mac-1"}, "local_run_without_fallback"),
+            (approved, {"environment": "host:other-box"}, "environment_mismatch"),
+            (ci, {"environment": "host:mac-1"}, "environment_mismatch"),
+            (ci, {"environment": "preview-vps"}, "environment_not_test_proof"),
+            (ci, {}, "check_environment_missing"),
+            (ci, None, "required_check_unbound"),
+            (None, {"environment": "ci"}, "ci_run_unrecorded"),
+        ]
+        for consumer in gv.RUN_CONSUMERS:
+            for entry, check, code in table:
+                with self.subTest(consumer=consumer, entry=entry, check=check):
+                    verdict = gv._authorize_run(entry, check, consumer)
+                    if code is None:
+                        self.assertIsNone(verdict)
+                    else:
+                        self.assertEqual(verdict[1], code)
+                        self.assertEqual(verdict[2]["consumer"], consumer)
+
+    # R3-F2: one GitHub run-id validator --------------------------------------------------------
+
+    def test_r3f2_github_run_id_table(self):
+        table = [(130, True), ("130", True), (-130, False), ("-130", False), (0, False), ("0", False),
+                 ("0130", False), ("130 ", False), ("", False), (None, False), (1.5, False), (True, False),
+                 ([130], False), ("local-7", False), ("+130", False), (" 130", False),
+                 ("١٣٠", False), ("130\n", False), (False, False)]
+        for value, is_ci in table:
+            with self.subTest(value=value):
+                self.assertIs(gv._is_github_run_id(value), is_ci)
+                self.assertIs(gv._is_local({"run": value, "environment": "ubuntu-latest"}), not is_ci)
+
+    def test_r3f2_no_other_ad_hoc_run_id_check(self):
+        self.assertEqual({fn for fn, _ in self._calls("isdigit")}, {"_pr_identity"})  # PR numbers, not runs
+        self.assertEqual({fn for fn, _ in self._calls("_is_github_run_id")}, {"_is_local"})
+
+    def test_r3f2_invalid_run_ids_never_satisfy_a_ci_check(self):
+        for bad in (-130, "-130", 0, "0130"):
+            with self.subTest(run=bad):
+                def mutate(d, b=bad):
+                    next(r for r in pr(d)["ci_runs"] if r["run"] == 130)["run"] = b
+                    pm(d)["run"]["run"] = b
+                    for item in pm(d)["criteria"] + pm(d)["checks"]:
+                        if item["id"] in ("AC-1@9f3c", "build"):
+                            item["evidence_ref"] = f"run {b} attempt 1"
+                result, _, _ = scenario(mutate)
+                self.assertNotVerified(result, "not_complete", "local_run_not_ci")
+
+    # R3-F3: a head-kind subject at the PR head is a run at the head ------------------------------
+
+    def test_r3f3_direct_head_subject_verifies_a_demonstration_only_verbatim_goal(self):
+        result, _, _ = scenario(lambda d: (demo_only_verbatim(d), head_kind_subject(d)), head_tree)
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+
+    def test_r3f3_direct_head_subject_verifies_a_verbatim_test_proof(self):
+        result, _, _ = scenario(lambda d: (make_verbatim(d), head_kind_subject(d)), head_tree)
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+
+    def test_r3f3_head_kind_subject_not_at_the_head_selects_nothing(self):
+        result, _, _ = scenario(lambda d: (demo_only_verbatim(d), head_kind_subject(d, sha="8b1c2d3")))
+        self.assertNotVerified(result, "inconclusive", "tree_unreadable")
+
+    def test_r3f3_subject_at_head_table(self):
+        head = "4e683b4"
+        table = [({"sha": "7a0b5d1", "kind": "merge_ref", "head": head}, True),
+                 ({"sha": head, "kind": "head"}, True),
+                 ({"sha": "8b1c2d3", "kind": "head"}, False),
+                 ({"sha": head, "kind": "merge_ref"}, False),
+                 ({"sha": head}, False),
+                 ({"kind": "head"}, False),
+                 (head, False), (None, False)]
+        for subject, expected in table:
+            with self.subTest(subject=subject):
+                self.assertIs(gv._subject_at_head(subject, head), expected)
+        self.assertEqual({fn for fn, _ in self._calls("_subject_at_head")}, {"prior_gate_runs", "proof_test"})
+
+    # R3-F4: the job name extends to the last attempt clause ------------------------------------
+
+    def test_r3f4_text_ref_equals_path_form_table(self):
+        for job in ("build", "build-and-test", "Build and test", "build attempt 1 results", "attempt"):
+            for suffix in ("", " (merged-tree rerun)"):
+                with self.subTest(job=job, suffix=suffix):
+                    text = gv._run_identity(f"run 130 job {job} attempt 1{suffix}")
+                    path = gv._run_identity(f"130/{job}/attempt-1")
+                    self.assertEqual(text, path)
+                    self.assertEqual(text, ("130", job, 1))
+
+    def test_r3f4_job_name_containing_an_attempt_clause_verifies_end_to_end(self):
+        result, _, _ = scenario(lambda d: rename_job(d, "build attempt 1 results"))
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["run"]["job"], "build attempt 1 results")
+
 # --- AC7: D3 retries --------------------------------------------------------------
 
 
