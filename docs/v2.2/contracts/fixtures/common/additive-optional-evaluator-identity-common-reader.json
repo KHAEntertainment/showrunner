@@ -80,6 +80,11 @@
       "model": "synthetic-family-a:synthetic-model-a",
       "route_source": "none"
     },
+    "implementer_identity": {
+      "agent_id": "synthetic-agent-049",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a"
+    },
     "report_ref": "synthetic-report-050"
   },
   "expected_outcome": "accept",

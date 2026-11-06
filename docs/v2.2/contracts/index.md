@@ -37,7 +37,7 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 
 | Fixture | SHA-256 |
 | --- | --- |
-| `fixtures/common/additive-optional-evaluator-identity-common-reader.json` | `e2f9fb15c6eb21cec216aa87cb5a6943f5b94fa6f12f86bf9c507e600d39ba19` |
+| `fixtures/common/additive-optional-evaluator-identity-common-reader.json` | `92e122c35cb7b6730d9227e57b0e647525df8eaffa0cf717cbf3ef0b50f8454d` |
 | `fixtures/common/additive-optional-field-common-reader.json` | `98b3d63721db75191c5d1674a91fc84c3c216f89d723eaf87398e8ecb0772e54` |
 | `fixtures/common/ambiguous-identity.json` | `7c293bd06cde533d5a8b4f59c2a7a65f021dc77934a84d9948c7ba2324fc5a99` |
 | `fixtures/common/dev-ledger-unsupported-schema-version.json` | `dd279f985167f1e77677a919f7eaf9efc085a99e7bcbc5e5367fa4eb21a53136` |
