@@ -1,0 +1,39 @@
+{
+  "name": "bare-ambiguous-issue-id",
+  "kind": "plan",
+  "expected_outcome": "reject",
+  "expected_reason_code": "bare_ambiguous_issue_id",
+  "input": {
+    "repo": "OWNER/synthetic-repo",
+    "run": "synthetic-run-l1-001",
+    "mode": "standalone",
+    "lead": {
+      "agent_id": "synthetic-agent-l1-001",
+      "harness": "opencode",
+      "model": "deepseek:deepseek-v4-pro"
+    },
+    "plan_ref": {
+      "origin": "docs/plans/2099-01-01-synthetic-plan.md",
+      "source_revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "approved_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "approval": {
+        "authority": {
+          "agent_id": "synthetic-owner",
+          "harness": "opencode",
+          "model": "deepseek:deepseek-v4-pro"
+        },
+        "evidence": {
+          "reference": "OWNER/synthetic-repo@0123456789abcdef0123456789abcdef01234567",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "producer": {
+        "session": "synthetic-session-l1-001",
+        "harness": "opencode"
+      }
+    },
+    "source": "docs/plans/2099-01-01-synthetic-plan.md@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "approval_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "fixed_issues": ["184"]
+  }
+}
