@@ -1,6 +1,6 @@
 # SC-4 — conformance (`conformance-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.543. Owner-bound values from settled D2 (gates, l.240–l.241) and D7.2 (gate delegation). Foreman checklist source: `~/.claude/skills/foreman-showrunner/templates/STATUS_UPDATE.md` l.26–34 (Workflow conformance table; lane upkeep at l.34). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `7177580c…` §8 l.543 (snapshot SHA-256 `7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b`, 819 lines). Owner-bound values from settled D2 (gates, l.240–l.241) and D7.2 (gate delegation). Foreman checklist source: `~/.claude/skills/foreman-showrunner/templates/STATUS_UPDATE.md` l.26–34 (Workflow conformance table; lane upkeep at l.34). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contract.** `conformance-v1` — the conformance/checklist record for one run or lane.
 

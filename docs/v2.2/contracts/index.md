@@ -45,19 +45,20 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/common/required-field-missing.json` | `36e6cd9e4ac70879d85627f5249e6e076620cb085dff4d5eb6964aead367bc21` |
 | `fixtures/common/unsupported-major-version.json` | `71d3a7b79a381eb4d7f8f3420ac3788e46a708276d13330299d4d5e5477774fa` |
 | `fixtures/sc-1/accepted-structured-plan-ref.json` | `81d00015525e1f415ea9f51ef403c4530fa20a48002bd688ccf5499efc6594f6` |
+| `fixtures/sc-1/accepted-traycer-artifact-origin.json` | `1290bc9739f03fdcc7dc06bdfa8dc1b6d8404c9e8ab75bbbea107665dcb6cb79` |
 | `fixtures/sc-1/accepted-two-distinct-runs.json` | `dab391a7be6e3874177fcc1000020ee8b52d06f7d940052cca6db203b94cb3f6` |
 | `fixtures/sc-1/rejected-approval-revision-mismatch.json` | `5c9cb61b0a0480fd3313b90260a490b8ea1dec0ccf24fcf7c07bce650d5b5d95` |
-| `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` | `10337809fc832a00e7bb89da52bcc2d65f2dadee8db7015b7193129aa2b2f197` |
+| `fixtures/sc-1/rejected-bare-ambiguous-issue-id.json` | `bda3ff6fbf2ca17d1baf0b781b1b8057730e06300f4a2f69e2271eced4126158` |
 | `fixtures/sc-1/rejected-machine-path-plan-ref.json` | `660177869580a256dfc648f0f213dd3f2504d261fd79eecdf563df58dd4db834` |
-| `fixtures/sc-1/rejected-missing-managed-source.json` | `f199e6f7c1cc7d3f2e7519dd2830c238ee9c8143dbc94a3662f98dbe9a2d3abf` |
+| `fixtures/sc-1/rejected-missing-managed-source.json` | `297cee0db4b7f8bec1859f5c5524bbb69464d94d5a8bf728d2a7d331b9b5a064` |
 | `fixtures/sc-2/accepted-continue-epoch-rotation.json` | `0616d15296c88dc7394a8c77985393c8a60763f9ecc889c78e84524042656021` |
 | `fixtures/sc-2/accepted-continue-latest-start-expiry.json` | `8c05043366ec54b347f4ba88de9691cef7e7ad7e490ed9da9e2eb5f6099b4936` |
 | `fixtures/sc-2/rejected-replayed-begin.json` | `4164a59604421cac8a7674b2f815b801bed3ed3d7d65372fe568de3729070576` |
-| `fixtures/sc-3/accepted-final-verified-completion.json` | `ef039c27d9fd12e04f3f89f9366c2bb171947d845643285a404525bbaf872aab` |
-| `fixtures/sc-3/unusable-readiness-never-verified.json` | `65c5e81bb0ad7e2c081f5e604f2686cca6c49a49b110e2080a8885d7d2f46fb2` |
-| `fixtures/sc-3/unusable-outcome-outside-vocabulary.json` | `9afe22c7307ada27e8122969b246744c71dbe4112f4ae65baabb01d0a647c02f` |
-| `fixtures/sc-3/unknown-missing-profile-version.json` | `54c6c03aba8bfbe2b51b94dfb9c896595ecfab2dfbc4599f31c06468e67f0b34` |
-| `fixtures/sc-3/rejected-cross-repo-goal-at-arming.json` | `e0c0a6c038b7e7314fdfdd8a410f0320394b1064cc4b536da74dcf166dc538fb` |
+| `fixtures/sc-3/accepted-final-verified-completion.json` | `094d04471adc9531020b6a0f090e28338af26a08a536264a89d5b65a45e4575e` |
+| `fixtures/sc-3/unusable-readiness-never-verified.json` | `ace0bebfd6c84ae764a5cbf342ce12194fe7e84567c24a9c987836cc694ceb1c` |
+| `fixtures/sc-3/unusable-outcome-outside-vocabulary.json` | `506344ba61d60c96ba57becd204d98006f7d81f3d84eb5432cc78373b0f5551b` |
+| `fixtures/sc-3/unknown-missing-profile-version.json` | `255f9f94d1b0408eea931716c9d75f5fc8a499234bf9d6efa4d6c271a71fffc8` |
+| `fixtures/sc-3/rejected-cross-repo-goal-at-arming.json` | `e7e0246a64e75ff6f346d83139ca3bde79dfbcf5f8d573b233ed642b8dacede5` |
 | `fixtures/sc-3/evidence-accepted-pr-assurance.json` | `49d1513241b767ec9c64f3b5ea6bc9a1ebd9853e9eabff9c8263a65d3d047724` |
 | `fixtures/sc-3/evidence-rejected-pr-assurance-noncurrent-no-stale-reason.json` | `de26c50b2513d4d16222dd030451f5707c34dd54fc3c7de737369fa285e35705` |
 | `fixtures/sc-3/evidence-accepted-parent-acceptance.json` | `11847ae86c6c9cae442f63f27b901962d003f514643f9da751bb33e94b210d72` |
@@ -89,3 +90,5 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-9/rejected-duplicate-compaction-count.json` | `c479ca8c788172783b3749807054a257666805aa273789f0b8404f4a2f947a93` |
 | `fixtures/sc-9/rejected-stale-note-overriding-pause.json` | `ac2972557e34dcee88e741199da8cd006bd25222ab8131d5e4006f2ab180f01a` |
 | `fixtures/sc-9/rejected-unknown-effect-replay.json` | `e4e7fc706a19e7a22f5c34b5bd49b36f199131f83d5bfc520a0488b3070d2668` |
+
+**Aggregate digest (53 fixtures, 2026-11-06, #218):** `dbfbbd0c57a70b17da446f531ab5404f88aa9c5ddd80ecc9db060a6478d9604f`. Method: SHA-256 of the `sha256sum`-style lines `<hex>  <repository path>` (two spaces, one line per `docs/v2.2/contracts/fixtures/**/*.json` file, each ending in a newline), sorted by repository path in byte order — the method that reproduces the contract registry's recorded aggregate `7e1fad8c…d57446` (37 fixtures at `a389dc8`).

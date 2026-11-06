@@ -5,6 +5,7 @@
   "name": "rejected-missing-managed-source",
   "input": {
     "project": "OWNER/synthetic-repo",
+    "repo": "OWNER/synthetic-repo",
     "run": "synthetic-run-004",
     "mode": "managed",
     "lead": {
@@ -12,11 +13,37 @@
       "harness": "opencode",
       "model": "deepseek:deepseek-v4-pro"
     },
-    "plan_ref": "docs/plans/2099-01-01-synthetic-plan.md",
-    "fixed_issues": ["OWNER/synthetic-repo#1"]
+    "plan_ref": {
+      "origin": "docs/plans/2099-01-01-synthetic-plan.md",
+      "source_revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "approved_revision": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "approval": {
+        "authority": {
+          "agent_id": "synthetic-owner",
+          "harness": "opencode",
+          "model": "deepseek:deepseek-v4-pro"
+        },
+        "evidence": {
+          "reference": "OWNER/synthetic-repo@0123456789abcdef0123456789abcdef01234567",
+          "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      },
+      "producer": {
+        "session": "synthetic-session-004",
+        "harness": "opencode"
+      }
+    },
+    "fixed_issues": ["OWNER/synthetic-repo#1"],
+    "coordinator": {
+      "agent_id": "synthetic-coordinator-004",
+      "harness": "opencode",
+      "model": "deepseek:deepseek-v4-pro"
+    },
+    "charter_revision": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "contract_refs": ["docs/v2.2/contracts/sc-1.md@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]
   },
   "expected_outcome": "reject",
-  "expected_reason": "Rejected: a managed assignment omits the managed-only source/coordinator/charter bindings (`source` and `approval_revision` are missing), so the managed source is absent and the assignment is rejected (SC-1 rejected example, SDP l.540).",
+  "expected_reason": "Rejected: a managed assignment omits its managed source — `source` and `approval_revision` are both absent while every other required field and the managed coordinator/charter/contract bindings are present — so the managed source is missing and the assignment is rejected (SC-1 rejected example, SDP l.540).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/orchestration-workflow-foreman/charters/p0-baseline-and-contracts/index.md",
     "revision_or_digest": "sha256:59aab9b17b2cd46102299478251d2d8f35999b9ca35629940a7aaa57afcabfe2",

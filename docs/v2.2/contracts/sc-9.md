@@ -1,6 +1,6 @@
 # SC-9 — context/resume (`checkpoint-reference-v1`, `recovery-receipt-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.548; H1 (l.479) for handoff qualification/fallback. Bound schema: handoff packet template `~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md` (SHA-256 `bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `7177580c…` §8 l.548 (snapshot SHA-256 `7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b`, 819 lines); H1 (l.479) for handoff qualification/fallback. Bound schema: handoff packet template `~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md` (SHA-256 `bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contracts.** `checkpoint-reference-v1` (a reference to a checkpoint) and `recovery-receipt-v1` (the result of a recovery admission).
 

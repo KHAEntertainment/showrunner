@@ -1,6 +1,6 @@
 # SC-7 — lifecycle/projection (`run-projection-v1`, `custody-reference-v1`)
 
-**Source revision.** Showrunner v2.2 SDP `fee134d9…` §8 l.546. Bound schemas: Dev `schema_version: 2` state (`skills/dev/templates/DEV_STATE_TEMPLATE.md`), Foreman sessions/packets/epoch/logs (`~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md`, SHA-256 `acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
+**Source revision.** Showrunner v2.2 SDP `7177580c…` §8 l.546 (snapshot SHA-256 `7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b`, 819 lines). Bound schemas: Dev `schema_version: 2` state (`skills/dev/templates/DEV_STATE_TEMPLATE.md`), Foreman sessions/packets/epoch/logs (`~/.claude/skills/foreman-showrunner/templates/FOREMAN_STATE_TEMPLATE.md`, SHA-256 `acfd05c47757a1eaffc019889645e6f910c5067fcad95ea8a05f6b6f09e11204`). Issue #184's body cites the superseded snapshot `dae53a66…`; this spec binds the current snapshot.
 
 **Contracts.** `run-projection-v1` (a read projection of run lifecycle) and `custody-reference-v1` (custody references).
 
