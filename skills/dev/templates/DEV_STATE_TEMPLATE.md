@@ -737,6 +737,35 @@ an extension rewrites `policy` and never touches `counters`.
 Counters are monotonic. A compaction, wake, restart, lead change or extension
 never resets one.
 
+**Lifecycle clock counters (Issue #196, D7.1).** `context_resets` is an optional
+key holding the Dev's own count of completed context-reset transitions, where
+Foreman reads it. Absent or `null` is valid, so a ledger without it validates
+exactly as before. Its shape is closed:
+
+| Field | Meaning |
+|---|---|
+| `measured` | `true` when the count was measured. |
+| `count` | The completed context-reset transitions: an integer `>= 0` when `measured` is `true`, and `unknown` when it is `false`. |
+
+One count per completed context-reset transition: a compaction counts once; a
+harness, model or provider change counts once only when it resets context; a
+change that preserves context counts zero; uncertain evidence stays `unknown`,
+never `0`. Increment the count only when `account_event` returns `counted_once`
+and `counted: true`. A duplicate notice of one compaction also returns
+`counted_once`, but with `counted: false` and `duplicate: true`, so it adds
+nothing. When `measured` is `false`, `count` must be `unknown`: `0` fails as
+`goal_run.context_resets.count: unmeasured context resets must be unknown,
+never 0` and any other number fails as `goal_run.context_resets.count:
+unmeasured context resets must be unknown, never a number`. When `measured` is
+`true`, `count` must be an integer `>= 0`; `unknown`, a bool and a negative
+number fail as `goal_run.context_resets.count: measured context resets must be
+an integer >= 0`. An unknown field fails as
+`goal_run.context_resets.<field>: unknown context_resets field`.
+
+The key holds the Dev's own count and nothing else. Foreman owns its
+orchestrator clock values, so this ledger records no Foreman clock value and
+has no field for one.
+
 **Grant and gate records (Issue #194, D2 and D7.2).** Four optional keys hold
 the evidence `${CLAUDE_SKILL_DIR}/phases/phase4.md` (Merge Order, goal runs)
 records. Each may be absent or `null`; a block without them validates exactly as
@@ -831,6 +860,9 @@ goal_run:
         - request-1
     request_issues:
       request-1: "example-org/example-repo#12"
+  context_resets:
+    measured: true
+    count: 0
   grant:
     run_id: goal-2026-11-06-a
     host: github.com

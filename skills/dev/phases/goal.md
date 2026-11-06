@@ -99,6 +99,20 @@ Merges stay protected. The only exception is a D2 bounded grant: the lead fills 
 2. **After a merge:** `record_merge`, written to `merge_ledger`. A post-merge failure: `record_post_merge_failure` halts every remaining automatic merge until `clear_halt` with a triage ref. A user stop: `revoke_grant`, recorded before the next merge. A restart or compaction of the same run keeps the grant (`carry_grant`); it never renews.
 3. **Gate disposition:** every gate keeps its disposition in the gate inventory (`GATE_INVENTORY`, `dispose_gate`). The lead decides only the gates D7.2 delegates (technical ASK and COMMENT dispositions, external-review re-requests), each with a control record in `delegated_records` checked by `validate_delegated_record`. "Proceed unless stopped" (`proceed_unless_stopped`) applies only to delegated gates; it refuses a protected gate (`invalid` / `protected_gate`), and the lead asks the user. Product questions, external-review bypass, unknown reviewer identities and every other protected gate stay with the user. A gate whose value depends on an unresolved owner decision is never delegated.
 
+## Lifecycle clocks
+
+This section states the owner's settled D7.1 (SDP l.518–533) as procedure. It enforces nothing by itself and grants no authority.
+
+**Counting rule.** One count per completed context-reset transition. A compaction counts once. A harness, model or provider change counts once only when it resets context; its summary or restart notice adds nothing. A change that preserves context counts zero. Uncertain evidence stays `unknown`, never 0. Increment `context_resets.count` only when `account_event` returns `counted_once` and `counted: true`. A duplicate notice of one compaction also returns `counted_once`, but with `counted: false` and `duplicate: true`, so it adds nothing.
+
+**Managed mode.** The run follows Foreman's orchestrator clock: prepare, retire at a clean point, hard stop. Foreman owns those values; Dev does not copy or override them. Dev records its own reset count in the ledger under `context_resets`, where Foreman reads it. The ledger holds no Foreman clock value.
+
+**Standalone mode.** There is no mandatory clock. The lead records each count in the ledger under `context_resets`, reports the total in its status and final reports, and at the second count tells the user once that the owner's rule recommends preparing a handover; it then continues unless the user says otherwise. No count stops a standalone run by itself. The two-compaction rule means prepare to hand over, never a hard stop.
+
+**The two idle timers stay separate.** #112 archives a Dev inventory agent after 60 minutes idle with no open request; it is open, P4, not implemented, and nothing here acts on it. Foreman's timer closes out a finished lane after 4 hours. They mean different things, neither replaces the other, and they share only the inventory observation. Neither acts on agents its owner did not spawn.
+
+The D3 `run_time_hours` bound and the `WAKE` / `next_wake_at` marker are Dev's own bounds and scheduling. They are not Foreman's clock.
+
 ## Where the existing Dev gates govern
 
 A goal run grants no release, credential or other Tier C authority, and no merge authority beyond a D2 bounded grant checked by `decide_merge` (step 7). Delegation never renews an exhausted budget. For the following, existing Dev gates govern:
