@@ -909,13 +909,15 @@ def parse_defect_episodes(text: str) -> list:
     episode's 1-based ordinal is its list position.
 
     The block is read structurally, never by searching for a key anywhere: each
-    episode opens with a two-space ``- id: <scalar>`` item, and its fields are read
-    only at the four-space field indentation, so a ``fix_batches:`` line inside a
-    deeper value (a diagnosis ``what_failed: |`` narrative) is never the counter.
-    Unsupported or ambiguous shapes fail closed as ``defect_episodes: <reason>``: a
-    repeated header, a flow or scalar header value, tab or odd indentation, an item
-    that does not open with ``id``, a repeated episode field or id, and an
+    episode is a two-space ``- <field>: <value>`` map item (fields in any order,
+    exactly one ``id``), and its fields are read only at the episode's field
+    indentation, so a ``fix_batches:`` line inside a deeper value (a diagnosis
+    ``what_failed: |`` narrative) is never the counter. Unsupported or ambiguous
+    shapes fail closed as ``defect_episodes: <reason>``: a repeated header, a flow
+    or scalar header value, tab or odd indentation, a bare ``-`` item, an episode
+    without an id, a repeated episode field or id, and an
     ``id``/``fix_batches``/``bound`` that is not a plain scalar of the right type.
+    Only a ledger whose goal_run carries an ``obligations`` snapshot is read here.
     A ledger with no block, ``defect_episodes: []`` or ``null`` yields ``[]``."""
     key = _DEFECT_EPISODES_KEY
     end = text.find("\n---\n")
@@ -934,8 +936,13 @@ def parse_defect_episodes(text: str) -> list:
     episodes: list = []
     current = None  # [id, {field: value}, body lines]
 
+    def label():
+        return current[0] if current[0] is not None else f"#{len(episodes) + 1}"
+
     def close():
         if current is not None:
+            if current[0] is None:
+                raise GoalRunError(key, f"episode {label()} has no id")
             fields = current[1]
             episodes.append(DefectEpisode(
                 current[0], fields.get("fix_batches"), fields.get("bound"), current[2]
@@ -962,32 +969,38 @@ def parse_defect_episodes(text: str) -> list:
         if stripped.startswith("#"):
             continue
         if indent == 2:
-            match = re.match(r"^- id:\s+(.+)$", stripped)
-            if not match:
-                raise GoalRunError(key, f"each episode must open with '- id:' (line {lineno})")
-            episode_id = _goal_scalar(match.group(1).strip(), key, lineno)
-            if (
-                not isinstance(episode_id, str) or not episode_id.strip()
-                or episode_id[0] in "|>"
-            ):
-                raise GoalRunError(key, f"episode id must be a non-empty string (line {lineno})")
+            # A list item opens an episode map; its first key may be any field.
+            if not stripped.startswith("- "):
+                raise GoalRunError(
+                    key, f"each episode must be a '- <field>: <value>' map item (line {lineno})"
+                )
             close()
-            current = [episode_id, {}, []]
-            continue
-        if indent != 4 or current is None:
+            current = [None, {}, []]
+            stripped = stripped[2:].strip()
+            line = "    " + stripped
+        elif indent != 4 or current is None:
             raise GoalRunError(key, f"unexpected indentation on line {lineno}")
         match = _GOAL_KEY_RE.match(stripped)
         if not match:
             raise GoalRunError(key, f"malformed episode field on line {lineno}")
         field = match.group(1) if match.group(1) is not None else match.group(2)
-        if field == "id" or field in current[1]:
-            raise GoalRunError(key, f"duplicate {field} for episode {current[0]} (line {lineno})")
+        if field in current[1] or (field == "id" and current[0] is not None):
+            raise GoalRunError(key, f"duplicate {field} for episode {label()} (line {lineno})")
         raw = (match.group(3) or "").strip()
+        if field == "id":
+            episode_id = _goal_scalar(raw, key, lineno) if raw else None
+            if (
+                not isinstance(episode_id, str) or not episode_id.strip()
+                or episode_id[0] in "|>"
+            ):
+                raise GoalRunError(key, f"episode id must be a non-empty string (line {lineno})")
+            current[0] = episode_id
+            continue
         if field in _DEFECT_EPISODE_COUNT_KEYS:
             value = _goal_scalar(raw, key, lineno) if raw else None
             if not _is_count(value):
                 raise GoalRunError(
-                    key, f"{field} for episode {current[0]} must be an integer >= 0 (line {lineno})"
+                    key, f"{field} for episode {label()} must be an integer >= 0 (line {lineno})"
                 )
         else:
             value = raw
@@ -1272,7 +1285,15 @@ def validate_goal_run_text(text: str, data: dict) -> None:
     if len(headers) == 1 and headers[0].strip() in ("null", "~"):
         return
     try:
-        validate_goal_run(parse_goal_run_block(text), parse_defect_episodes(text))
+        block = parse_goal_run_block(text)
+        # The strict canonical-episode read serves only the obligations
+        # cross-check; without a snapshot the pre-L6 path is unchanged.
+        episodes = (
+            parse_defect_episodes(text)
+            if isinstance(block, dict) and block.get("obligations") is not None
+            else None
+        )
+        validate_goal_run(block, episodes)
     except GoalRunError as exc:
         fail(str(exc))
     except Exception as exc:  # fail closed, never a traceback

@@ -559,8 +559,10 @@ class TestObligationsCanonicalEpisode(unittest.TestCase):
         """R2-3: duplicate or ambiguous fields and unsupported shapes are named
         errors, never a silently missed or shadowed counter."""
         cases = (
-            ("defect_episodes:\n  - fix_batches: 2\n    id: ep-1\n",
-             "defect_episodes: each episode must open with '- id:' (line 6)"),
+            ("defect_episodes:\n  - fix_batches: 2\n    bound: 2\n",
+             "defect_episodes: episode #1 has no id"),
+            ("defect_episodes:\n  -\n    id: ep-1\n    fix_batches: 2\n",
+             "defect_episodes: each episode must be a '- <field>: <value>' map item (line 6)"),
             ("defect_episodes:\n  - id: ep-1\n    fix_batches: 2\n    fix_batches: 0\n",
              "defect_episodes: duplicate fix_batches for episode ep-1 (line 8)"),
             ("defect_episodes:\n  - id: ep-1\n    id: ep-2\n    fix_batches: 2\n",
@@ -588,6 +590,86 @@ class TestObligationsCanonicalEpisode(unittest.TestCase):
                 # Two shapes are refused earlier, by the flat frontmatter reader.
                 self.assertIn(f"FAIL: {cli[0] if cli else expected}", stderr)
                 self.assertNotIn("Traceback", stderr)
+
+
+# Review R3-1: ordinary episode forms the pre-L6 validator accepted.
+FORM_A_KEY_ORDER_YAML = (
+    "defect_episodes:\n"
+    "  - opened_at: 2026-11-06T10:00:00Z\n"
+    "    id: ep-1\n"
+    "    fix_batches: 2\n"
+    "    bound: 2\n"
+)
+FORM_B_INLINE_COMMENT_YAML = (
+    "defect_episodes:\n"
+    "  - id: ep-1\n"
+    "    fix_batches: 2 # two batches used\n"
+    "    bound: 2\n"
+)
+
+
+def all_null_recovery_block() -> dict:
+    block = armed_block()
+    for key in dev_state._GOAL_RECOVERY_KEYS:
+        block[key] = None
+    return block
+
+
+def snapshot_block() -> dict:
+    block = recovery_block()
+    block["obligations"]["defect_episode"] = 1
+    block["obligations"]["defect_episode_ref"] = "ep-1"
+    block["obligations"]["fix_batch_count"] = 2
+    return block
+
+
+class TestStrictEpisodeReadOnlyWithObligations(unittest.TestCase):
+    """R3-1: the strict canonical-episode read runs only when goal_run carries an
+    obligations snapshot; pre-L6 ledgers keep the previous validation path."""
+
+    def test_pre_l6_blocks_with_ordinary_episode_forms_validate(self):
+        blocks = (
+            ("l2-16-key", armed_block),
+            ("l4-20-key", authority_block),
+            ("all-null-recovery", all_null_recovery_block),
+        )
+        forms = (
+            ("A-key-order", FORM_A_KEY_ORDER_YAML),
+            ("B-inline-comment", FORM_B_INLINE_COMMENT_YAML),
+        )
+
+        def boom(*_a, **_k):
+            raise AssertionError("strict episode read reached")
+
+        for form_name, episodes_yaml in forms:
+            for block_name, make in blocks:
+                with self.subTest(form=form_name, block=block_name):
+                    text = ledger_with_episodes(episodes_yaml, render_goal_run(make()))
+                    code, stdout, stderr = run_validator(text)
+                    self.assertEqual(code, 0, stderr)
+                    self.assertIn("OK:", stdout)
+                    saved = dev_state.parse_defect_episodes
+                    dev_state.parse_defect_episodes = boom
+                    try:
+                        dev_state.validate_goal_run_text(text, {})
+                    finally:
+                        dev_state.parse_defect_episodes = saved
+
+    def test_form_a_key_order_validates_with_an_obligations_snapshot(self):
+        text = ledger_with_episodes(FORM_A_KEY_ORDER_YAML, render_goal_run(snapshot_block()))
+        episodes = dev_state.parse_defect_episodes(text)
+        self.assertEqual([(e.id, e.fix_batches, e.bound) for e in episodes], [("ep-1", 2, 2)])
+        dev_state.validate_goal_run(dev_state.parse_goal_run_block(text), episodes)
+        code, stdout, stderr = run_validator(text)
+        self.assertEqual(code, 0, stderr)
+        self.assertIn("OK:", stdout)
+
+    def test_form_b_inline_comment_stays_fail_closed_with_an_obligations_snapshot(self):
+        text = ledger_with_episodes(FORM_B_INLINE_COMMENT_YAML, render_goal_run(snapshot_block()))
+        code, _, stderr = run_validator(text)
+        self.assertEqual(code, 1)
+        self.assertIn("FAIL: defect_episodes: inline comment is not allowed", stderr)
+        self.assertNotIn("Traceback", stderr)
 
 
 TWO_BATCH_EPISODES_YAML = (
