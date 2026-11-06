@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Recovery admission, SC-9 records and reconciliation (Issue #196, lane L5).
 
-Pure-stdlib, side-effect-free module: no network, no subprocess, no file writes,
-no clock reads, no hook installation. Every time-dependent step takes ``now`` (and
+Pure-stdlib module with no side effects other than the process-local ``sys.path``
+insert made once at import time: no network, no subprocess, no file writes, no
+clock reads, no hook installation. Every time-dependent step takes ``now`` (and
 ``approval_time`` where needed) as explicit caller-supplied values. Nothing here
 persists state or grants authority; the lead is the sole ledger writer and this
 module returns records, it never writes them.
@@ -11,8 +12,7 @@ Imports from the frozen merged L1 module ``goal_run.py`` (read-only): ``Result``
 ``RunCounters``, ``BoundsPolicy``, ``ArmedRun``, ``evaluate_limits`` and
 ``guard_frozen_scope``. ``Result``'s shape and reason-code style are reused, and
 the ``_invalid`` / ``_accept`` result helpers below are copied verbatim from
-``goal_run.py`` (copying is allowed; see the PR body). No private
-(leading-underscore) name is imported or copied — this module needs none.
+``goal_run.py`` (copying is allowed; see the PR body).
 
 Stable public API:
 
@@ -39,9 +39,12 @@ Stable public API:
 Reason codes (``Result.reason``) are part of the interface. Recovery codes:
 ``unsupported_major_version``, ``missing_required_field``, ``out_of_list_value``,
 ``malformed_input``, ``resume_overrides_pause``, ``authority_renewed_by_activity``,
-``authority_revoked``, ``authority_expired``, ``unknown_effect_replay``,
+``authority_revoked``, ``authority_expired``, ``authority_bindings_contradiction``,
+``note_checkpoint_contradiction``, ``unknown_effect_replay``,
 ``compaction_counts_as_rotation``, ``rotation_not_evidenced``,
 ``rotation_transfer_pending``, ``rotation_transfer_conflict``,
+``outstanding_waits_block``, ``protected_restrictions_block``, ``stale_source``,
+``stale_charter``, ``stale_heads``, ``invalidation``,
 ``recovery_evidence_unavailable``, ``duplicate_compaction_count``,
 ``managed_to_standalone``, ``second_writer``, ``obligations_changed``,
 ``lineage_claim_conflict``, ``scope_growth`` (reused from goal_run).
@@ -50,15 +53,20 @@ Reason codes (``Result.reason``) are part of the interface. Recovery codes:
 evaluator. Each step fails closed; a failure returns ``Result("invalid")`` whose
 ``detail["step"]`` names the step (1-6) and never runs later steps. No guard may
 be skipped because its input is missing: every current-state input a step consumes
-must be supplied (``None`` means "not supplied" and stops that step); an explicit
-empty snapshot (``()`` / ``""``) is supplied and allowed. ``admit_recovery`` reads
-only; it returns the receipt and a next ledger, and never mutates any input.
+must be supplied with a valid shape (``None`` means "not supplied" and stops that
+step; a wrong type is ``malformed_input``; an explicit empty snapshot (``()`` /
+``""``) is supplied and allowed). Content is evaluated, not just presence: a
+non-empty ``outstanding_waits``/``protected_restrictions`` rejects at step 2, a
+source/charter/heads mismatch is stale at step 4, a non-empty ``invalidation``
+rejects at step 4, and an out-of-force or contradictory authority binding rejects
+at step 5. ``admit_recovery`` reads only; it returns the receipt and a next
+ledger, and never mutates any input.
 """
 
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Optional
@@ -298,10 +306,11 @@ class RecoveryInput:
     ``None`` means "not supplied" and stops that step; an explicit empty snapshot
     (``()`` / ``""``) is supplied and allowed."""
 
-    # step 1 — recover checkpoint + classify note
+    # step 1 — recover checkpoint + classify note (note status and checkpoint
+    # availability are required; ``None`` is "not supplied").
     checkpoint: Optional[CheckpointReference] = None
-    note_status: str = NOTE_CURRENT
-    checkpoint_available: bool = True
+    note_status: Optional[str] = None
+    checkpoint_available: Optional[bool] = None
 
     # step 2 — owner pause + read-only waits/restrictions
     paused: bool = False
@@ -322,6 +331,7 @@ class RecoveryInput:
     sole_writer: bool = True
 
     # step 4 — preserve obligations; current source/charter/heads/invalidation
+    # (each current value is compared against its approved/recorded reference).
     obligations_before: Optional[Obligations] = None
     obligations_after: Optional[Obligations] = None
     replay_attempted: bool = False
@@ -329,8 +339,11 @@ class RecoveryInput:
     scope: Optional[ArmedRun] = None
     fixed_issues: tuple = ()
     current_source: Optional[str] = None
+    approved_source: Optional[str] = None
     charter_revision: Optional[str] = None
+    approved_charter_revision: Optional[str] = None
     current_heads: Optional[tuple] = None
+    recorded_heads: Optional[tuple] = None
     invalidation: Optional[tuple] = None
 
     # step 5 — budgets and authority
@@ -762,23 +775,37 @@ def evaluate_coverage(coverage_map) -> Result:
     return _accept(detail={"covered": covered, "excluded": excluded})
 
 
-def _genuine_rotation(state: RecoveryInput) -> bool:
-    """A due rotation is only satisfied by a real, evidenced rotation: a lead
-    handoff with a successor, an acknowledged transfer, and a native session id or
-    custody record, with no conflicting transfer."""
+def _genuine_transfer(state: RecoveryInput) -> bool:
+    """A handoff transfer is genuine when a successor is named, the transfer is
+    acknowledged, custody evidence exists (native session id or custody record),
+    and there is no conflicting transfer."""
     return (
-        state.event_kind == EVENT_KIND_LEAD_HANDOFF
-        and bool(state.successor)
+        bool(state.successor)
         and state.transfer_acknowledged
         and (bool(state.native_session_id) or bool(state.custody_record))
         and not state.transfer_conflict
     )
 
 
-def _rotation_refusal(state: RecoveryInput) -> str:
-    """Name the reason a due rotation is refused when it is not genuinely applied."""
-    if state.event_kind != EVENT_KIND_LEAD_HANDOFF:
-        return "rotation_not_evidenced"
+def _genuine_rotation(state: RecoveryInput) -> bool:
+    """A due rotation is only satisfied by a real, evidenced rotation: a lead
+    handoff event with a genuine transfer."""
+    return state.event_kind == EVENT_KIND_LEAD_HANDOFF and _genuine_transfer(state)
+
+
+def _handoff_signaled(state: RecoveryInput) -> bool:
+    """True when a lead handoff is signaled by the event kind or any transfer
+    field, even when a rotation is not due."""
+    return (
+        state.event_kind == EVENT_KIND_LEAD_HANDOFF
+        or bool(state.successor)
+        or state.transfer_conflict
+        or state.transfer_acknowledged
+    )
+
+
+def _transfer_refusal(state: RecoveryInput) -> str:
+    """Name the reason a handoff transfer is refused when not genuinely applied."""
     if state.transfer_conflict:
         return "rotation_transfer_conflict"
     if not state.successor:
@@ -796,17 +823,6 @@ def _resolve_outcome(state: RecoveryInput, note: Result) -> str:
     return note.value
 
 
-def _receipt_checkpoint(state: RecoveryInput, note: Result) -> CheckpointReference:
-    """Return the receipt's checkpoint. A fallback (degraded note) records the note
-    degradation; coverage keeps the source's own classification unchanged."""
-    checkpoint = state.checkpoint
-    if note.value == "fallback_ledger_recovery":
-        degradation = note.detail.get("degradation")
-        if checkpoint.degradation != degradation:
-            checkpoint = replace(checkpoint, degradation=degradation)
-    return checkpoint
-
-
 def admit_recovery(state: RecoveryInput) -> Result:
     """Run the SDP l.477 resume admission order as one ordered evaluator. Each step
     fails closed; a failure returns ``Result("invalid")`` with ``detail["step"]``
@@ -814,20 +830,29 @@ def admit_recovery(state: RecoveryInput) -> Result:
 
     Step 1 recover checkpoint identity/freshness/authoritative references and
     classify the handoff note; step 2 read owner pause and the read-only
-    waits/restrictions (a stale note over a pause rejects); step 3 count the event
-    once, check sole writer, rotation and custody; step 4 preserve children, owed
-    replies and unknown outcomes (replay before reconciliation rejects) against the
-    read-only current source/charter/heads; step 5 recheck budgets and authority
-    (no managed-to-standalone fallback); step 6 record the recovery and continue
-    only eligible work.
+    waits/restrictions (a stale note over a pause rejects here, not at step 1);
+    step 3 count the event once, check sole writer, rotation and custody (custody
+    checks apply to every handoff, not only due rotations); step 4 preserve
+    children, owed replies and unknown outcomes against the read-only current
+    source/charter/heads (a stale source/charter/heads or a non-empty invalidation
+    rejects); step 5 recheck budgets and authority (a revoked/expired or
+    out-of-force binding rejects); step 6 record the recovery and continue only
+    eligible work.
     """
     if not isinstance(state, RecoveryInput):
         return _invalid("malformed_input", {"field": "state"})
 
     # Step 1
+    missing = _first_missing(
+        ("note_status", state.note_status),
+        ("checkpoint_available", state.checkpoint_available),
+    )
+    if missing is not None:
+        return _invalid("missing_required_field", {"step": 1, "field": missing})
+    # Classify the note independent of the pause; step 2 applies the pause.
     note = classify_note(
         state.note_status,
-        paused=state.paused,
+        paused=False,
         checkpoint_available=state.checkpoint_available,
     )
     if not note.ok:
@@ -837,6 +862,15 @@ def admit_recovery(state: RecoveryInput) -> Result:
     step1 = _validate_checkpoint_object(state.checkpoint)
     if not step1.ok:
         return _invalid(step1.reason, {**step1.detail, "step": 1})
+    if state.note_status == NOTE_CURRENT and state.checkpoint.degradation is not None:
+        return _invalid(
+            "note_checkpoint_contradiction",
+            {
+                "step": 1,
+                "note_status": state.note_status,
+                "degradation": state.checkpoint.degradation,
+            },
+        )
 
     # Step 2
     missing = _first_missing(
@@ -845,8 +879,21 @@ def admit_recovery(state: RecoveryInput) -> Result:
     )
     if missing is not None:
         return _invalid("missing_required_field", {"step": 2, "field": missing})
-    if state.paused and state.resume_over_pause:
+    for value, field in (
+        (state.outstanding_waits, "outstanding_waits"),
+        (state.protected_restrictions, "protected_restrictions"),
+    ):
+        if not isinstance(value, tuple):
+            return _invalid("malformed_input", {"step": 2, "field": field})
+        for item in value:
+            if not isinstance(item, str):
+                return _invalid("malformed_input", {"step": 2, "field": field})
+    if state.paused and (state.resume_over_pause or state.note_status == NOTE_STALE):
         return _invalid("resume_overrides_pause", {"step": 2})
+    if state.outstanding_waits:
+        return _invalid("outstanding_waits_block", {"step": 2})
+    if state.protected_restrictions:
+        return _invalid("protected_restrictions_block", {"step": 2})
 
     # Step 3
     if not state.sole_writer:
@@ -855,7 +902,9 @@ def admit_recovery(state: RecoveryInput) -> Result:
         if state.event_kind == EVENT_KIND_COMPACTION:
             return _invalid("compaction_counts_as_rotation", {"step": 3})
         if not _genuine_rotation(state):
-            return _invalid(_rotation_refusal(state), {"step": 3})
+            return _invalid(_transfer_refusal(state), {"step": 3})
+    elif _handoff_signaled(state) and not _genuine_transfer(state):
+        return _invalid(_transfer_refusal(state), {"step": 3})
     step3 = account_event(state.ledger, state.event_identity, state.event_kind)
     if not step3.ok:
         return _invalid(step3.reason, {**step3.detail, "step": 3})
@@ -870,20 +919,45 @@ def admit_recovery(state: RecoveryInput) -> Result:
     missing = _first_missing(
         ("obligations_before", state.obligations_before),
         ("obligations_after", state.obligations_after),
+        ("current_source", state.current_source),
+        ("approved_source", state.approved_source),
+        ("charter_revision", state.charter_revision),
+        ("approved_charter_revision", state.approved_charter_revision),
+        ("current_heads", state.current_heads),
+        ("recorded_heads", state.recorded_heads),
+        ("invalidation", state.invalidation),
     )
     if missing is not None:
         return _invalid("missing_required_field", {"step": 4, "field": missing})
     step4 = preserve_obligations(state.obligations_before, state.obligations_after)
     if not step4.ok:
         return _invalid(step4.reason, {**step4.detail, "step": 4})
-    missing = _first_missing(
-        ("current_source", state.current_source),
-        ("charter_revision", state.charter_revision),
-        ("current_heads", state.current_heads),
-        ("invalidation", state.invalidation),
-    )
-    if missing is not None:
-        return _invalid("missing_required_field", {"step": 4, "field": missing})
+    for value, field in (
+        (state.current_source, "current_source"),
+        (state.approved_source, "approved_source"),
+        (state.charter_revision, "charter_revision"),
+        (state.approved_charter_revision, "approved_charter_revision"),
+    ):
+        if not isinstance(value, str):
+            return _invalid("malformed_input", {"step": 4, "field": field})
+    for value, field in (
+        (state.current_heads, "current_heads"),
+        (state.recorded_heads, "recorded_heads"),
+        (state.invalidation, "invalidation"),
+    ):
+        if not isinstance(value, tuple):
+            return _invalid("malformed_input", {"step": 4, "field": field})
+        for item in value:
+            if not isinstance(item, str):
+                return _invalid("malformed_input", {"step": 4, "field": field})
+    if state.current_source != state.approved_source:
+        return _invalid("stale_source", {"step": 4})
+    if state.charter_revision != state.approved_charter_revision:
+        return _invalid("stale_charter", {"step": 4})
+    if state.current_heads != state.recorded_heads:
+        return _invalid("stale_heads", {"step": 4})
+    if state.invalidation:
+        return _invalid("invalidation", {"step": 4})
     if state.scope is not None and state.fixed_issues:
         scope_check = guard_frozen_scope(state.scope, fixed_issues=list(state.fixed_issues))
         if not scope_check.ok:
@@ -894,16 +968,28 @@ def admit_recovery(state: RecoveryInput) -> Result:
         return _invalid("managed_to_standalone", {"step": 5})
     if state.authority_renewed:
         return _invalid("authority_renewed_by_activity", {"step": 5})
+    missing = _first_missing(("authority_bindings", state.authority_bindings))
+    if missing is not None:
+        return _invalid("missing_required_field", {"step": 5, "field": missing})
+    if not isinstance(state.authority_bindings, tuple):
+        return _invalid("malformed_input", {"step": 5, "field": "authority_bindings"})
+    for item in state.authority_bindings:
+        if not isinstance(item, str):
+            return _invalid("malformed_input", {"step": 5, "field": "authority_bindings"})
+    revoked_or_expired = state.authority_revoked or state.authority_expired
+    if revoked_or_expired and state.authority_bindings:
+        return _invalid("authority_bindings_contradiction", {"step": 5})
     if state.authority_revoked:
         return _invalid("authority_revoked", {"step": 5})
     if state.authority_expired:
         return _invalid("authority_expired", {"step": 5})
+    if not state.authority_bindings:
+        return _invalid("missing_required_field", {"step": 5, "field": "authority_bindings"})
     missing = _first_missing(
         ("policy", state.policy),
         ("counters", state.counters),
         ("approval_time", state.approval_time),
         ("now", state.now),
-        ("authority_bindings", state.authority_bindings),
     )
     if missing is not None:
         return _invalid("missing_required_field", {"step": 5, "field": missing})
@@ -913,10 +999,19 @@ def admit_recovery(state: RecoveryInput) -> Result:
 
     # Step 6
     outcome = _resolve_outcome(state, note)
-    checkpoint = _receipt_checkpoint(state, note)
-    receipt = build_recovery_receipt(checkpoint, event_accounting_result, outcome)
+    receipt = build_recovery_receipt(state.checkpoint, event_accounting_result, outcome)
     if not receipt.ok:
         return _invalid(receipt.reason, {**receipt.detail, "step": 6})
+
+    if state.paused:
+        eligibility = "recovery_only"
+        dependent_blocked = True
+    elif unknown_restricted:
+        eligibility = "inspection_and_independent"
+        dependent_blocked = True
+    else:
+        eligibility = "full"
+        dependent_blocked = False
 
     return _accept(
         value=receipt.value,
@@ -929,8 +1024,8 @@ def admit_recovery(state: RecoveryInput) -> Result:
             "continuity": note.detail.get("continuity"),
             "degradation": note.detail.get("degradation"),
             "unknown_outcomes": tuple(state.unknown_outcomes),
-            "dependent_actions_blocked": unknown_restricted,
-            "eligibility": "inspection_and_independent" if unknown_restricted else "full",
+            "dependent_actions_blocked": dependent_blocked,
+            "eligibility": eligibility,
             "action": "inspect_destination_first" if unknown_restricted else None,
         },
     )

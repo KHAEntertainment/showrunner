@@ -112,8 +112,11 @@ def _input(**overrides):
         obligations_before=_obligations(),
         obligations_after=_obligations(),
         current_source="docs/plans/synthetic-plan.md@rev",
+        approved_source="docs/plans/synthetic-plan.md@rev",
         charter_revision="rev",
+        approved_charter_revision="rev",
         current_heads=("head-1",),
+        recorded_heads=("head-1",),
         invalidation=(),
         policy=_policy(),
         counters=_counters(),
@@ -138,23 +141,36 @@ class ResumeOrderTests(unittest.TestCase):
         # A failure at each step stops there and names the step.
         cases = [
             (_input(checkpoint=None), 1, "missing_required_field"),
-            (_input(note_status="stale", paused=True), 1, "resume_overrides_pause"),
+            (_input(note_status=None), 1, "missing_required_field"),
             (_input(note_status="missing", checkpoint_available=False), 1, "recovery_evidence_unavailable"),
+            (_input(checkpoint=_checkpoint(degradation="no_note")), 1, "note_checkpoint_contradiction"),
             (_input(paused=True, resume_over_pause=True), 2, "resume_overrides_pause"),
+            (_input(note_status="stale", paused=True), 2, "resume_overrides_pause"),
             (_input(outstanding_waits=None), 2, "missing_required_field"),
+            (_input(outstanding_waits=("w-1",)), 2, "outstanding_waits_block"),
+            (_input(protected_restrictions=("r-1",)), 2, "protected_restrictions_block"),
             (_input(sole_writer=False), 3, "second_writer"),
             (_input(rotation_due=True, event_kind=rc.EVENT_KIND_COMPACTION), 3, "compaction_counts_as_rotation"),
             (_input(rotation_due=True, event_kind=rc.EVENT_KIND_WAKE), 3, "rotation_not_evidenced"),
+            (_input(successor="lead-2", transfer_conflict=True), 3, "rotation_transfer_conflict"),
             (_input(ledger=rc.EventLedger(seen=("evt-1", "evt-1"))), 3, "duplicate_compaction_count"),
             (_input(replay_attempted=True, unknown_outcomes=("lost-1",)), 4, "unknown_effect_replay"),
             (_input(obligations_before=None), 4, "missing_required_field"),
             (_input(obligations_after=_obligations(worker_count=2)), 4, "obligations_changed"),
             (_input(current_source=None), 4, "missing_required_field"),
+            (_input(current_source="different"), 4, "stale_source"),
+            (_input(charter_revision="different"), 4, "stale_charter"),
+            (_input(current_heads=("other",)), 4, "stale_heads"),
+            (_input(invalidation=("head-1",)), 4, "invalidation"),
+            (_input(current_heads="not-a-tuple"), 4, "malformed_input"),
             (_input(scope=_armed_scope(), fixed_issues=("KHAEntertainment/showrunner#2",)), 4, "scope_growth"),
             (_input(managed_fallback=True), 5, "managed_to_standalone"),
             (_input(authority_renewed=True), 5, "authority_renewed_by_activity"),
-            (_input(authority_revoked=True), 5, "authority_revoked"),
-            (_input(authority_expired=True), 5, "authority_expired"),
+            (_input(authority_revoked=True, authority_bindings=()), 5, "authority_revoked"),
+            (_input(authority_expired=True, authority_bindings=()), 5, "authority_expired"),
+            (_input(authority_revoked=True), 5, "authority_bindings_contradiction"),
+            (_input(authority_bindings=()), 5, "missing_required_field"),
+            (_input(authority_bindings="lead-1"), 5, "malformed_input"),
             (_input(policy=None), 5, "missing_required_field"),
             (_input(now="2099-01-02T10:00:00Z"), 5, "run_time_exceeded"),
         ]
@@ -170,12 +186,25 @@ class ResumeOrderTests(unittest.TestCase):
         self.assertTrue(res.may_proceed)
         self.assertEqual(res.value.admission_outcome, "pause_honored_recovery_only")
         self.assertEqual(res.detail["step"], 6)
+        # R2-2: pause outranks eligibility — recovery-only, dependent blocked.
+        self.assertEqual(res.detail["eligibility"], "recovery_only")
+        self.assertTrue(res.detail["dependent_actions_blocked"])
 
         # Managed-to-standalone fallback is rejected (no fallback path).
         res = rc.admit_recovery(_input(managed_fallback=True))
         self.assertFalse(res.ok)
         self.assertEqual(res.reason, "managed_to_standalone")
         self.assertEqual(res.detail["step"], 5)
+
+    def test_R2_2_paused_plus_unknown_is_recovery_only(self):
+        # Pause outranks unknown-effect restriction: still recovery-only.
+        res = rc.admit_recovery(_input(paused=True, unknown_outcomes=("lost-1",)))
+        self.assertTrue(res.may_proceed, res.reason)
+        self.assertEqual(res.value.admission_outcome, "pause_honored_recovery_only")
+        self.assertEqual(res.detail["eligibility"], "recovery_only")
+        self.assertTrue(res.detail["dependent_actions_blocked"])
+        self.assertNotEqual(res.detail["eligibility"], "inspection_and_independent")
+        self.assertNotEqual(res.detail["eligibility"], "full")
 
 
 class LimitGateTests(unittest.TestCase):
@@ -362,6 +391,25 @@ class PausedRotationTests(unittest.TestCase):
         )
         self.assertTrue(res.may_proceed)
         self.assertEqual(res.value.admission_outcome, "rotation_due_rotation_applied")
+
+    def test_R2_3_custody_checks_apply_to_every_handoff(self):
+        # A conflicting handoff is refused even when rotation is NOT due.
+        res = rc.admit_recovery(_input(successor="lead-2", transfer_conflict=True))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "rotation_transfer_conflict")
+        self.assertEqual(res.detail["step"], 3)
+
+        # An unacknowledged handoff is refused even when rotation is NOT due.
+        res = rc.admit_recovery(_input(successor="lead-2"))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "rotation_transfer_pending")
+        self.assertEqual(res.detail["step"], 3)
+
+        # A lead-handoff event without custody evidence is refused when not due.
+        res = rc.admit_recovery(_input(event_kind=rc.EVENT_KIND_LEAD_HANDOFF))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "rotation_not_evidenced")
+        self.assertEqual(res.detail["step"], 3)
 
     def test_AC3_coverage_top_level_and_child_recorded_excluded_not_counted(self):
         res = rc.evaluate_coverage({"top": "top_level", "child-session": "child", "skip": "excluded"})
@@ -738,6 +786,81 @@ class HelperRefusalBranchTests(unittest.TestCase):
         self.assertEqual(res.value.checkpoint.degradation, "no_note")
         self.assertEqual(res.value.checkpoint.coverage, "top_level")
         self.assertEqual(res.detail["continuity"], "fallback")
+
+    def test_R2_4_receipt_copies_checkpoint_unchanged(self):
+        # The receipt copies every checkpoint-reference field unchanged; the
+        # note-derived degradation lives in the recovery detail, not the record.
+        checkpoint = _checkpoint(degradation="no_note")
+        res = rc.admit_recovery(_input(note_status="missing", checkpoint=checkpoint))
+        self.assertTrue(res.may_proceed, res.reason)
+        self.assertEqual(res.value.admission_outcome, "fallback_ledger_recovery")
+        self.assertEqual(res.value.checkpoint.to_dict(), checkpoint.to_dict())
+        self.assertEqual(res.detail["continuity"], "fallback")
+        self.assertEqual(res.detail["degradation"], "no_note")
+
+    def test_QA_R5_admit_recovery_rejects_non_recovery_input(self):
+        for value in ("not-a-recovery-input", None, 5):
+            res = rc.admit_recovery(value)
+            self.assertFalse(res.ok, value)
+            self.assertEqual(res.reason, "malformed_input", value)
+
+
+class CurrentStateInputTests(unittest.TestCase):
+    """R2-1 — each current-state input is validated for shape and content, with a
+    test for absent, malformed, adverse and matching."""
+
+    def _assert_step(self, state, step, reason):
+        res = rc.admit_recovery(state)
+        self.assertFalse(res.ok, (step, reason, res.detail))
+        self.assertEqual(res.detail["step"], step, res.reason)
+        self.assertEqual(res.reason, reason, res.detail)
+
+    def test_outstanding_waits(self):
+        self._assert_step(_input(outstanding_waits=None), 2, "missing_required_field")
+        self._assert_step(_input(outstanding_waits="w-1"), 2, "malformed_input")
+        self._assert_step(_input(outstanding_waits=("w-1",)), 2, "outstanding_waits_block")
+        self.assertTrue(rc.admit_recovery(_input()).may_proceed)
+
+    def test_protected_restrictions(self):
+        self._assert_step(_input(protected_restrictions=None), 2, "missing_required_field")
+        self._assert_step(_input(protected_restrictions="r-1"), 2, "malformed_input")
+        self._assert_step(_input(protected_restrictions=("r-1",)), 2, "protected_restrictions_block")
+        self.assertTrue(rc.admit_recovery(_input()).may_proceed)
+
+    def test_current_source(self):
+        self._assert_step(_input(current_source=None), 4, "missing_required_field")
+        self._assert_step(_input(current_source={"x": 1}), 4, "malformed_input")
+        self._assert_step(_input(current_source="other"), 4, "stale_source")
+        self.assertTrue(rc.admit_recovery(_input()).may_proceed)
+
+    def test_charter_revision(self):
+        self._assert_step(_input(charter_revision=None), 4, "missing_required_field")
+        self._assert_step(_input(charter_revision=5), 4, "malformed_input")
+        self._assert_step(_input(charter_revision="other"), 4, "stale_charter")
+        self.assertTrue(rc.admit_recovery(_input()).may_proceed)
+
+    def test_current_heads(self):
+        self._assert_step(_input(current_heads=None), 4, "missing_required_field")
+        self._assert_step(_input(current_heads="h"), 4, "malformed_input")
+        self._assert_step(_input(current_heads=("h", 1)), 4, "malformed_input")
+        self._assert_step(_input(current_heads=("other",)), 4, "stale_heads")
+        self.assertTrue(rc.admit_recovery(_input()).may_proceed)
+
+    def test_invalidation(self):
+        self._assert_step(_input(invalidation=None), 4, "missing_required_field")
+        self._assert_step(_input(invalidation="h"), 4, "malformed_input")
+        self._assert_step(_input(invalidation=("head-1",)), 4, "invalidation")
+        self.assertTrue(rc.admit_recovery(_input()).may_proceed)
+
+    def test_authority_bindings(self):
+        self._assert_step(_input(authority_bindings=None), 5, "missing_required_field")
+        self._assert_step(_input(authority_bindings="lead-1"), 5, "malformed_input")
+        self._assert_step(_input(authority_bindings=("lead-1", 2)), 5, "malformed_input")
+        self._assert_step(_input(authority_bindings=()), 5, "missing_required_field")
+        self._assert_step(_input(authority_revoked=True), 5, "authority_bindings_contradiction")
+        self._assert_step(_input(authority_revoked=True, authority_bindings=()), 5, "authority_revoked")
+        self._assert_step(_input(authority_expired=True, authority_bindings=()), 5, "authority_expired")
+        self.assertTrue(rc.admit_recovery(_input()).may_proceed)
 
 
 class ImportByPathTests(unittest.TestCase):
