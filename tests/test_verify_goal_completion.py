@@ -224,23 +224,25 @@ def synthesize_actions_answers(data, responses):
             attempt = entry.get("attempt")
             if not isinstance(attempt, int) or isinstance(attempt, bool):
                 continue
-            subject_class, sha = gv._ci_subject(entry.get("tested_subject"))
-            if subject_class is None or sha is None:
+            subject_class, sha, base_oid = gv._ci_subject(entry.get("tested_subject"))
+            if subject_class is None or sha is None or (subject_class == "merge_ref" and base_oid is None):
                 continue
             event = "pull_request" if subject_class == "merge_ref" else "push"
-            grouped.setdefault((entry.get("run"), attempt), []).append((entry, sha, event))
+            # Fix batch 2: a pull_request run lists this PR's context, from the ledger's claim.
+            prs = [pr_entry(number=10, head=_full(sha), base_ref=rec.get("target_branch"), base_sha=base_oid,
+                            repo=rec.get("repository"))] if event == "pull_request" else []
+            grouped.setdefault((entry.get("run"), attempt), []).append((entry, sha, event, prs))
     for (run, attempt), entries in grouped.items():
-        passed = all(e.get("conclusion") == "success" for e, _, _ in entries)
-        event = entries[0][2]
+        passed = all(e[0].get("conclusion") == "success" for e in entries)
+        _, sha, event, prs = entries[0]
         responses[actions_ep(run, attempt)] = {
             "id": int(run), "run_attempt": attempt, "status": "completed",
             "conclusion": "success" if passed else "failure", "event": event,
-            "pull_requests": [{"number": 10}] if event == "pull_request" else [],
-            "head_sha": _full(entries[0][1])}
+            "pull_requests": prs, "head_sha": _full(sha)}
         responses[jobs_ep(run, attempt)] = {
             "total_count": len(entries),
-            "jobs": [{"name": e.get("job"), "status": "completed", "conclusion": e.get("conclusion")}
-                     for e, _, _ in entries]}
+            "jobs": [{"name": e[0].get("job"), "status": "completed", "conclusion": e[0].get("conclusion")}
+                     for e in entries]}
 
 
 def answered(data=None):
@@ -1859,12 +1861,24 @@ HTTP_500 = [(1, "", "HTTP 500")] * 3
 TEMP_OID = "7a0b5d1" + "d" * 33  # run 123's temporary merge-ref OID, as the API would report it
 
 
-def answer_run(responses, run, *, event, head_sha, job="build", conclusion="success", attempt=1, prs=(10,)):
-    """An explicit Actions answer for one run attempt (used with synthesis OFF)."""
+BASE_OID = "b720c68" + "0" * 33  # the base the merge-ref subjects record (base_oid b720c68)
+
+
+def pr_entry(number=10, head=HEAD, base_ref="main", base_sha=BASE_OID, repo=REPO):
+    """One Actions ``pull_requests`` entry: the PR context a pull_request run reports."""
+    return {"number": number, "head": {"sha": head},
+            "base": {"ref": base_ref, "sha": base_sha, "repo": {"full_name": repo}}}
+
+
+def answer_run(responses, run, *, event, head_sha, job="build", conclusion="success", attempt=1,
+               prs=None):
+    """An explicit Actions answer for one run attempt (used with synthesis OFF). A
+    pull_request run lists this PR's honest context unless ``prs`` says otherwise."""
+    if prs is None:
+        prs = [pr_entry()] if event == "pull_request" else []
     responses[actions_ep(run, attempt)] = {
         "id": run, "run_attempt": attempt, "status": "completed", "conclusion": conclusion,
-        "event": event, "head_sha": head_sha,
-        "pull_requests": [{"number": n} for n in prs] if event == "pull_request" else []}
+        "event": event, "head_sha": head_sha, "pull_requests": list(prs)}
     responses[jobs_ep(run, attempt)] = {"total_count": 1, "jobs": [
         {"name": job, "status": "completed", "conclusion": conclusion}]}
 
@@ -2037,19 +2051,26 @@ class TestGVHardening(unittest.TestCase):
         bind = gv._Evaluation.ci_binding
         verbatim = {"record": {"headRefOid": HEAD}, "pm": {"action": "applies_verbatim"}, "bound_merge": MERGE}
         rerun = dict(verbatim, pm={"action": "full_required_gate_rerun"})
-        merge_ref = {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"}
+        # Fix batch 2: the binding also carries the merge ref's expected PR context (4th element).
+        verbatim["record"]["target_branch"] = "main"
+        merge_ref = {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4", "base_oid": "b720c68"}
         self.assertEqual(bind({"tested_subject": merge_ref}, "prior_gate", verbatim),
-                         ("merge_ref", ("pull_request",), HEAD))
+                         ("merge_ref", ("pull_request",), HEAD,
+                          {"head": HEAD, "base_ref": "main", "base_sha": "b720c68"}))
         self.assertEqual(bind({"tested_subject": {"sha": "4e683b4", "kind": "head"}}, "test_proof", verbatim),
-                         ("head", ("push", "workflow_dispatch"), HEAD))
+                         ("head", ("push", "workflow_dispatch"), HEAD, None))
         for subject in (merge_ref, {"sha": "d44f1e0", "kind": "head"}, {"sha": "d44f1e0"}, None):
             with self.subTest(rerun_subject=subject):
                 self.assertEqual(bind({"tested_subject": subject}, "post_merge_rerun", verbatim),
-                                 ("rerun", ("push", "workflow_dispatch"), MERGE))
+                                 ("rerun", ("push", "workflow_dispatch"), MERGE, None))
                 self.assertEqual(bind({"tested_subject": subject}, "test_proof", rerun)[2], MERGE)
         stale = bind({"tested_subject": dict(merge_ref, head="8b1c2d3")}, "prior_gate", verbatim)
         self.assertEqual(stale[:2], ("not_complete", "ci_subject_mismatch"))
-        for unbound in (None, {}, {"kind": "merge_ref"}, {"sha": "7a0b5d1", "head": "4e683b4"}, [1]):
+        no_branch = dict(verbatim, record={"headRefOid": HEAD})
+        self.assertEqual(bind({"tested_subject": merge_ref}, "prior_gate", no_branch)[:2],
+                         ("inconclusive", "ci_subject_unbound"))
+        no_base = {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"}
+        for unbound in (None, {}, {"kind": "merge_ref"}, {"sha": "7a0b5d1", "head": "4e683b4"}, [1], no_base):
             with self.subTest(unbound=unbound):
                 self.assertEqual(bind({"tested_subject": unbound}, "prior_gate", verbatim)[:2],
                                  ("inconclusive", "ci_subject_unbound"))
@@ -2181,11 +2202,31 @@ class TestGVHardening(unittest.TestCase):
                 self.assertNotVerified(result, "inconclusive", "ci_run_event_unbound")
 
     def test_fb1_pull_request_run_for_another_pr_is_not_complete(self):
+        # Fix batch 2 (R2-B1b) changed this: a listing with no entry for this PR is missing
+        # context, inconclusive ci_run_pr_context_missing (was not_complete, field pull_requests).
         result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
-            answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=(77,))))
+            answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD,
+                                              prs=[pr_entry(number=77)])))
+        self.assertNotVerified(result, "inconclusive", "ci_run_pr_context_missing")
+
+    # Fix batch 2 (round-2 review R2-B1): a pull_request run binds this PR's own API context.
+
+    def test_fb2_r2b1_contradictory_base_ref_is_not_complete(self):
+        # Reviewer repro: make_verbatim; the run lists PR 10 at HEAD, but based on release at a0b1c2d.
+        lying = pr_entry(base_ref="release", base_sha="a0b1c2d" + "0" * 33)
+        result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
+            answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=[lying])))
         self.assertNotVerified(result, "not_complete", "ci_run_api_mismatch")
-        self.assertIn("pull_requests", {r["detail"]["field"] for r in result.record["reason_codes"]
-                                        if r["code"] == "ci_run_api_mismatch"})
+        fields_seen = {r["detail"]["field"] for r in result.record["reason_codes"] if r["code"] == "ci_run_api_mismatch"}
+        self.assertEqual(fields_seen, {"pr.base_ref"})
+        honest, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answer_base)
+        self.assertEqual(honest.outcome, "verified", honest.record["reason_codes"])
+
+    def test_fb2_r2b1b_empty_pr_listing_is_inconclusive(self):
+        # Reviewer's R2_empty_PR_listing_no_context case (a fork PR's run lists none, too).
+        result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
+            answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=[])))
+        self.assertNotVerified(result, "inconclusive", "ci_run_pr_context_missing")
 
     def test_fb1_workflow_dispatch_is_accepted_only_where_push_is(self):
         rerun, _, _ = scenario(actions=False, mutate_gh=answers(
@@ -2196,19 +2237,22 @@ class TestGVHardening(unittest.TestCase):
         self.assertNotVerified(merge_ref, "not_complete", "ci_run_api_mismatch")
 
     def test_fb1_subject_classifier_is_shared_and_fails_closed(self):
+        # Fix batch 2: the classifier also returns the merge ref's base_oid (3rd element).
         table = {
-            ("merge_ref", "4e683b4"): {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"},
-            ("merge_ref", None): {"sha": "7a0b5d1", "kind": "merge_ref"},
-            ("head", "d44f1e0"): {"sha": "d44f1e0", "kind": "head"},
-            ("head", None): {"kind": "head"},
-            (None, None): {"sha": "7a0b5d1", "head": "4e683b4"},
+            ("merge_ref", "4e683b4", "b720c68"): {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4",
+                                                  "base_oid": "b720c68"},
+            ("merge_ref", "4e683b4", None): {"sha": "7a0b5d1", "kind": "merge_ref", "head": "4e683b4"},
+            ("merge_ref", None, None): {"sha": "7a0b5d1", "kind": "merge_ref"},
+            ("head", "d44f1e0", None): {"sha": "d44f1e0", "kind": "head", "base_oid": "b720c68"},
+            ("head", None, None): {"kind": "head"},
+            (None, None, None): {"sha": "7a0b5d1", "head": "4e683b4"},
         }
         for expected, subject in table.items():
             with self.subTest(subject=subject):
                 self.assertEqual(gv._ci_subject(subject), expected)
         for subject in ("d44f1e0", None, [1], {"sha": "d44f1e0", "kind": "merge"}, {"kind": ["head"]}):
             with self.subTest(subject=subject):
-                self.assertEqual(gv._ci_subject(subject), (None, None))
+                self.assertEqual(gv._ci_subject(subject), (None, None, None))
         # The synthesizer answers only through the module's classifier: an unclassified subject
         # gets no answer at all, so the read is unreadable rather than silently mapped.
         responses = {}
@@ -2282,6 +2326,57 @@ class TestGVHardening(unittest.TestCase):
                     if consumer == "prior_gate":
                         answer_run(g, 124, event="pull_request", head_sha=HEAD, job="lint")
                 result, _, _ = scenario(base, actions=False, mutate_gh=honest)
+                self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+
+    def test_fb2_pr_context_table_on_every_consumer_that_accepts_a_pull_request_run(self):
+        # Synthesis OFF. The consumers that accept a pull_request run are the pre-merge ones: run 123
+        # in a verbatim merge (test_proof and prior_gate both read it) and run 124 (prior_gate only).
+        # Each row keeps event pull_request and head_sha HEAD, so only the PR context is wrong.
+        def drop_base_oid(run):
+            def apply(d):
+                next(r for r in pr(d)["ci_runs"] if r["run"] == run)["tested_subject"].pop("base_oid")
+            return apply
+
+        rows = {
+            "pr_head": ([], [pr_entry(head="8b1c2d3" + "0" * 33)], "not_complete", "ci_run_api_mismatch", "pr.head"),
+            "base_ref": ([], [pr_entry(base_ref="release")], "not_complete", "ci_run_api_mismatch", "pr.base_ref"),
+            "base_repo": ([], [pr_entry(repo="OTHER/fork")], "not_complete", "ci_run_api_mismatch", "pr.base_repo"),
+            "base_sha": ([], [pr_entry(base_sha="a0b1c2d" + "0" * 33)], "inconclusive", "ci_run_base_unconfirmed",
+                         None),
+            "empty_list": ([], [], "inconclusive", "ci_run_pr_context_missing", None),
+            "wrong_number": ([], [pr_entry(number=77)], "inconclusive", "ci_run_pr_context_missing", None),
+            "listed_twice": ([], [pr_entry(), pr_entry()], "inconclusive", "ci_run_pr_context_missing", None),
+            "incomplete_entry": ([], [{"number": 10, "head": {"sha": HEAD}}], "inconclusive",
+                                 "ci_run_pr_context_missing", None),
+            "merge_ref_no_base_oid": (["drop"], [pr_entry()], "inconclusive", "ci_subject_unbound", None),
+        }
+        paths = {
+            ("test_proof", "prior_gate"): (make_verbatim, 123, "build"),
+            ("prior_gate",): (prior_gate_lint_124, 124, "lint"),
+        }
+        for consumers, (base, run, job) in paths.items():
+            for name, (steps, prs, outcome, code, field_name) in rows.items():
+                with self.subTest(run=run, row=name):
+                    def mutate(d, base=base, steps=steps, run=run):
+                        base(d)
+                        if steps:
+                            drop_base_oid(run)(d)
+
+                    def lying(g, run=run, job=job, prs=prs):
+                        answer_base(g)
+                        answer_run(g, 124, event="pull_request", head_sha=HEAD, job="lint")
+                        answer_run(g, run, event="pull_request", head_sha=HEAD, job=job, prs=prs)
+                    result, _, _ = scenario(mutate, actions=False, mutate_gh=lying)
+                    self.assertNotVerified(result, outcome, code)
+                    hits = [r["detail"] for r in result.record["reason_codes"] if r["code"] == code]
+                    self.assertLessEqual(set(consumers), {d.get("consumer") for d in hits}, hits)
+                    if field_name:
+                        self.assertIn(field_name, {d.get("field") for d in hits})
+        # Honest controls (unchanged): both paths verify with the honest PR context.
+        for consumers, (base, run, job) in paths.items():
+            with self.subTest(run=run, row="honest"):
+                result, _, _ = scenario(base, actions=False, mutate_gh=answers(
+                    answer_base, lambda g: answer_run(g, 124, event="pull_request", head_sha=HEAD, job="lint")))
                 self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
 
     def test_l195_2a_local_and_approved_fallback_entries_make_no_actions_read(self):

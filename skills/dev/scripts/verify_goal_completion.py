@@ -87,12 +87,20 @@ ledger's ``kind``/``head`` alone (fix batch 1). A post-merge rerun, including
 test proof under ``full_required_gate_rerun``, must be a ``push`` or
 ``workflow_dispatch`` run at the recorded merge sha, whatever its subject says.
 Any other run is classified by ``_ci_subject``: a merge ref must be a
-``pull_request`` run (listing this PR when the API lists any) whose
-``head_sha`` is the merge ref's ``head``, which must be the PR head; a
-head-kind subject must be a ``push`` or ``workflow_dispatch`` run at its
-``sha``, which must be the PR head. A missing or unknown kind, or a merge ref
-with no ``head``, is ``inconclusive`` (``ci_subject_unbound``) with no
-fallback; a subject naming another commit than the PR head is ``not_complete``
+``pull_request`` run whose ``head_sha`` is the merge ref's ``head``, which must
+be the PR head; a head-kind subject must be a ``push`` or ``workflow_dispatch``
+run at its ``sha``, which must be the PR head. A ``pull_request`` run must also
+carry this PR's own context (fix batch 2, ``confirm_pr_context``): exactly one
+``pull_requests`` entry with this PR's number, whose ``head.sha`` is the PR
+head, ``base.repo.full_name`` the goal repository and ``base.ref`` the PR's base
+branch (else ``not_complete`` ``ci_run_api_mismatch``, field ``pr.head``,
+``pr.base_repo`` or ``pr.base_ref``), and whose ``base.sha`` is the subject's
+``base_oid`` (else ``inconclusive`` ``ci_run_base_unconfirmed``). No entry for
+this PR, an empty list, several entries or an incomplete entry is
+``inconclusive`` (``ci_run_pr_context_missing``): a fork PR's ``pull_request``
+run is never GV CI proof in v2.2. A missing or unknown kind, or a merge ref
+with no ``head`` or no ``base_oid``, is ``inconclusive``
+(``ci_subject_unbound``) with no fallback; a subject naming another commit than the PR head is ``not_complete``
 (``ci_subject_mismatch``); a missing or other event is ``inconclusive``
 (``ci_run_event_unbound``). A read that fails after the D3 retries, or an answer
 of the wrong shape, is ``inconclusive`` (``ci_run_unreadable``, naming the
@@ -629,19 +637,20 @@ _KNOWN_CI_EVENTS = ("pull_request", "push", "workflow_dispatch")
 
 def _ci_subject(subject):
     """The one classifier of a ``ci_runs`` tested subject (fix batch 1, shared
-    with the tests' synthesizer). Returns (class, sha): a ``merge_ref`` with its
-    recorded ``head`` (what a ``pull_request`` run reports), or a ``head`` with
-    its ``sha``. A missing binding field gives (class, None); a missing or
-    unknown kind, or a subject that is not a map, gives (None, None). There is
-    no fallback between the two fields."""
+    with the tests' synthesizer). Returns (class, sha, base): a ``merge_ref``
+    with its recorded ``head`` (what a ``pull_request`` run reports) and its
+    ``base_oid`` (fix batch 2), or a ``head`` with its ``sha`` and no base. A
+    missing binding field is None; a missing or unknown kind, or a subject that
+    is not a map, gives (None, None, None). There is no fallback between
+    fields."""
     if not isinstance(subject, dict):
-        return None, None
+        return None, None, None
     kind = subject.get("kind")
     if kind == "merge_ref":
-        return "merge_ref", _sha(subject.get("head"))
+        return "merge_ref", _sha(subject.get("head")), _sha(subject.get("base_oid"))
     if kind == "head":
-        return "head", _sha(subject.get("sha"))
-    return None, None
+        return "head", _sha(subject.get("sha")), None
+    return None, None, None
 
 
 def _is_github_run_id(value) -> bool:
@@ -1483,8 +1492,12 @@ class _Evaluation:
     @staticmethod
     def ci_binding(entry, consumer, ctx):
         """The ONE place the expected Actions answer is computed (fix batch 1).
-        Returns (class, allowed events, expected head_sha), or (cls, code,
-        detail) when it cannot be bound.
+        Returns (class, allowed events, expected head_sha, expected PR context),
+        or (cls, code, detail) when it cannot be bound. The PR context is None
+        except for a merge ref (fix batch 2): {head, base_ref, base_sha}, the
+        PR head, the PR's base branch (``target_branch``, which the fresh PR read
+        must match or the PR is not_complete ``wrong_base``) and the subject's
+        ``base_oid``. A merge ref with no ``base_oid`` is unbound.
 
         The expectation comes from authoritative facts, never from the entry's
         ``kind``/``head`` alone. A post-merge rerun (the ``post_merge_rerun``
@@ -1504,16 +1517,72 @@ class _Evaluation:
             merge = _sha(ctx.get("bound_merge"))
             if merge is None:
                 return INCONCLUSIVE, "ci_subject_unbound", {"class": "rerun", "why": "merge sha unbound"}
-            return "rerun", _CI_EVENTS["rerun"], merge
-        cls, sha = _ci_subject(entry.get("tested_subject"))
-        if cls is None or sha is None:
+            return "rerun", _CI_EVENTS["rerun"], merge, None
+        cls, sha, base_oid = _ci_subject(entry.get("tested_subject"))
+        if cls is None or sha is None or (cls == "merge_ref" and base_oid is None):
             return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "tested_subject": entry.get("tested_subject")}
         pr_head = _sha(rec.get("headRefOid"))
         if pr_head is None:
             return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "why": "PR head unbound"}
         if not _sha_eq(sha, pr_head):
             return NOT_COMPLETE, "ci_subject_mismatch", {"class": cls, "tested": sha, "pr_head": pr_head}
-        return cls, _CI_EVENTS[cls], pr_head
+        if cls != "merge_ref":
+            return cls, _CI_EVENTS[cls], pr_head, None
+        branch = rec.get("target_branch")
+        if not isinstance(branch, str) or not branch:
+            return INCONCLUSIVE, "ci_subject_unbound", {"class": cls, "why": "PR base branch unbound"}
+        return cls, _CI_EVENTS[cls], pr_head, {"head": pr_head, "base_ref": branch, "base_sha": base_oid}
+
+    def confirm_pr_context(self, run_data, pr_context, ctx, base):
+        """Fix batch 2 (R2-B1): a ``pull_request`` run is CI proof for a merge
+        ref only when the API's own PR context binds it to this PR, this head and
+        this base. None when accepted, else (cls, code, detail).
+
+        Exactly one ``pull_requests`` entry must carry this PR's number. None (an
+        empty list, as a fork PR's run reports, or only other PRs), several, or
+        an entry lacking head/base fields is inconclusive
+        ``ci_run_pr_context_missing``: a fork PR's ``pull_request`` run is never
+        GV CI proof in v2.2. The entry's ``head.sha`` must be the PR head,
+        ``base.repo.full_name`` the goal repository and ``base.ref`` the PR's
+        base branch; a mismatch is not_complete ``ci_run_api_mismatch`` (fields
+        ``pr.head``, ``pr.base_repo``, ``pr.base_ref``). ``base.sha`` must equal
+        the subject's ``base_oid``. A difference is inconclusive
+        ``ci_run_base_unconfirmed``, not a proven contradiction: GitHub does not
+        document that field as the base the run merged."""
+        def missing(why, **detail):
+            return INCONCLUSIVE, "ci_run_pr_context_missing", dict(base, why=why, **detail)
+
+        def mismatch(name, api, want):
+            return NOT_COMPLETE, "ci_run_api_mismatch", dict(base, field=name, api=api, expected=want)
+
+        if not isinstance(pr_context, dict):
+            return missing("no PR context is bound for this subject")
+        listed = run_data.get("pull_requests")
+        if not isinstance(listed, list) or not all(isinstance(p, dict) for p in listed):
+            return INCONCLUSIVE, "ci_run_unreadable", dict(
+                base, read=f"actions-run:{base['run']}/attempt-{base['attempt']}", cause="unexpected_shape")
+        mine = [p for p in listed if str(p.get("number")) == str(ctx.get("number"))]
+        if not mine:
+            return missing("this PR is not listed", listed=[p.get("number") for p in listed])
+        if len(mine) > 1:
+            return missing("this PR is listed more than once")
+        head = mine[0].get("head") if isinstance(mine[0].get("head"), dict) else {}
+        pr_base = mine[0].get("base") if isinstance(mine[0].get("base"), dict) else {}
+        repo = pr_base.get("repo") if isinstance(pr_base.get("repo"), dict) else {}
+        head_sha, base_ref, base_sha = head.get("sha"), pr_base.get("ref"), pr_base.get("sha")
+        base_repo = repo.get("full_name")
+        if _sha(head_sha) is None or _sha(base_sha) is None or not isinstance(base_ref, str) \
+                or not isinstance(base_repo, str):
+            return missing("the listed PR context is incomplete")
+        if not _sha_eq(head_sha, pr_context["head"]):
+            return mismatch("pr.head", head_sha, pr_context["head"])
+        if base_repo.lower() != self.repo.lower():
+            return mismatch("pr.base_repo", base_repo, self.repo)
+        if base_ref != pr_context["base_ref"]:
+            return mismatch("pr.base_ref", base_ref, pr_context["base_ref"])
+        if not _sha_eq(base_sha, pr_context["base_sha"]):
+            return INCONCLUSIVE, "ci_run_base_unconfirmed", dict(base, api=base_sha, expected=pr_context["base_sha"])
+        return None
 
     def confirm_ci_run(self, entry, consumer, ctx):
         """The one CI-proof read (L195-2a): confirm a consumed CI run entry
@@ -1531,7 +1600,7 @@ class _Evaluation:
         binding = self.ci_binding(entry, consumer, ctx)
         if binding[0] in (INCONCLUSIVE, NOT_COMPLETE):
             return binding[0], binding[1], dict(base, **binding[2])
-        subject_class, events, expected = binding
+        subject_class, events, expected, pr_context = binding
         endpoint = f"repos/{self.repo}/actions/runs/{run_id}/attempts/{attempt}"
         reads = (("run", f"actions-run:{run_id}/attempt-{attempt}", endpoint, False),
                  ("jobs", f"actions-jobs:{run_id}/attempt-{attempt}", f"{endpoint}/jobs?per_page=100", True))
@@ -1569,13 +1638,9 @@ class _Evaluation:
         if event not in events:
             return mismatch("event", event, list(events))
         if event == "pull_request":
-            listed = run_data.get("pull_requests")
-            if not isinstance(listed, list) or not all(isinstance(p, dict) for p in listed):
-                return unreadable("actions-run", "unexpected_shape")
-            numbers = [str(p.get("number")) for p in listed]
-            # An empty list (a fork PR) leaves the head_sha binding below as the PR binding.
-            if numbers and str(ctx.get("number")) not in numbers:
-                return mismatch("pull_requests", numbers, ctx.get("number"))
+            failed = self.confirm_pr_context(run_data, pr_context, ctx, base)
+            if failed:
+                return failed
         if not _sha_eq(run_data.get("head_sha"), expected):
             return mismatch("head_sha", run_data.get("head_sha"), expected)
         named = [j for j in jobs_data["jobs"] if j.get("name") == job]
