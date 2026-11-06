@@ -849,6 +849,8 @@ def admit_recovery(state: RecoveryInput) -> Result:
     )
     if missing is not None:
         return _invalid("missing_required_field", {"step": 1, "field": missing})
+    if not isinstance(state.checkpoint_available, bool):
+        return _invalid("malformed_input", {"step": 1, "field": "checkpoint_available"})
     # Classify the note independent of the pause; step 2 applies the pause.
     note = classify_note(
         state.note_status,
@@ -862,7 +864,10 @@ def admit_recovery(state: RecoveryInput) -> Result:
     step1 = _validate_checkpoint_object(state.checkpoint)
     if not step1.ok:
         return _invalid(step1.reason, {**step1.detail, "step": 1})
-    if state.note_status == NOTE_CURRENT and state.checkpoint.degradation is not None:
+    # A note and its checkpoint must agree on degradation: a current note cannot
+    # record a degradation, and a degraded note must record one in the checkpoint
+    # itself (the receipt copies the checkpoint unchanged, sc-9.md l.61).
+    if (state.note_status == NOTE_CURRENT) != (state.checkpoint.degradation is None):
         return _invalid(
             "note_checkpoint_contradiction",
             {

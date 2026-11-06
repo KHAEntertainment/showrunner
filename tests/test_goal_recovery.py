@@ -142,10 +142,13 @@ class ResumeOrderTests(unittest.TestCase):
         cases = [
             (_input(checkpoint=None), 1, "missing_required_field"),
             (_input(note_status=None), 1, "missing_required_field"),
+            (_input(checkpoint_available="false"), 1, "malformed_input"),
+            (_input(note_status="missing", checkpoint_available="false"), 1, "malformed_input"),
             (_input(note_status="missing", checkpoint_available=False), 1, "recovery_evidence_unavailable"),
             (_input(checkpoint=_checkpoint(degradation="no_note")), 1, "note_checkpoint_contradiction"),
+            (_input(note_status="missing"), 1, "note_checkpoint_contradiction"),
             (_input(paused=True, resume_over_pause=True), 2, "resume_overrides_pause"),
-            (_input(note_status="stale", paused=True), 2, "resume_overrides_pause"),
+            (_input(note_status="stale", paused=True, checkpoint=_checkpoint(degradation="stale_note")), 2, "resume_overrides_pause"),
             (_input(outstanding_waits=None), 2, "missing_required_field"),
             (_input(outstanding_waits=("w-1",)), 2, "outstanding_waits_block"),
             (_input(protected_restrictions=("r-1",)), 2, "protected_restrictions_block"),
@@ -803,6 +806,37 @@ class HelperRefusalBranchTests(unittest.TestCase):
             res = rc.admit_recovery(value)
             self.assertFalse(res.ok, value)
             self.assertEqual(res.reason, "malformed_input", value)
+
+    def test_R3_1_checkpoint_available_must_be_bool(self):
+        # Any non-bool checkpoint_available is malformed_input at step 1.
+        for value in ("false", "true", 1, 0, ["true"], {}):
+            res = rc.admit_recovery(_input(checkpoint_available=value))
+            self.assertFalse(res.ok, value)
+            self.assertEqual(res.reason, "malformed_input", value)
+            self.assertEqual(res.detail["step"], 1)
+        # True and False still behave as today.
+        self.assertTrue(rc.admit_recovery(_input(checkpoint_available=True)).may_proceed)
+        res = rc.admit_recovery(_input(note_status="missing", checkpoint_available=False))
+        self.assertFalse(res.ok)
+        self.assertEqual(res.reason, "recovery_evidence_unavailable")
+
+    def test_QA_R2M_degraded_note_requires_checkpoint_degradation(self):
+        # A degraded note with a checkpoint whose degradation is None contradicts.
+        for status, degradation in (
+            ("missing", "no_note"),
+            ("failed", "failed_note"),
+            ("stale", "stale_note"),
+        ):
+            res = rc.admit_recovery(_input(note_status=status))
+            self.assertFalse(res.ok, status)
+            self.assertEqual(res.reason, "note_checkpoint_contradiction", status)
+            self.assertEqual(res.detail["step"], 1)
+            # With a matching degradation the fallback path proceeds.
+            res = rc.admit_recovery(
+                _input(note_status=status, checkpoint=_checkpoint(degradation=degradation))
+            )
+            self.assertTrue(res.may_proceed, (status, res.reason))
+            self.assertEqual(res.value.admission_outcome, "fallback_ledger_recovery", status)
 
 
 class CurrentStateInputTests(unittest.TestCase):
