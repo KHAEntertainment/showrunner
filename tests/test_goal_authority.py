@@ -569,6 +569,14 @@ def _new_begin_ctx(**changes):
     return ctx
 
 
+def _auth(ctx, **override):
+    """An accepted authority bound to exactly the Begin's operation."""
+    binding = {"actor": ctx["actor"], "run": ctx["run"], "target": ctx["target"], "head": ctx["head"],
+               "grant_id": ctx.get("grant_id")}
+    binding.update(override)
+    return ga.bind_authority(gr.Result("accept"), **binding)
+
+
 class AC4BeginContinue(unittest.TestCase):
     def test_ac4_contract_fixtures_evaluate_to_expected_outcome(self):
         authority = gr.Result("accept")
@@ -591,13 +599,13 @@ class AC4BeginContinue(unittest.TestCase):
         self.assertTrue(rotated.may_proceed)
         expired = ga.check_continue(_ctx(), ACK, now="2099-01-05T00:00:00Z")
         self.assertTrue(expired.may_proceed, expired)
-        stale_begin = ga.check_begin(_new_begin_ctx(grant_epoch=1), scope=_SCOPE, authority=gr.Result("accept"),
-                                     coordinator_epoch=2)
+        stale_begin = ga.check_begin(_new_begin_ctx(grant_epoch=1), scope=_SCOPE,
+                                     authority=_auth(_new_begin_ctx(grant_epoch=1)), coordinator_epoch=2)
         self.assertEqual(stale_begin.reason, "stale_epoch")
-        bad_epoch = ga.check_begin(_new_begin_ctx(grant_epoch="2"), scope=_SCOPE, authority=gr.Result("accept"),
-                                   coordinator_epoch=2)
+        bad_epoch = ga.check_begin(_new_begin_ctx(grant_epoch="2"), scope=_SCOPE,
+                                   authority=_auth(_new_begin_ctx(grant_epoch="2")), coordinator_epoch=2)
         self.assertEqual(bad_epoch.reason, "malformed_input")
-        late_begin = ga.check_begin(_new_begin_ctx(), scope=_SCOPE, authority=gr.Result("accept"),
+        late_begin = ga.check_begin(_new_begin_ctx(), scope=_SCOPE, authority=_auth(_new_begin_ctx()),
                                     now="2099-01-03T00:00:00Z")
         self.assertEqual(late_begin.reason, "grant_expired")
 
@@ -646,13 +654,15 @@ class AC4BeginContinue(unittest.TestCase):
         )
 
     def test_ac4_begin_checks_scope_and_authority(self):
-        ok = ga.check_begin(_new_begin_ctx(), scope=_SCOPE, authority=gr.Result("accept"))
-        self.assertTrue(ok.may_proceed)
+        ok = ga.check_begin(_new_begin_ctx(), scope=_SCOPE, authority=_auth(_new_begin_ctx()))
+        self.assertTrue(ok.may_proceed, ok)
         self.assertEqual(ga.check_begin(_new_begin_ctx(target="OWNER/other"), scope=_SCOPE,
-                                        authority=gr.Result("accept")).reason, "out_of_scope")
+                                        authority=_auth(_new_begin_ctx())).reason, "out_of_scope")
         self.assertEqual(ga.check_begin(_new_begin_ctx(), scope=_SCOPE, authority=None).reason, "no_authority")
         self.assertEqual(ga.check_begin(_new_begin_ctx(), scope=_SCOPE,
                                         authority=gr.Result("invalid", reason="x")).reason, "no_authority")
+        self.assertEqual(ga.check_begin(_new_begin_ctx(), scope=_SCOPE,
+                                        authority=gr.Result("accept")).reason, "no_authority_binding")
 
 
 # ---------------------------------------------------------------------------
@@ -819,6 +829,161 @@ class AC7OwnerReferenceCases(unittest.TestCase):
         self.assertEqual(ga.dispose_gate("final_review_rating").value.disposition, ga.PRESERVED)
         engineering_only = [{"id": "q", "question_kind": "engineering", "recommendation": "x"}]
         self.assertEqual(ga.next_question(engineering_only).value, [])
+
+
+# ---------------------------------------------------------------------------
+# Fix batch 1 — review round 1 findings B1-B9 (reviewer repro inputs)
+# ---------------------------------------------------------------------------
+
+HEAD_B = "sha256:" + "b" * 64
+
+
+class FixBatch1Regressions(unittest.TestCase):
+    def test_b1_decide_merge_requires_aware_now(self):
+        result = _decide(grant=_grant(expires_at="2099-01-01T11:00:00Z"), now=None)
+        self.assertEqual((result.outcome, result.reason), ("confirm_each", "now_missing"))
+        naive = _decide(now="2099-01-01T12:00:00")
+        self.assertEqual((naive.outcome, naive.reason), ("confirm_each", "now_not_timezone_qualified"))
+        self.assertEqual(_decide(grant=_grant(expires_at="2099-01-01T11:00:00Z")).reason, "grant_expired")
+
+    def test_b2_gate_result_from_another_head_is_stale(self):
+        result = _decide(request=_request(head=HEAD_B, reviewed_head=HEAD_B))
+        self.assertEqual((result.outcome, result.reason), ("blocked", "stale_gate_result"))
+        self.assertEqual(_gates().detail["checked_head"], HEAD)
+        self.assertEqual(_gates(external_review="pending").detail["checked_head"], HEAD)
+        # Composed across a head change: re-checking at the new head with evidence for it merges.
+        record_b = _record(head=HEAD_B)
+        for entry in record_b["evidence"]:
+            if "head" in entry:
+                entry["head"] = HEAD_B
+        gates_b = _gates(record_b, current_head=HEAD_B)
+        self.assertTrue(gates_b.may_proceed, gates_b)
+        merged = _decide(request=_request(head=HEAD_B, reviewed_head=HEAD_B), gates=gates_b)
+        self.assertEqual(merged.value["match_head_commit"], HEAD_B)
+        # Old evidence re-checked at the new head is refused by the gates themselves.
+        self.assertIn({"gate": "current_head", "reason": "head_mismatch"},
+                      _gates(current_head=HEAD_B).detail["failures"])
+
+    def test_b3_finish_deadline_is_bound_to_the_acknowledged_begin(self):
+        ack = copy.deepcopy(ACK)
+        ack["begin"]["grant_finish"] = "2099-01-02T12:00:00Z"
+        same = _ctx(begin={"grant_finish": "2099-01-02T12:00:00Z"})
+        dropped = _ctx()
+        extended = _ctx(begin={"grant_finish": "2099-01-09T00:00:00Z"})
+        self.assertEqual(ga.check_continue(dropped, ack, now="2099-01-03T00:00:00Z").reason, "changed_binding")
+        self.assertEqual(ga.check_continue(extended, ack, now="2099-01-03T00:00:00Z").reason, "changed_binding")
+        after = ga.check_continue(same, ack, now="2099-01-03T00:00:00Z")
+        self.assertEqual((after.outcome, after.reason), ("safe_point_only", "finish_deadline_passed"))
+        self.assertEqual(ga.check_continue(same, ack, now="2099-01-03T00:00:00Z", step="new_work").reason,
+                         "new_work_restricted")
+        later_caller = ga.check_continue(same, ack, now="2099-01-03T00:00:00Z", finish_deadline="2099-01-09T00:00:00Z")
+        self.assertEqual(later_caller.outcome, "safe_point_only")
+        self.assertTrue(ga.check_continue(same, ack, now="2099-01-02T11:00:00Z").may_proceed)
+
+    def test_b4_acknowledged_begin_is_validated_before_comparison(self):
+        for name in ("grant_id", "grant_kind", "grant_epoch", "grant_start", "grant_holder"):
+            with self.subTest(missing=name):
+                ack = copy.deepcopy(ACK)
+                ack["begin"][name] = None
+                ctx = _ctx(begin={name: None})
+                result = ga.check_continue(ctx, ack)
+                self.assertEqual((result.reason, result.detail["field"]),
+                                 ("acknowledged_begin_invalid", f"begin.{name}"))
+        typed = copy.deepcopy(ACK)
+        typed["begin"]["grant_epoch"] = "1"
+        self.assertEqual(ga.check_continue(_ctx(begin={"grant_epoch": "1"}), typed).reason, "acknowledged_begin_invalid")
+        done = copy.deepcopy(ACK)
+        done["begin"]["grant_state"] = "complete"
+        result = ga.check_continue(_ctx(), done)
+        self.assertEqual((result.reason, result.detail["source"]), ("not_ongoing", "acknowledged"))
+        # A valid Continue still never re-applies epoch or latest-start admission.
+        self.assertTrue(ga.check_continue(_ctx(), ACK, now="2099-01-05T00:00:00Z").may_proceed)
+
+    def test_b5_begin_requires_exact_binding(self):
+        ctx = _new_begin_ctx(grant_holder="synthetic-agent-999")
+        self.assertEqual(ga.check_begin(ctx, scope=_SCOPE, authority=_auth(ctx)).reason, "holder_mismatch")
+        ctx = _new_begin_ctx()
+        self.assertEqual(ga.check_begin(ctx, scope=_SCOPE, authority=gr.Result("accept")).reason,
+                         "no_authority_binding")
+        for field, value in (("actor", "synthetic-agent-999"), ("run", "synthetic-run-999"),
+                             ("target", "OWNER/other"), ("head", HEAD_B), ("grant_id", "synthetic-grant-999")):
+            with self.subTest(field=field):
+                result = ga.check_begin(ctx, scope=_SCOPE, authority=_auth(ctx, **{field: value}))
+                self.assertEqual((result.reason, result.detail["field"]), ("authority_binding_mismatch", field))
+        self.assertTrue(ga.check_begin(_new_begin_ctx(grant_holder=ctx["actor"]), scope=_SCOPE,
+                                       authority=_auth(ctx)).may_proceed)
+        import inspect
+        params = set(inspect.signature(ga.check_begin).parameters)
+        self.assertFalse(params & {"owner_approval", "approval", "second_review"})
+
+    def test_b6_identity_fails_closed_and_recorded_identity_is_authoritative(self):
+        ledger_identity = {"agent_id": "synthetic-agent-r9", "harness": "h", "model": "m",
+                           "family": "family-b", "route_source": "different_family"}
+        for member in ("agent_id", "harness", "model"):
+            with self.subTest(missing=member):
+                partial = dict(RECORD["evidence"][1]["evaluator_identity"])
+                partial.pop(member)
+                self.assertEqual(ga.check_review_level(_record(partial), "pass").reason, "reviewer_identity_unknown")
+        for malformed in ({}, None, "synthetic-agent-r1"):
+            with self.subTest(malformed=malformed):
+                record = _record()
+                record["evidence"][1]["evaluator_identity"] = malformed
+                result = ga.check_review_level(record, "pass", ledger_identity=ledger_identity)
+                self.assertEqual(result.reason, "reviewer_identity_unknown")
+        self.assertTrue(ga.check_review_level(_record(None), "pass", ledger_identity=ledger_identity).may_proceed)
+        bad_impl = _record(implementer_identity={"agent_id": "synthetic-agent-i1"})
+        self.assertEqual(ga.check_review_level(bad_impl, "pass", implementer_identity=RECORD["implementer_identity"]).reason,
+                         "implementer_identity_unknown")
+        self.assertEqual(ga.evaluate_conformance(bad_impl).reason, "implementer_identity_malformed")
+        legacy = _contract("sc-4", "accepted-documented-skip-below-qa.json")["input"]
+        self.assertTrue(ga.evaluate_conformance(legacy).may_proceed)
+
+    def test_b7_merge_gate_path_validates_review_evidence_shape(self):
+        record = _record()
+        record["evidence"][1].pop("evaluator")
+        self.assertEqual(ga.check_review_level(record, "pass").reason, "review_unnamed")
+        gates = _gates(record)
+        failures = {f["gate"]: f["reason"] for f in gates.detail["failures"]}
+        self.assertEqual(failures["record_shape"], "required_evidence_unnamed")
+        self.assertEqual(failures["review_level"], "review_unnamed")
+        merge = _decide(gates=gates)
+        self.assertEqual((merge.outcome, merge.reason), ("blocked", "gates_not_satisfied"))
+        no_report = _record()
+        no_report["evidence"][1]["report_ref"] = ""
+        self.assertEqual(_decide(gates=_gates(no_report)).reason, "gates_not_satisfied")
+
+    def test_b8_marks_contract_enforced(self):
+        bad_marks = (
+            [None] * 6,
+            RECORD["marks"][:5],
+            RECORD["marks"][:5] + [RECORD["marks"][0]],
+            RECORD["marks"][:5] + [dict(RECORD["marks"][5], foreman_mark="something else")],
+            RECORD["marks"][:5] + [dict(RECORD["marks"][5], state="done")],
+            RECORD["marks"][:5] + [dict(RECORD["marks"][5], dev_applicability="")],
+        )
+        for marks in bad_marks:
+            with self.subTest(marks=str(marks)[:60]):
+                record = _record(marks=copy.deepcopy(marks))
+                result = ga.evaluate_conformance(record)
+                self.assertEqual(result.outcome, "invalid")
+                self.assertIn(result.reason, ("marks_malformed", "marks_incomplete"))
+                self.assertEqual(result.detail["layer"], "shape")
+                self.assertEqual(_decide(gates=_gates(record)).reason, "gates_not_satisfied")
+        self.assertTrue(ga.evaluate_conformance(RECORD).may_proceed)
+
+    def test_b9_revision_needs_targets_before_release(self):
+        pending = ["dispatch-lane-2", "merge-pr-11"]
+        for message in ({"id": "m", "kind": "revise"},
+                        {"id": "m", "kind": "revise", "targets": []},
+                        {"id": "m", "kind": "revise", "targets": "merge-pr-11"},
+                        {"id": "m", "kind": "revise", "targets": [""]}):
+            with self.subTest(message=message):
+                result = ga.step_boundary(pending, [message], acknowledged_ids=["m"])
+                self.assertEqual(result.reason, "malformed_message")
+        unknown = ga.step_boundary(pending, [{"id": "m", "kind": "revise", "targets": ["lane-9"]}],
+                                   acknowledged_ids=["m"])
+        self.assertEqual(unknown.value["continue"], pending)
+        self.assertEqual(unknown.detail["unknown_targets"], ["lane-9"])
 
 
 # ---------------------------------------------------------------------------

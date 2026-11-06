@@ -67,6 +67,7 @@ __all__ = [
     "GATE_INVENTORY",
     "GROUPS",
     "UNRESOLVED_DECISIONS",
+    "FOREMAN_MARKS",
     "MergeLedger",
     "dispose_gate",
     "resolve_family",
@@ -88,6 +89,7 @@ __all__ = [
     "clear_halt",
     "check_action",
     "evaluate_authorization",
+    "bind_authority",
     "check_begin",
     "check_continue",
     "validate_delegated_record",
@@ -470,18 +472,18 @@ def _route_verdict(
     different_family_available=None,
 ) -> Result:
     """Does a recorded reviewer identity meet a D2 independent-review route
-    (SDP l.264-268) against the implementer's family?"""
-    if not isinstance(reviewer_identity, Mapping):
+    (SDP l.264-268) against the implementer's family? An identity missing
+    ``agent_id``, ``harness`` or ``model`` is unknown and never qualifies."""
+    if not _identity_complete(reviewer_identity):
         return _invalid("reviewer_identity_unknown")
+    if not _identity_complete(implementer_identity):
+        return _invalid("implementer_identity_unknown")
     route = reviewer_identity.get("route_source")
     if route not in ROUTE_SOURCES:
         return _invalid("route_unknown", {"route_source": route})
     if route not in QUALIFYING_ROUTES:
         return _invalid("route_not_qualifying", {"route_source": route})
-    if not _nonempty_str(reviewer_identity.get("agent_id")):
-        return _invalid("reviewer_identity_unknown")
-    implementer_id = (implementer_identity or {}).get("agent_id") if isinstance(implementer_identity, Mapping) else None
-    if implementer_id and implementer_id == reviewer_identity.get("agent_id"):
+    if implementer_identity["agent_id"] == reviewer_identity["agent_id"]:
         return _invalid("reviewer_is_implementer")
     reviewer_family = resolve_family(reviewer_identity, family_map)
     implementer_family = resolve_family(implementer_identity, family_map)
@@ -520,9 +522,46 @@ def _valid_memory_disclosure(value) -> bool:
     return False
 
 
+_IDENTITY_MEMBERS = ("agent_id", "harness", "model")
+
+
+def _identity_complete(identity) -> bool:
+    """A usable identity names ``agent_id``, ``harness`` and ``model``."""
+    return isinstance(identity, Mapping) and all(_nonempty_str(identity.get(k)) for k in _IDENTITY_MEMBERS)
+
+
 _SC4_REQUIRED = ("workflow", "policy_revision", "run", "lane", "head", "gate_applicability",
                  "evidence", "marks", "evaluator", "report_ref")
 _SC4_MARK_COUNT = 6
+# The six Foreman checklist marks (sc-4.md, Foreman mark -> Dev applicability).
+FOREMAN_MARKS = (
+    "workflow phase reported",
+    "acceptance lane",
+    "independent review",
+    "post-merge record for every merge",
+    "seat receipts current",
+    "lane upkeep",
+)
+
+
+def _marks_shape(marks) -> Result:
+    if not isinstance(marks, (list, tuple)) or len(marks) != _SC4_MARK_COUNT:
+        return _invalid("marks_incomplete", {"layer": "shape"})
+    seen = []
+    for mark in marks:
+        if not isinstance(mark, Mapping):
+            return _invalid("marks_malformed", {"layer": "shape"})
+        name = mark.get("foreman_mark")
+        if not _nonempty_str(name) or name.strip().lower() not in FOREMAN_MARKS:
+            return _invalid("marks_malformed", {"layer": "shape", "foreman_mark": name})
+        if not _nonempty_str(mark.get("dev_applicability")):
+            return _invalid("marks_malformed", {"layer": "shape", "foreman_mark": name, "field": "dev_applicability"})
+        if mark.get("state") not in EVIDENCE_STATES:
+            return _invalid("marks_malformed", {"layer": "shape", "foreman_mark": name, "field": "state"})
+        seen.append(name.strip().lower())
+    if sorted(seen) != sorted(FOREMAN_MARKS):
+        return _invalid("marks_malformed", {"layer": "shape", "reason": "each Foreman mark exactly once"})
+    return _accept()
 
 
 def _sc4_shape(record) -> Result:
@@ -543,9 +582,7 @@ def _sc4_shape(record) -> Result:
             return _invalid("required_evidence_unnamed", {"layer": "shape", "gate": entry["gate"]})
         if state == "valid-skip" and not _nonempty_str(entry.get("reason")):
             return _invalid("skip_without_reason", {"layer": "shape", "gate": entry["gate"]})
-    if len(record["marks"]) != _SC4_MARK_COUNT:
-        return _invalid("marks_incomplete", {"layer": "shape", "count": len(record["marks"])})
-    return _accept()
+    return _marks_shape(record["marks"])
 
 
 def _evidence_for(record, gate: str):
@@ -553,14 +590,21 @@ def _evidence_for(record, gate: str):
     return entries[0] if entries else None
 
 
-def evaluate_conformance(record, family_map: Optional[Mapping] = None) -> Result:
+def evaluate_conformance(record, family_map: Optional[Mapping] = None, implementer_identity=None) -> Result:
     """Evaluate an SC-4 ``conformance-v1`` record: ``accept`` or ``invalid``
     (the fixtures' ``reject``). Absence of ``evaluator_identity`` never rejects
     the record (it is resolved later against the ledger); a *recorded*
-    review identity is authoritative and must meet a D2 route."""
+    identity is authoritative: malformed, it rejects, and a recorded review
+    identity must meet a D2 route. ``implementer_identity`` is the producer's
+    ledger identity, used only when the record carries none."""
     shape = _sc4_shape(record)
     if not shape.may_proceed:
         return shape
+    for key in ("evaluator_identity", "implementer_identity"):
+        if key in record and not _identity_complete(record[key]):
+            return _invalid(f"{key}_malformed", {"layer": "gate"})
+    if "evaluator_identity" in record and record["evaluator_identity"].get("route_source") not in ROUTE_SOURCES:
+        return _invalid("evaluator_identity_malformed", {"layer": "gate", "field": "route_source"})
     head = record["head"]
     for entry in record["evidence"]:
         entry_head = entry.get("head")
@@ -579,7 +623,7 @@ def evaluate_conformance(record, family_map: Optional[Mapping] = None) -> Result
     if "evaluator_identity" in review:
         verdict = _route_verdict(
             review.get("evaluator_identity"),
-            record.get("implementer_identity"),
+            record["implementer_identity"] if "implementer_identity" in record else implementer_identity,
             family_map=family_map,
             single_provider_reason=record.get("single_provider_reason"),
             memory_disclosure=record.get("memory_disclosure"),
@@ -656,10 +700,13 @@ def check_review_level(
     different_family_available=None,
 ) -> Result:
     """D2 review-level rule (SDP l.262-269): CI required checks pass, plus an
-    independent review by a qualifying route. Identity comes from the review
-    evidence entry's ``evaluator_identity`` when present, else from the
-    caller's ledger identity; a missing identity is ``unknown`` and fails this
-    rule (never the record shape)."""
+    independent review by a qualifying route. The review entry must carry the
+    SC-4 ``required`` shape (evaluator and report). Identity comes from the
+    review entry's ``evaluator_identity`` when that key is present — recorded
+    identities are authoritative, so a malformed one fails and is never
+    replaced — and from the caller's ledger identity only when the key is
+    absent. A missing or incomplete identity is ``unknown`` and fails this
+    rule (never the record shape). The implementer works the same way."""
     if ci_required_checks != "pass":
         return _invalid("ci_required_checks_not_passed", {"ci": ci_required_checks})
     if not isinstance(record, Mapping):
@@ -667,14 +714,12 @@ def check_review_level(
     review = _evidence_for(record, "review")
     if review is None or review.get("state") != "required":
         return _invalid("review_missing")
+    if not (_nonempty_str(review.get("evaluator")) and _nonempty_str(review.get("report_ref"))):
+        return _invalid("review_unnamed")
     if review.get("head") not in (None, record.get("head")):
         return _invalid("review_stale_head")
-    reviewer = review.get("evaluator_identity") or ledger_identity
-    if not isinstance(reviewer, Mapping):
-        return _invalid("reviewer_identity_unknown")
-    implementer = record.get("implementer_identity") or implementer_identity
-    if not isinstance(implementer, Mapping):
-        return _invalid("implementer_identity_unknown")
+    reviewer = review["evaluator_identity"] if "evaluator_identity" in review else ledger_identity
+    implementer = record["implementer_identity"] if "implementer_identity" in record else implementer_identity
     return _route_verdict(
         reviewer,
         implementer,
@@ -722,9 +767,12 @@ def check_gates(
 ) -> Result:
     """Run every gate check for one PR. ``accept`` only when all pass; otherwise
     ``blocked`` with reason ``gates_not_satisfied`` and the failing gates in
-    ``detail['failures']`` (``[{gate, reason}]``). No owner approval, extra
-    review or local full-suite run is asked for beyond these inputs."""
+    ``detail['failures']`` (``[{gate, reason}]``). ``detail['checked_head']``
+    names the head these results are for; ``decide_merge`` refuses a result
+    checked at another head. No owner approval, extra review or local
+    full-suite run is asked for beyond these inputs."""
     checks = (
+        ("record_shape", _sc4_shape(record)),
         ("current_head", check_current_head(record, current_head)),
         ("destination", check_destination(destination_result)),
         ("qa", check_qa(record, qa_skip_allowed)),
@@ -743,7 +791,8 @@ def check_gates(
     failures = [{"gate": name, "reason": res.reason} for name, res in checks if not res.may_proceed]
     detail = {name: res.detail for name, res in checks if res.may_proceed and res.detail}
     if failures:
-        return _blocked("gates_not_satisfied", {"failures": failures})
+        return _blocked("gates_not_satisfied", {"failures": failures, "checked_head": current_head})
+    detail["checked_head"] = current_head
     return _accept(detail=detail)
 
 
@@ -894,10 +943,11 @@ def decide_merge(grant, ledger: MergeLedger, request, now, gates: Result, mode=M
     """Decide one automatic merge under a bounded grant.
 
     ``gates`` is the ``check_gates`` result for this PR at its current head.
-    Returns ``accept`` (with the merge method and ``match_head_commit``),
-    ``confirm_each`` (no bounded authority for this merge; the owner may
-    confirm it per push), ``blocked`` (gates or a post-merge halt prevent any
-    merge) or ``invalid``.
+    ``now`` is required and must be timezone-qualified: a merge is never
+    authorized without checking expiry. Returns ``accept`` (with the merge
+    method and ``match_head_commit``), ``confirm_each`` (no bounded authority
+    for this merge; the owner may confirm it per push), ``blocked`` (gates, a
+    stale gate result or a post-merge halt prevent any merge) or ``invalid``.
     """
     if not isinstance(ledger, MergeLedger) or not isinstance(request, Mapping):
         return _invalid("malformed_input")
@@ -905,6 +955,9 @@ def decide_merge(grant, ledger: MergeLedger, request, now, gates: Result, mode=M
         return _blocked("post_merge_failure_halt", {"halt_ref": ledger.halt_ref})
     if not isinstance(gates, Result):
         return _blocked("gates_not_evaluated")
+    checked_head = gates.detail.get("checked_head")
+    if not _nonempty_str(checked_head) or checked_head != request.get("head"):
+        return _blocked("stale_gate_result", {"checked_head": checked_head, "head": request.get("head")})
     failures = list(gates.detail.get("failures", ())) if not gates.may_proceed else []
     if not gates.may_proceed and (not failures or any(f.get("gate") != "review_level" for f in failures)):
         return _blocked("gates_not_satisfied", {"failures": failures})
@@ -918,6 +971,10 @@ def decide_merge(grant, ledger: MergeLedger, request, now, gates: Result, mode=M
             return _invalid("foreman_grant_missing")
     elif mode != MODE_STANDALONE:
         return _invalid("unknown_mode", {"mode": mode})
+    if now is None:
+        return _confirm_each("now_missing", {"field": "now"})
+    if _aware(now) is None:
+        return _confirm_each("now_not_timezone_qualified", {"field": "now"})
     if ledger.revoked_at is not None:
         return _confirm_each("grant_revoked", {"revoked_at": ledger.revoked_at})
     if not ledger.grant_in_force:
@@ -939,7 +996,7 @@ def decide_merge(grant, ledger: MergeLedger, request, now, gates: Result, mode=M
     if unlisted:
         return _confirm_each("unlisted_closing_issue", {"issues": unlisted})
     head = request.get("head")
-    if not _nonempty_str(head) or request.get("reviewed_head") != head:
+    if not _nonempty_str(head) or request.get("reviewed_head") != head or request.get("reviewed_head") != checked_head:
         return _confirm_each("head_changed", {"reviewed": request.get("reviewed_head"), "current": head})
     if request.get("head_match_available") is not True:
         return _confirm_each("no_head_match")
@@ -1008,7 +1065,8 @@ def check_action(ledger: MergeLedger, action_kind) -> Result:
 
 _SC2_REQUIRED = ("policy_ref", "policy_revision", "actor", "run", "operation", "target", "head", "result")
 _SC2_BINDINGS = ("actor", "run", "operation", "target", "head", "policy_ref", "policy_revision")
-_BEGIN_BINDINGS = ("grant_id", "grant_kind", "grant_holder", "grant_epoch", "grant_start")
+_BEGIN_BINDINGS = ("grant_id", "grant_kind", "grant_holder", "grant_epoch", "grant_start", "grant_finish")
+_AUTHORITY_BINDINGS = ("actor", "run", "target", "head")
 
 
 def _sc2_shape(ctx) -> Result:
@@ -1022,10 +1080,44 @@ def _sc2_shape(ctx) -> Result:
     return _accept()
 
 
+def bind_authority(authority: Result, *, actor, run, target, head, grant_id=None, operation=None) -> Result:
+    """Attach the operation bindings an authority check covered (pure: returns
+    a new ``Result``). ``check_begin`` accepts only a bound authority whose
+    bindings match the Begin exactly. A refused authority is returned as is."""
+    if not (isinstance(authority, Result) and authority.may_proceed):
+        return authority
+    binding = {"actor": actor, "run": run, "target": target, "head": head}
+    if grant_id is not None:
+        binding["grant_id"] = grant_id
+    if operation is not None:
+        binding["operation"] = operation
+    return Result(authority.outcome, reason=authority.reason, value=authority.value,
+                  detail={**authority.detail, "binding": binding})
+
+
+def _check_authority_binding(ctx, authority) -> Result:
+    if not (isinstance(authority, Result) and authority.may_proceed):
+        return _invalid("no_authority")
+    binding = authority.detail.get("binding")
+    if not isinstance(binding, Mapping):
+        return _invalid("no_authority_binding")
+    for name in _AUTHORITY_BINDINGS:
+        if not _nonempty_str(binding.get(name)) or binding.get(name) != ctx.get(name):
+            return _invalid("authority_binding_mismatch", {"field": name})
+    if "operation" in binding and binding["operation"] != ctx.get("operation"):
+        return _invalid("authority_binding_mismatch", {"field": "operation"})
+    if ("grant_id" in binding or "grant_id" in ctx) and binding.get("grant_id") != ctx.get("grant_id"):
+        return _invalid("authority_binding_mismatch", {"field": "grant_id"})
+    return _accept()
+
+
 def check_begin(ctx, *, scope, authority, paused=False, acknowledged_grants=(), now=None,
                 coordinator_epoch=None) -> Result:
     """Begin a new operation: exact binding, no pause, current scope and
-    authority. A Begin for an already-acknowledged grant is a replay."""
+    authority. ``authority`` must be an accepted ``Result`` carrying the
+    bindings it checked (see ``bind_authority``); a bare accept is not a
+    binding. No further approval is requested. A Begin for an
+    already-acknowledged grant is a replay."""
     shape = _sc2_shape(ctx)
     if not shape.may_proceed:
         return shape
@@ -1037,14 +1129,17 @@ def check_begin(ctx, *, scope, authority, paused=False, acknowledged_grants=(), 
         return _invalid("replayed_begin", {"grant_id": grant_id})
     if paused:
         return _invalid("paused")
+    if "grant_holder" in ctx and ctx["grant_holder"] != ctx["actor"]:
+        return _invalid("holder_mismatch")
     if not isinstance(scope, Mapping):
         return _invalid("scope_unknown")
     if ctx["target"] not in tuple(scope.get("targets", ())):
         return _invalid("out_of_scope", {"target": ctx["target"]})
     if ctx["operation"] not in tuple(scope.get("operations", ())):
         return _invalid("operation_out_of_scope", {"operation": ctx["operation"]})
-    if not (isinstance(authority, Result) and authority.may_proceed):
-        return _invalid("no_authority")
+    bound = _check_authority_binding(ctx, authority)
+    if not bound.may_proceed:
+        return bound
     if coordinator_epoch is not None and ctx.get("grant_epoch") is not None:
         epoch = ctx["grant_epoch"]
         if not (_is_int(epoch) and _is_int(coordinator_epoch)):
@@ -1060,6 +1155,33 @@ def check_begin(ctx, *, scope, authority, paused=False, acknowledged_grants=(), 
     return _accept(detail={"result": "Begin"})
 
 
+def _validate_acknowledged(acknowledged) -> Result:
+    """The stored acknowledged Begin must be complete and typed, and its
+    operation still ongoing, before anything is compared against it."""
+    if not isinstance(acknowledged, Mapping) or not isinstance(acknowledged.get("begin"), Mapping):
+        return _invalid("no_acknowledged_begin")
+    if acknowledged.get("result") != "Begin":
+        return _invalid("acknowledged_begin_invalid", {"field": "result"})
+    for name in _SC2_BINDINGS:
+        if not _nonempty_str(acknowledged.get(name)):
+            return _invalid("acknowledged_begin_invalid", {"field": name})
+    ack = acknowledged["begin"]
+    for name in ("grant_id", "grant_kind", "grant_holder"):
+        if not _nonempty_str(ack.get(name)):
+            return _invalid("acknowledged_begin_invalid", {"field": f"begin.{name}"})
+    if not _is_int(ack.get("grant_epoch")):
+        return _invalid("acknowledged_begin_invalid", {"field": "begin.grant_epoch"})
+    if _aware(ack.get("grant_start")) is None:
+        return _invalid("acknowledged_begin_invalid", {"field": "begin.grant_start"})
+    if "grant_finish" in ack and _aware(ack["grant_finish"]) is None:
+        return _invalid("acknowledged_begin_invalid", {"field": "begin.grant_finish"})
+    if ack["grant_holder"] != acknowledged["actor"]:
+        return _invalid("acknowledged_begin_invalid", {"field": "begin.grant_holder"})
+    if ack.get("grant_state") != "in_progress":
+        return _invalid("not_ongoing", {"grant_state": ack.get("grant_state"), "source": "acknowledged"})
+    return _accept()
+
+
 def check_continue(ctx, acknowledged, *, paused=False, now=None, finish_deadline=None, step=None) -> Result:
     """Continue an acknowledged operation. Checks stable id, holder, bindings,
     started-at and ongoing state; never re-applies epoch rotation or
@@ -1067,15 +1189,19 @@ def check_continue(ctx, acknowledged, *, paused=False, now=None, finish_deadline
     reaching a safe point is allowed (``safe_point_only``); new work is refused.
 
     ``acknowledged`` is the stored context of the acknowledged Begin (top-level
-    bindings plus its ``begin`` record). ``step`` is ``None``/``"safe_point"``
-    (finish or roll back the step in hand) or ``"new_work"``."""
+    bindings plus its ``begin`` record); it is validated first. The finish
+    deadline is the one stored on the acknowledged Begin (``grant_finish`` is
+    an immutable binding); a caller's ``finish_deadline`` can only make it
+    earlier, never later. ``step`` is ``None``/``"safe_point"`` (finish or
+    roll back the step in hand) or ``"new_work"``."""
     shape = _sc2_shape(ctx)
     if not shape.may_proceed:
         return shape
     if ctx["result"] != "Continue":
         return _invalid("not_a_continue")
-    if not isinstance(acknowledged, Mapping) or not isinstance(acknowledged.get("begin"), Mapping):
-        return _invalid("no_acknowledged_begin")
+    stored = _validate_acknowledged(acknowledged)
+    if not stored.may_proceed:
+        return stored
     begin = ctx.get("begin")
     if not isinstance(begin, Mapping):
         return _invalid("no_acknowledged_begin")
@@ -1088,7 +1214,7 @@ def check_continue(ctx, acknowledged, *, paused=False, now=None, finish_deadline
         if ctx.get(name) != acknowledged.get(name):
             return _invalid("changed_binding", {"field": name})
     for name in _BEGIN_BINDINGS:
-        if begin.get(name) != ack_begin.get(name):
+        if (name in begin) != (name in ack_begin) or begin.get(name) != ack_begin.get(name):
             return _invalid("changed_binding", {"field": f"begin.{name}"})
     if begin.get("grant_holder") != ctx["actor"]:
         return _invalid("holder_mismatch")
@@ -1096,13 +1222,20 @@ def check_continue(ctx, acknowledged, *, paused=False, now=None, finish_deadline
         return _invalid("not_ongoing", {"grant_state": begin.get("grant_state")})
     if step not in (None, "safe_point", "new_work"):
         return _invalid("unknown_step", {"step": step})
-    finish = finish_deadline if finish_deadline is not None else begin.get("grant_finish")
-    finish_passed = False
-    if finish is not None:
-        current, deadline = _aware(now), _aware(finish)
-        if current is None or deadline is None:
+    deadlines = []
+    if "grant_finish" in ack_begin:
+        deadlines.append(_aware(ack_begin["grant_finish"]))
+    if finish_deadline is not None:
+        caller_deadline = _aware(finish_deadline)
+        if caller_deadline is None:
             return _invalid("malformed_input", {"field": "finish_deadline"})
-        finish_passed = current >= deadline
+        deadlines.append(caller_deadline)
+    finish_passed = False
+    if deadlines:
+        current = _aware(now)
+        if current is None:
+            return _invalid("malformed_input", {"field": "now"})
+        finish_passed = current >= min(deadlines)
     if paused or finish_passed:
         cause = "paused" if paused else "finish_deadline_passed"
         if step == "new_work":
@@ -1158,6 +1291,11 @@ def step_boundary(pending, messages, acknowledged_ids=()) -> Result:
     msgs = raw
     if any(not _nonempty_str(m.get("id")) or m.get("kind") not in ("stop", "revise") for m in msgs):
         return _invalid("malformed_message")
+    for m in msgs:
+        if m["kind"] == "revise":
+            targets = m.get("targets")
+            if not isinstance(targets, (list, tuple)) or not targets or not all(_nonempty_str(t) for t in targets):
+                return _invalid("malformed_message", {"message": m["id"], "field": "targets"})
     unacked = [m["id"] for m in msgs if m["id"] not in set(acknowledged_ids)]
     if unacked:
         return _blocked("veto_unacknowledged", {"messages": unacked})
@@ -1165,10 +1303,12 @@ def step_boundary(pending, messages, acknowledged_ids=()) -> Result:
     if any(m["kind"] == "stop" for m in msgs):
         stopped = list(pending)
     else:
-        targets = {t for m in msgs for t in (m.get("targets") or ())}
+        targets = {t for m in msgs for t in m["targets"]}
         revised = [p for p in pending if p in targets]
     remaining = [p for p in pending if p not in stopped and p not in revised]
-    return _accept({"continue": remaining, "stopped": stopped, "revised": revised})
+    unknown = sorted({t for m in msgs if m["kind"] == "revise" for t in m["targets"]} - set(pending))
+    return _accept({"continue": remaining, "stopped": stopped, "revised": revised},
+                   {"unknown_targets": unknown} if unknown else None)
 
 
 def check_dependencies(action, open_questions) -> Result:
