@@ -1,0 +1,10 @@
+{
+  "description": "A complete D7.2 delegated-gate record (SDP l.226).",
+  "record": {
+    "gate": "architecture_checkpoint",
+    "decision": "keep the existing module boundary; add one new module",
+    "reasoning": "the approved plan names one new module and no interface change",
+    "evidence_pointer": ".agent/dev-state.md#architecture-checkpoint",
+    "reversal_path": "revert the module commit and re-plan at the next checkpoint"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "A merge request for one PR that satisfies grant-valid.json at its reviewed head.",
+  "request": {
+    "run_id": "synthetic-run-194",
+    "host": "github.com",
+    "repository": "OWNER/synthetic-repo",
+    "base": "main",
+    "pr": 11,
+    "head": "sha256:00000000000000000000000000000000000000000000000000000000000000a1",
+    "reviewed_head": "sha256:00000000000000000000000000000000000000000000000000000000000000a1",
+    "closing_issues": ["OWNER/synthetic-repo#1"],
+    "head_match_available": true
+  }
+}
