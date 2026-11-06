@@ -1,0 +1,100 @@
+{
+  "sc": "SC-4",
+  "version": "conformance-v1",
+  "kind": "accepted",
+  "name": "accepted-six-mark-mapping",
+  "input": {
+    "workflow": "synthetic-workflow",
+    "policy_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "run": "synthetic-run-031",
+    "lane": "synthetic-lane-031",
+    "head": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+    "gate_applicability": "qa_required",
+    "evidence": [
+      {
+        "gate": "qa",
+        "state": "required",
+        "evaluator": "synthetic-reviewer-011",
+        "report_ref": "synthetic-report-011",
+        "head": "sha256:0000000000000000000000000000000000000000000000000000000000000010"
+      },
+      {
+        "gate": "review",
+        "state": "required",
+        "evaluator": "synthetic-reviewer-012",
+        "report_ref": "synthetic-report-012",
+        "head": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
+        "evaluator_identity": {
+          "agent_id": "synthetic-agent-012",
+          "harness": "synthetic-harness-b",
+          "model": "synthetic-family-b:synthetic-model-b",
+          "route_source": "different_family"
+        }
+      },
+      {
+        "gate": "post_merge",
+        "state": "valid-skip",
+        "reason": "no merge in this run or lane"
+      },
+      {
+        "gate": "lane_upkeep",
+        "state": "valid-skip",
+        "reason": "no outstanding lane obligation in this run or lane"
+      }
+    ],
+    "marks": [
+      {
+        "foreman_mark": "workflow phase reported",
+        "dev_applicability": "`workflow`/`policy_revision` + `run`/`lane`/`head` recorded in `conformance-v1`",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "acceptance lane",
+        "dev_applicability": "current-head QA, or a valid recorded skip (D2 l.240)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "independent review",
+        "dev_applicability": "independent review — different model family, or clean-context same family on a single-provider run (D2 l.265)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "post-merge record for every merge",
+        "dev_applicability": "post-merge record + gate evidence at the applicable tree (D2 l.242)",
+        "state": "valid-skip"
+      },
+      {
+        "foreman_mark": "seat receipts current",
+        "dev_applicability": "lead/seat identity + custody (L1 custody finding 2)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "lane upkeep",
+        "dev_applicability": "lane lifecycle / obligations (D7.1)",
+        "state": "valid-skip"
+      }
+    ],
+    "evaluator": "synthetic-lead-011",
+    "evaluator_identity": {
+      "agent_id": "synthetic-agent-010",
+      "harness": "synthetic-harness-b",
+      "model": "synthetic-family-b:synthetic-model-b",
+      "route_source": "none"
+    },
+    "implementer_identity": {
+      "agent_id": "synthetic-agent-009",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a"
+    },
+    "report_ref": "synthetic-report-010"
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: all six Foreman checklist marks are mapped to their Dev applicability — the workflow phase is reported, the acceptance lane is met by current-head QA at the record's head, the independent review is required and met by a reviewer recorded from a different model family, the seat receipts are carried by the record's evaluator and its recorded identity, and the post-merge record and lane upkeep are documented skips (SC-4 accepted example, SDP l.543; STATUS_UPDATE.md l.26–l.34; D2 l.262–l.269). The reviewer's model family (`synthetic-family-b`) is compared with the implementer's (`synthetic-family-a`), never with the conformance evaluator's — the lead's own family is `synthetic-family-b` too, and it is not the basis of the comparison.",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/STATUS_UPDATE.md",
+    "revision_or_digest": "sha256:596358538eecdb6f410d5f2c3e70b8c64cb507d484d84e4cd09a9cea6394d4c4",
+    "sdp_line": 543
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

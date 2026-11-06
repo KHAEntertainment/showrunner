@@ -21,25 +21,55 @@
         "state": "required",
         "evaluator": "synthetic-reviewer-001",
         "report_ref": "synthetic-report-001"
+      },
+      {
+        "gate": "post_merge",
+        "state": "valid-skip",
+        "reason": "no merge in this run or lane"
+      },
+      {
+        "gate": "lane_upkeep",
+        "state": "valid-skip",
+        "reason": "no outstanding lane obligation in this run or lane"
       }
     ],
     "marks": [
       {
+        "foreman_mark": "workflow phase reported",
+        "dev_applicability": "`workflow`/`policy_revision` + `run`/`lane`/`head` recorded in `conformance-v1`",
+        "state": "required"
+      },
+      {
         "foreman_mark": "acceptance lane",
-        "dev_applicability": "current-head QA, or a valid recorded skip below the QA trigger (D2 l.240)",
+        "dev_applicability": "current-head QA, or a valid recorded skip (D2 l.240)",
         "state": "valid-skip"
       },
       {
         "foreman_mark": "independent review",
-        "dev_applicability": "independent review by a different family, or clean-context same family (D2 l.265)",
+        "dev_applicability": "independent review — different model family, or clean-context same family on a single-provider run (D2 l.265)",
         "state": "required"
+      },
+      {
+        "foreman_mark": "post-merge record for every merge",
+        "dev_applicability": "post-merge record + gate evidence at the applicable tree (D2 l.242)",
+        "state": "valid-skip"
+      },
+      {
+        "foreman_mark": "seat receipts current",
+        "dev_applicability": "lead/seat identity + custody (L1 custody finding 2)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "lane upkeep",
+        "dev_applicability": "lane lifecycle / obligations (D7.1)",
+        "state": "valid-skip"
       }
     ],
     "evaluator": "synthetic-lead-001",
     "report_ref": "synthetic-report-001"
   },
   "expected_outcome": "accept",
-  "expected_reason": "Accepted: a documented skip below the QA triggers, with the remaining mandatory review still required and attributed to an independent evaluator (SC-4 accepted example, SDP l.543).",
+  "expected_reason": "Accepted: a documented skip below the QA triggers, with the remaining mandatory review still required and attributed to an independent evaluator, and all six Foreman checklist marks mapped to their Dev applicability (SC-4 accepted example, SDP l.543; STATUS_UPDATE.md l.26–l.34). This is the legacy-compatibility accepted case: the review entry carries no `evaluator_identity`, in the form a v1 record had before the field was added. Its absence never rejects a v1 record on its own — the independent-review mark is established through the `evaluator` and `report_ref` references, which a consumer resolves against the producer's identity record (D2 l.269).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",

@@ -1,0 +1,33 @@
+{
+  "sc": "SC-9",
+  "version": "recovery-receipt-v1",
+  "kind": "rejected",
+  "name": "rejected-unknown-effect-replay",
+  "input": {
+    "run": "synthetic-run-043",
+    "session": "synthetic-session-043",
+    "event": "synthetic-event-043",
+    "adapter": "synthetic-adapter",
+    "version": "v0.2.1",
+    "note_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "freshness": "2099-01-02T00:00:00Z",
+    "authoritative_refs": [
+      "docs/plans/2099-01-01-synthetic-plan.md"
+    ],
+    "coverage": "top_level",
+    "degradation": null,
+    "event_accounting": {
+      "result": "counted_once"
+    },
+    "admission_outcome": "unknown_effect_replay"
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: a consequential action is repeated before the unknown prior outcome is reconciled. This is the only reason for rejection — every other part of the record is valid: the note revision and freshness are recorded, `authoritative_refs` is nonempty, the event is accounted exactly once (`counted_once`), and the adapter's coverage is recorded (SC-9 rejected example, SDP l.548; resume admission order at l.477 step 4).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
+    "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",
+    "sdp_line": 548
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

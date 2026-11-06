@@ -6,6 +6,8 @@ This directory is the P0-02 delivery package for `KHAEntertainment/showrunner#18
 
 L0b revision (2026-11-05) cites SDP `7177580c…`; l.540/544/545 unchanged from `fee134d9`.
 
+L0c revision (2026-11-06): additive v1 correction to SC-4/SC-9 — `conformance-v1` gains the optional `evaluator_identity`, the optional top-level `implementer_identity` and the optional evidence-entry `head` (their absence never rejects; a recorded identity must qualify, and the family comparison runs against the implementer, never against the conformance evaluator), the accepted SC-4 set maps all six Foreman checklist marks, every rejected SC-4/SC-9 fixture is single-cause, and SC-9 gains closed value lists (including the ledger-fallback outcome for a missing or degraded handoff) plus a field table split into `checkpoint-reference-v1` / `recovery-receipt-v1`. Version identifiers unchanged; no field renamed or removed.
+
 ## Global rules
 
 - **Representation rule** (SDP l.536): the named `*-v1` forms are concrete specification targets, not installed schemas or approved policy defaults. Preserve Dev `schema_version: 2` YAML profile and separate Foreman/board schemas. Version a projection without forcing every source to adopt the same serialization. Unsupported major versions, ambiguous identity, required missing fields, or malformed input yield explicit `invalid`/`unavailable` results. Additive optional fields require common-reader fixtures, not silent parser leniency. Never put operational policy values into examples and call them approved — all fixture values here are synthetic placeholders.
@@ -35,6 +37,7 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 
 | Fixture | SHA-256 |
 | --- | --- |
+| `fixtures/common/additive-optional-evaluator-identity-common-reader.json` | `92e122c35cb7b6730d9227e57b0e647525df8eaffa0cf717cbf3ef0b50f8454d` |
 | `fixtures/common/additive-optional-field-common-reader.json` | `98b3d63721db75191c5d1674a91fc84c3c216f89d723eaf87398e8ecb0772e54` |
 | `fixtures/common/ambiguous-identity.json` | `7c293bd06cde533d5a8b4f59c2a7a65f021dc77934a84d9948c7ba2324fc5a99` |
 | `fixtures/common/dev-ledger-unsupported-schema-version.json` | `dd279f985167f1e77677a919f7eaf9efc085a99e7bcbc5e5367fa4eb21a53136` |
@@ -59,9 +62,11 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-3/evidence-rejected-pr-assurance-noncurrent-no-stale-reason.json` | `de26c50b2513d4d16222dd030451f5707c34dd54fc3c7de737369fa285e35705` |
 | `fixtures/sc-3/evidence-accepted-parent-acceptance.json` | `11847ae86c6c9cae442f63f27b901962d003f514643f9da751bb33e94b210d72` |
 | `fixtures/sc-3/evidence-rejected-parent-acceptance-carries-result.json` | `45bb71c55b2e14bd42ccd839bc40cfd0f29987608494c755e45e4fe91d0d8710` |
-| `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `bc99b3afc095a0e772f9c95f031b9a397481545cb5bae6c024aa7c17dd5b8576` |
-| `fixtures/sc-4/accepted-mapped-acceptance-lane.json` | `5da5c4ee61e8e5951be3a3a27eb484ebd0ab82a7feafe69f686da134ac67cde0` |
-| `fixtures/sc-4/rejected-missing-mandatory-qa.json` | `ed6c30ce2968548c85132701fd5c7d8ff86766adfd5993dc4c60b1f3f9645284` |
+| `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `c471847b4530bd29fb2d1a7a4f88882491820edd75eda1eab5a5e01b6641c8ec` |
+| `fixtures/sc-4/accepted-six-mark-mapping.json` | `a77c932b81f918ad6ce8fa46ed6d62f8e920b1390beee44a5e2601d875f1f12f` |
+| `fixtures/sc-4/rejected-different-head-evidence.json` | `bca47061169c630608ebff862df3d582f8487a9df995306b91c25b97d3042f84` |
+| `fixtures/sc-4/rejected-inferred-family-diversity.json` | `d10b2b7ad6915df4c648d9eae72c2607a6347cd2748453eebfc727ce9250487f` |
+| `fixtures/sc-4/rejected-missing-mandatory-qa.json` | `0e1bd9c487920cd32b9e4759abc61d0565c41d2c74ab1ca34a45ea768bc06a3b` |
 | `fixtures/sc-5/accepted-drift-fallback.json` | `00d83cd67366a930c1575a7c2286d32c5e0c75132791668725bcb096e0f88965` |
 | `fixtures/sc-5/accepted-needs-input.json` | `4a870ec99b043c7770a38ac3f4536c860eea06f5e5943aeeeb11f1c25a62e680` |
 | `fixtures/sc-5/accepted-scoped-read-only-finding.json` | `81e1e7ace3f34a8ba71672b4e5966abec2f1db45135a94435dc47c1287b8d76c` |
@@ -76,5 +81,11 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-7/rejected-idle-inferred-done.json` | `b193a316eeecaacf216adb649a1b9011ec576551d02fa0042ee0274088646dfa` |
 | `fixtures/sc-8/accepted-compatible-existing-installation.json` | `abcf8cbf0ad23a8d58d101b96e86dd84ad70189fc39418396c2141e062815a36` |
 | `fixtures/sc-8/rejected-hot-replacement.json` | `218da61bbd97ff5889d91d71675d85bd9d2a1b0cc6ce737641f470d21464f38e` |
+| `fixtures/sc-9/accepted-checkpoint-reference-current-note.json` | `2a8f81ff310c934b9bfd27101f99b1dc5941c639b15ef373b059d9a9d960a59b` |
+| `fixtures/sc-9/accepted-missing-note-ledger-fallback.json` | `2997e8a394022872aa2cbdc4786b160213606aa544d128e1498cc5e41afdd24f` |
 | `fixtures/sc-9/accepted-restored-context-current-state-check.json` | `6c5a1ab2afcc376f252899b8db189453695cabf8e7e1a3598a4ecad98197cbd5` |
-| `fixtures/sc-9/rejected-stale-note-overriding-pause.json` | `ec109e5445b3e84223a0080835b9d90465593c1274048e029cfb6e205353acf0` |
+| `fixtures/sc-9/rejected-authority-renewal.json` | `24008d4b3031b57e04a59bdaf84d30d44b05dd303fad97b308a894e61e60a33e` |
+| `fixtures/sc-9/rejected-compact-as-rotation.json` | `df85ca05637ee253c2ed26e9996d78bcac1b1a8d5e084282c2aaf4538948b8b6` |
+| `fixtures/sc-9/rejected-duplicate-compaction-count.json` | `c479ca8c788172783b3749807054a257666805aa273789f0b8404f4a2f947a93` |
+| `fixtures/sc-9/rejected-stale-note-overriding-pause.json` | `ac2972557e34dcee88e741199da8cd006bd25222ab8131d5e4006f2ab180f01a` |
+| `fixtures/sc-9/rejected-unknown-effect-replay.json` | `e4e7fc706a19e7a22f5c34b5bd49b36f199131f83d5bfc520a0488b3070d2668` |

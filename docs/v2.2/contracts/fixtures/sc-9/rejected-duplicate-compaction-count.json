@@ -1,0 +1,33 @@
+{
+  "sc": "SC-9",
+  "version": "recovery-receipt-v1",
+  "kind": "rejected",
+  "name": "rejected-duplicate-compaction-count",
+  "input": {
+    "run": "synthetic-run-041",
+    "session": "synthetic-session-041",
+    "event": "synthetic-event-041",
+    "adapter": "synthetic-adapter",
+    "version": "v0.2.1",
+    "note_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "freshness": "2099-01-02T00:00:00Z",
+    "authoritative_refs": [
+      "docs/plans/2099-01-01-synthetic-plan.md"
+    ],
+    "coverage": "top_level",
+    "degradation": null,
+    "event_accounting": {
+      "result": "duplicate_compaction_count"
+    },
+    "admission_outcome": "restored_then_current_state_check"
+  },
+  "expected_outcome": "reject",
+  "expected_reason": "Rejected: the compaction event is counted more than once (`event_accounting.result` is `duplicate_compaction_count`), and the actual event must be counted once. This is the only reason for rejection — every other part of the record is valid: the note revision and freshness are recorded, `authoritative_refs` is nonempty, the adapter's coverage is recorded, and the admission outcome itself is the accepted restored-then-current-state-check outcome (SC-9 rejected example, SDP l.548; resume admission order at l.477 step 3).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
+    "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",
+    "sdp_line": 548
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

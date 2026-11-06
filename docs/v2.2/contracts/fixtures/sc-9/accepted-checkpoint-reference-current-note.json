@@ -1,0 +1,29 @@
+{
+  "sc": "SC-9",
+  "version": "checkpoint-reference-v1",
+  "kind": "accepted",
+  "name": "accepted-checkpoint-reference-current-note",
+  "input": {
+    "run": "synthetic-run-040",
+    "session": "synthetic-session-040",
+    "event": "synthetic-event-040",
+    "adapter": "synthetic-adapter",
+    "version": "v0.2.1",
+    "note_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "freshness": "2099-01-02T00:00:00Z",
+    "authoritative_refs": [
+      "docs/plans/2099-01-01-synthetic-plan.md"
+    ],
+    "coverage": "top_level",
+    "degradation": null
+  },
+  "expected_outcome": "accept",
+  "expected_reason": "Accepted: a checkpoint reference to a current note — the run/session/event identity, the adapter and version, the note revision and freshness and the authoritative references are recorded, and the adapter's coverage for this session is recorded. The receipt fields `event_accounting` and `admission_outcome` belong to `recovery-receipt-v1` and are not part of this record (SC-9 field tables, SDP l.548; resume admission order at l.477 step 1).",
+  "retained_source": {
+    "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
+    "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",
+    "sdp_line": 548
+  },
+  "status": "not-run",
+  "counterpart_acceptance": "pending"
+}

@@ -11,16 +11,18 @@
     "version": "v0.2.1",
     "note_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "freshness": "2099-01-01T00:00:00Z",
-    "authoritative_refs": [],
+    "authoritative_refs": [
+      "docs/plans/2099-01-01-synthetic-plan.md"
+    ],
     "coverage": "top_level",
     "degradation": "stale_note",
     "event_accounting": {
-      "result": "duplicate_compaction_count"
+      "result": "counted_once"
     },
     "admission_outcome": "resume_overrides_pause"
   },
   "expected_outcome": "reject",
-  "expected_reason": "Rejected: a stale note overriding a pause with a duplicate compaction count — a stale note must not override a pause, and compaction is not rotation (SC-9 rejected example, SDP l.548; H1 l.477).",
+  "expected_reason": "Rejected: a stale note was applied over an owner pause — the admission outcome resumes over the pause, and a plugin resume prompt wakes recovery, not owner-paused work. This is the only reason for rejection — every other part of the record is valid: the note revision and freshness are recorded, `authoritative_refs` is nonempty, the event is accounted exactly once (`counted_once`), and the adapter's coverage is recorded (SC-9 rejected example, SDP l.548; resume admission order at l.477 step 2).",
   "retained_source": {
     "path": "~/.claude/skills/foreman-showrunner/templates/HANDOFF_PACKET.md",
     "revision_or_digest": "sha256:bfcd4028a1be55a02ce173bcfe4cf0cd9666d1f6d0d80b153ad8403de23adf15",

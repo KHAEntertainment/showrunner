@@ -12,20 +12,76 @@
     "gate_applicability": "qa_required",
     "evidence": [
       {
-        "gate": "qa",
-        "state": "failed"
+        "gate": "review",
+        "state": "required",
+        "evaluator": "synthetic-reviewer-003",
+        "report_ref": "synthetic-report-002",
+        "evaluator_identity": {
+          "agent_id": "synthetic-agent-003",
+          "harness": "synthetic-harness-b",
+          "model": "synthetic-family-b:synthetic-model-b",
+          "route_source": "different_family"
+        }
       },
       {
-        "gate": "review",
-        "state": "failed",
-        "report_ref": "synthetic-report-002"
+        "gate": "post_merge",
+        "state": "valid-skip",
+        "reason": "no merge in this run or lane"
+      },
+      {
+        "gate": "lane_upkeep",
+        "state": "valid-skip",
+        "reason": "no outstanding lane obligation in this run or lane"
+      }
+    ],
+    "marks": [
+      {
+        "foreman_mark": "workflow phase reported",
+        "dev_applicability": "`workflow`/`policy_revision` + `run`/`lane`/`head` recorded in `conformance-v1`",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "acceptance lane",
+        "dev_applicability": "current-head QA, or a valid recorded skip (D2 l.240)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "independent review",
+        "dev_applicability": "independent review — different model family, or clean-context same family on a single-provider run (D2 l.265)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "post-merge record for every merge",
+        "dev_applicability": "post-merge record + gate evidence at the applicable tree (D2 l.242)",
+        "state": "valid-skip"
+      },
+      {
+        "foreman_mark": "seat receipts current",
+        "dev_applicability": "lead/seat identity + custody (L1 custody finding 2)",
+        "state": "required"
+      },
+      {
+        "foreman_mark": "lane upkeep",
+        "dev_applicability": "lane lifecycle / obligations (D7.1)",
+        "state": "valid-skip"
       }
     ],
     "evaluator": "synthetic-lead-001",
+    "evaluator_identity": {
+      "agent_id": "synthetic-agent-002",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a",
+      "route_source": "none"
+    },
+    "implementer_identity": {
+      "agent_id": "synthetic-agent-001",
+      "harness": "synthetic-harness-a",
+      "model": "synthetic-family-a:synthetic-model-a"
+    },
     "report_ref": "synthetic-report-002"
   },
   "expected_outcome": "reject",
-  "expected_reason": "Rejected: missing mandatory QA (state `failed`) and a failed review — mandatory QA/review cannot be skipped by a generic pass, and family diversity is never inferred from a generic pass (SC-4 rejected example, SDP l.543).",
+  "expected_reason": "Rejected: the mandatory QA gate applies (`gate_applicability` is `qa_required`) and no QA evidence is recorded. This is the only reason for rejection — every other part of the record is valid: the independent-review gate is `required` and carries its evaluator, its report reference and a recorded identity that meets the different-family route against the recorded implementer, all six Foreman checklist marks are present and valid, the workflow/policy revision, run/lane/head and report reference are present, and the post-merge record and lane-upkeep gates are documented skips (SC-4 rejected example, SDP l.543; D2 l.240).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
     "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
