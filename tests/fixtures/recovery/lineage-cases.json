@@ -1,0 +1,37 @@
+{
+  "description": "Lineage/custody classification cases for #196 L5 (AC-08). Each case names the prior and current native session ids and an optional claim.",
+  "cases": [
+    {
+      "name": "same-session-compaction",
+      "prior_session_id": "session-001",
+      "current_session_id": "session-001",
+      "claim": null,
+      "expected_value": "same_session_compaction",
+      "expected_custody": "known"
+    },
+    {
+      "name": "successor-new-session",
+      "prior_session_id": "session-001",
+      "current_session_id": "session-002",
+      "claim": "successor",
+      "expected_value": "successor",
+      "expected_custody": "known"
+    },
+    {
+      "name": "takeover-new-session",
+      "prior_session_id": "session-001",
+      "current_session_id": "session-003",
+      "claim": "takeover",
+      "expected_value": "takeover",
+      "expected_custody": "known"
+    },
+    {
+      "name": "no-native-session-id-custody-unknown",
+      "prior_session_id": "session-001",
+      "current_session_id": null,
+      "claim": null,
+      "expected_value": "custody_unknown",
+      "expected_custody": "unknown"
+    }
+  ]
+}
