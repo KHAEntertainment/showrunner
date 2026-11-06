@@ -841,6 +841,7 @@ class TestGoalRunFixBatch2(unittest.TestCase):
 L2_STATE_KEYS = ("approval_time", "next_wake_at", "paused", "policy", "counters")
 L4_AUTHORITY_KEYS = ("grant", "merge_ledger", "gate_evidence", "delegated_records")
 L6_RECOVERY_KEYS = ("obligations", "custody", "event_ledger", "recovery_receipts", "unknown_effects")
+L7_LIFECYCLE_KEYS = ("context_resets",)
 
 
 def grant_record(**changes) -> dict:
@@ -938,10 +939,10 @@ class TestGoalRunAuthorityLedgerCompat(unittest.TestCase):
         self.assertIn("OK:", stdout)
         self.assertEqual(stderr, "")
 
-    def test_state_keys_are_l2_plus_four_authority_and_five_recovery_keys(self):
+    def test_state_keys_are_l2_plus_four_authority_five_recovery_and_l7(self):
         self.assertEqual(
             dev_state._GOAL_RUN_STATE_KEYS,
-            L2_STATE_KEYS + L4_AUTHORITY_KEYS + L6_RECOVERY_KEYS,
+            L2_STATE_KEYS + L4_AUTHORITY_KEYS + L6_RECOVERY_KEYS + L7_LIFECYCLE_KEYS,
         )
 
 

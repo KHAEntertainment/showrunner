@@ -194,6 +194,8 @@ _GOAL_RUN_STATE_KEYS = (
     "grant", "merge_ledger", "gate_evidence", "delegated_records",
     # Issue #196 lane L6: optional recovery records (absent or null is valid).
     "obligations", "custody", "event_ledger", "recovery_receipts", "unknown_effects",
+    # Issue #196 lane L7: optional lifecycle-clock counter (absent or null is valid).
+    "context_resets",
 )
 _GOAL_POLICY_KEYS = ("run_time_hours", "dispatch_cap_per_issue", "gv_retries", "spend_cap")
 _GOAL_COUNTER_KEYS = (
@@ -1212,6 +1214,63 @@ def _validate_goal_recovery_records(block, goal_run, defect_episodes) -> None:
         _validate_goal_unknown_effects(block["unknown_effects"])
 
 
+# --- Goal-run lifecycle-clock counter (Issue #196, lane L7) ------------------
+#
+# D7.1 keeps two idle timers separate and gives the Dev its own reset count.
+# This key holds the Dev's count and nothing else: Foreman owns its
+# orchestrator clock values, so the ledger has no field for them. Optional and
+# additive, so a pre-L7 block validates unchanged.
+
+_CONTEXT_RESETS_KEYS = ("measured", "count")
+_CONTEXT_RESETS_UNKNOWN = "unknown"
+
+
+def _validate_goal_context_resets(block) -> None:
+    """Validate the optional L7 context-reset count. Absent or null is valid, so
+    a pre-L7 ledger validates unchanged. The shape is closed:
+    ``{measured: bool, count: int >= 0 | "unknown"}``; ``measured`` false admits
+    only ``unknown``, so an unmeasured count is never 0."""
+    base = f"{GOAL_RUN_KEY}.context_resets"
+    record = block.get("context_resets")
+    if record is None:
+        return
+    if not isinstance(record, dict):
+        raise GoalRunError(base, "must be a map")
+    for key in record:
+        if key not in _CONTEXT_RESETS_KEYS:
+            raise GoalRunError(f"{base}.{key}", "unknown context_resets field")
+    for key in _CONTEXT_RESETS_KEYS:
+        if key not in record:
+            raise GoalRunError(f"{base}.{key}", "missing required field")
+    measured = record["measured"]
+    if not isinstance(measured, bool):
+        raise GoalRunError(f"{base}.measured", "must be true or false")
+    count = record["count"]
+    # Element types are checked before any comparison, so a malformed value
+    # fails as a named error instead of raising out of the validator.
+    if measured:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise GoalRunError(
+                f"{base}.count", "measured context resets must be an integer >= 0"
+            )
+        return
+    if count == _CONTEXT_RESETS_UNKNOWN:
+        return
+    if isinstance(count, bool):
+        raise GoalRunError(
+            f"{base}.count", "unmeasured context resets must be unknown, never a number"
+        )
+    if isinstance(count, (int, float)):
+        if count == 0:
+            raise GoalRunError(
+                f"{base}.count", "unmeasured context resets must be unknown, never 0"
+            )
+        raise GoalRunError(
+            f"{base}.count", "unmeasured context resets must be unknown, never a number"
+        )
+    raise GoalRunError(f"{base}.count", "unmeasured context resets must be unknown")
+
+
 def validate_goal_run(block, defect_episodes=None) -> None:
     """Validate a goal-run block (a plain dict). Raises ``GoalRunError``.
 
@@ -1267,6 +1326,7 @@ def validate_goal_run(block, defect_episodes=None) -> None:
         raise GoalRunError(f"{GOAL_RUN_KEY}.paused", "must be true or false")
 
     _validate_goal_counters(block.get("counters"), block["fixed_issues"], goal_run)
+    _validate_goal_context_resets(block)
     _validate_goal_authority_records(block, goal_run, applied.value)
     _validate_goal_recovery_records(block, goal_run, defect_episodes or [])
 
