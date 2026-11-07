@@ -1423,6 +1423,8 @@ def main() -> int:
             "removed only when that request is answered",
             "row is blocked from archiving (`open_requests_unknown`)",
             "it is idle for more than 60 minutes, `open_requests` is `[]`",
+            "(`open_requests_malformed`)",
+            "is blocked (`shell_unmatched`)",
         ),
         # Issue #33: the gate's own bypass path had become the routine path
         # because a review invalidated by the author's own fix-commit push
@@ -1649,6 +1651,9 @@ def main() -> int:
             "the lead acts on nothing and reports it",
             "Foreman's 4-hour close-out of a finished lane stays separate from this 60-minute idle archive (SDP D7.1 item 4)",
             "`counts.agents: not_applicable`",
+            "counts as `archived` for § 7's `Still open` exclusion",
+            "never marked `cleaned` or `removed` here",
+            "with a non-blank `id` and `what`",
         ),
         # Each adapter must state its own bound; `contract.md` requires one to
         # exist but cannot supply a page size or a timeout for a transport it

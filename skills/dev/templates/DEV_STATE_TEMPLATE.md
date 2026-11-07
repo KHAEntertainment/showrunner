@@ -865,16 +865,20 @@ the turn-boundary procedure that acts on its report is § 7.3 of
   one per request the lead has open with that agent (a pending reply, a
   wait, a shared-surface grant it is holding). `[]` means none. An entry is
   removed only when that request is answered. Absent means unknown, and the
-  row is blocked from archiving (`open_requests_unknown`).
+  row is blocked from archiving (`open_requests_unknown`). Each entry needs a
+  non-blank `id` and `what`; a malformed entry or a non-list value blocks
+  the row (`open_requests_malformed`).
 - `shell_id` (`kind: shell`, optional): the shell id the lead's shell
-  listing uses. Without it, the reconcile matches the last segment of the
-  minted `shell:<hostid>:<name>` id.
+  listing uses. Without it, the reconcile matches only the full row id, and
+  a row that matches nothing is blocked (`shell_unmatched`), never reported
+  gone.
 - `path` (`kind: review_checkout`, optional): the checkout path. Without
   it, the reconcile matches the `review:<path>` id.
 
 An agent row in `active` or `report-back-complete` is archivable only when
 it is idle for more than 60 minutes, `open_requests` is `[]`, the listing
-does not show it active, and neither the recovery `obligations.children`
+does not show it active, the listing shows it in this project with this
+lead (or no) `parentId`, and neither the recovery `obligations.children`
 list nor the `custody` record (Goal run record schema, below) names it.
 
 ## Workspace-debt gauge record (Issue #73)
