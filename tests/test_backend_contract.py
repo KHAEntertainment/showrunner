@@ -3900,5 +3900,88 @@ class EvidenceProfileTests(unittest.TestCase):
         self.assertTrue(any("exactly the seven required sections" in error for error in errors), errors)
 
 
+class GoalCompletionRoutingTests(unittest.TestCase):
+    """Issue #195 lane L195-2b: goal.md routes GOAL-COMPLETE through the verifier."""
+
+    def read(self, relative: str) -> str:
+        return (SKILL / relative).read_text(encoding="utf-8")
+
+    def section(self, text: str, heading: str) -> str:
+        start = text.index(heading)
+        match = re.search(r"^#{1,3} ", text[start + len(heading):], re.M)
+        end = start + len(heading) + match.start() if match else len(text)
+        return text[start:end]
+
+    def test_goal_md_gives_the_exact_final_gv_command(self) -> None:
+        goal = self.read("phases/goal.md")
+        self.assertIn(
+            'rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/verify_goal_completion.py" '
+            "--ledger .agent/dev-state.md --purpose final",
+            goal,
+        )
+        for flag in ("--marker", "--approved-revision", "--invoker-role lead",
+                     "--invoker-id", "--invoker-harness", "--supersedes"):
+            self.assertIn(flag, goal)
+        self.assertIn("only the lead", self.section(goal, "### Completion verification"))
+
+    def test_goal_md_only_exit_zero_is_success(self) -> None:
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertIn("**0, `verified`:** the only goal success", body)
+        for code in ("**1, `not_complete`:** never success",
+                     "**3, `inconclusive`:** never success",
+                     "**2** (usage, internal or arming error): never success",
+                     "**4, `evidence_ready`:**"):
+            self.assertIn(code, body)
+        self.assertIn("`policy.gv_retries`", body)
+        self.assertIn("`counters.gv_retries_used`", body)
+        self.assertIn("never a final result", body)
+
+    def test_goal_md_rechecks_and_records_through_the_lead(self) -> None:
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertIn("Recheck after any resume or recovery, and immediately before reporting completion", body)
+        self.assertIn("never reused across a state change", body)
+        self.assertIn("`completion_results`", body)
+        self.assertIn("`producer.recorded_by: lead`", body)
+        self.assertIn("dev_state.py", body)
+        self.assertIn("never merges, closes, reopens or writes", body)
+
+    def test_claim_bullet_no_longer_says_there_is_no_gv_step(self) -> None:
+        goal = self.read("phases/goal.md")
+        self.assertNotIn("This runtime has no GV step", goal)
+        self.assertNotIn("until a GV lane lands", goal)
+
+    def test_ledger_fields_list_names_the_optional_keys_and_completion_results(self) -> None:
+        # Issue #230 AC 1-4.
+        body = self.section(self.read("phases/goal.md"), "## Ledger fields this phase writes")
+        for key in ("context_resets", "obligations", "custody", "event_ledger",
+                    "recovery_receipts", "unknown_effects", "completion_results"):
+            self.assertIn(f"`{key}`", body)
+        self.assertIn("Each of the six is optional: absent or `null` is valid", body)
+        for kept in ("every key of `Assignment.to_dict()`",
+                     "`approval_time`, `next_wake_at`, `paused`",
+                     "`policy`: the `BoundsPolicy` fields",
+                     "`counters`: the `RunCounters` fields",
+                     "`grant`, `merge_ledger`, `gate_evidence` and `delegated_records`"):
+            self.assertIn(kept, body)
+
+    def test_goal_md_states_no_human_evaluator_in_v2_2(self) -> None:
+        goal = self.read("phases/goal.md")
+        self.assertIn("never use a `human` evaluator in v2.2", goal)
+        self.assertIn("`evaluator_unsupported`", goal)
+        self.assertIn("owner signs off in chat, outside the verifier", goal)
+
+    def test_qa_agent_marks_human_unsupported_in_v2_2(self) -> None:
+        qa = self.read("agents/qa-agent.md")
+        self.assertGreaterEqual(qa.count("unsupported in v2.2"), 4)
+        self.assertIn("`evaluator_unsupported`", qa)
+
+    def test_template_worked_example_has_no_human_evaluator(self) -> None:
+        template = self.read("templates/DEV_STATE_TEMPLATE.md")
+        self.assertNotIn("type: human", template)
+        self.assertNotIn("human evaluator", template)
+        self.assertNotIn("human evaluation not yet performed", template)
+        self.assertIn("1 awaiting its independent reviewer", template)
+
+
 if __name__ == "__main__":
     unittest.main()
