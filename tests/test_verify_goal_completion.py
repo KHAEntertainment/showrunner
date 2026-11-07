@@ -2801,5 +2801,108 @@ def _find_item(items, cid):
     return next(item for item in items if item["id"] == cid)
 
 
+# --- PR #247 fix batch 1 (B1, B2): the ledger decides by GV's rules -----------------
+
+
+def validate_cli(text):
+    with tempfile.TemporaryDirectory() as scratch:
+        path = Path(scratch) / "dev-state.md"
+        path.write_text(text, encoding="utf-8")
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "dev_state.py"), "--validate", str(path)],
+                              capture_output=True, text=True, check=False)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+class TestFixBatch1L195b(unittest.TestCase):
+    """B1: one usability rule (D4.5 reader rule 5) for GV and the ledger.
+    B2: the evidence gate follows the parsed ledger."""
+
+    REPROS = {
+        "unmet_criterion": "success_with_unmet_criterion",
+        "blocking_reason": "success_with_blocking_reason",
+        "missing_goal": "missing_field:goal",
+    }
+
+    @staticmethod
+    def repro(label):
+        """The reviewer's exact mutations of GV's own verified record."""
+        good, _, _ = scenario()
+        result = copy.deepcopy(good.record)
+        if label == "unmet_criterion":
+            result["criteria"][0]["state"] = "unmet"
+        elif label == "blocking_reason":
+            result["reason_codes"].append({"code": "integration_withdrawn", "blocking": True,
+                                           "classification": "not_complete"})
+        elif label == "missing_goal":
+            result.pop("goal")
+        return result
+
+    def test_b1_unusable_records_are_refused_with_the_rule_reason(self):
+        for label, reason in self.REPROS.items():
+            with self.subTest(repro=label):
+                result = self.repro(label)
+                verdict, reasons = gv.read_result(result)
+                self.assertEqual(verdict, "unusable")
+                self.assertIn(reason, reasons)
+                code, stdout, stderr = validate_cli(render({"schema_version": 2, "completion_results": [result]}))
+                self.assertEqual(code, 1, stdout)
+                self.assertIn("FAIL: completion_results[0]: unusable: ", stderr)
+                self.assertIn(reason, stderr)
+
+    def test_b1_one_usability_rule(self):
+        self.assertIs(gv.read_result, dev_state.read_completion_result)
+        self.assertNotIn("success_with_unmet_criterion", MODULE_PATH.read_text(encoding="utf-8"))
+        self.assertIn("D4.5", dev_state.read_completion_result.__doc__ or "")
+
+    def test_b1_every_outcome_gv_prints_is_a_valid_ledger_record(self):
+        cases = {
+            "verified": scenario()[0],
+            "evidence_ready": scenario(purpose=gv.PURPOSE_READINESS)[0],
+            "post_merge pending": scenario(lambda d: pm(d).update(gate_result="pending"))[0],
+            "human criterion": scenario(with_human)[0],
+            "withdrawn example": evaluate_example(example_ledger(restore_integration=False))[0],
+        }
+        for name, result in cases.items():
+            with self.subTest(case=name, outcome=result.outcome):
+                self.assertEqual(result.kind, "result")
+                self.assertEqual(gv.read_result(result.record), ("accept", []))
+                text = render({"schema_version": 2, "completion_results": [result.record]})
+                self.assertIsNone(dev_state.validate_completion_results(
+                    dev_state.read_ledger_block(text, dev_state.COMPLETION_RESULTS_KEY)))
+
+    def test_b1_reason_codes_and_criteria_lines_are_checked(self):
+        good = scenario(lambda d: pm(d).update(gate_result="pending"))[0].record
+        cases = {
+            "reason code without class": lambda r: r["reason_codes"][0].pop("class"),
+            "reason code with unknown class": lambda r: r["reason_codes"][0].update({"class": "fatal"}),
+            "reason code blocking not a bool": lambda r: r["reason_codes"][0].update(blocking="yes"),
+            "reason code naming nothing": lambda r: r["reason_codes"][0].update(issues=[], prs=[], criteria=[]),
+            "criterion line without reason_code": lambda r: r["criteria"][0].pop("reason_code"),
+            "criterion line without criteria_ref": lambda r: r["criteria"][0].pop("criteria_ref"),
+            "producer without invoker_role": lambda r: r["producer"].pop("invoker_role"),
+            "goal without repository": lambda r: r["goal"].pop("repository"),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(case=name):
+                record = copy.deepcopy(good)
+                mutate(record)
+                verdict, reasons = gv.read_result(record)
+                self.assertEqual(verdict, "unusable", reasons)
+                with self.assertRaises(dev_state.GoalRunError):
+                    dev_state.validate_completion_results([record])
+
+    def test_b2_reviewer_quoted_key_repro(self):
+        record = {"number": 10, "profile_version": "completion-evidence-v1",
+                  "ci_runs": [{"run": 130, "job": "build", "attempt": 0}]}
+        plain = render({"schema_version": 2, "run_id": "probe", "run_status": "active", "pull_requests": [record]})
+        quoted = plain.replace("profile_version:", '"profile_version":', 1)
+        self.assertEqual(dev_state.read_ledger_block(quoted, "pull_requests")[0]["profile_version"],
+                         "completion-evidence-v1")
+        for text in (plain, quoted):
+            code, stdout, stderr = validate_cli(text)
+            self.assertEqual(code, 1, stdout)
+            self.assertIn("FAIL: pull_requests[0].ci_runs[0].attempt: must be a positive integer", stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1572,5 +1572,78 @@ class TestCompletionResultsValidate(unittest.TestCase):
         self.assertNotIn("owner_account", " ".join(dir(dev_state)))
 
 
+# --- PR #247 fix batch 1: the gate follows the reader (B2, QA M-1, L-1, L-2) --
+
+GATE_LEDGER = """---
+schema_version: 2
+run_id: probe
+run_status: active
+pull_requests:
+  - number: 10
+    {profile_line}
+    ci_runs:
+      - run: 130
+        job: build
+        attempt: 0
+---
+"""
+
+
+class TestEvidenceGateFollowsTheReader(unittest.TestCase):
+    """B2: the decision to validate comes from the parsed ledger. Every spelling
+    the reader accepts is validated; a marked block it cannot read is a named
+    error, never a skip."""
+
+    SPELLINGS = {
+        "plain": "profile_version: completion-evidence-v1",
+        "double-quoted key": '"profile_version": completion-evidence-v1',
+        "single-quoted key": "'profile_version': completion-evidence-v1",
+        "extra spaces": "profile_version:     completion-evidence-v1",
+        "double-quoted value": 'profile_version: "completion-evidence-v1"',
+        "single-quoted value": "profile_version: 'completion-evidence-v1'",
+        "inline comment": "profile_version: completion-evidence-v1  # evidence profile",
+    }
+
+    def test_quoted_key_repro_is_validated(self):
+        text = GATE_LEDGER.format(profile_line='"profile_version": completion-evidence-v1')
+        code, stdout, stderr = run_validator(text)
+        self.assertEqual(code, 1, stdout)
+        self.assertIn("FAIL: pull_requests[0].ci_runs[0].attempt: must be a positive integer", stderr)
+
+    def test_spelling_table_never_passes(self):
+        for name, line in self.SPELLINGS.items():
+            with self.subTest(spelling=name):
+                code, stdout, stderr = run_validator(GATE_LEDGER.format(profile_line=line))
+                self.assertEqual(code, 1, f"{name}: {stdout}")
+                self.assertRegex(stderr, r"^FAIL: pull_requests(\[0\][.\w\[\]]*)?: ")
+
+    def test_spellings_the_reader_accepts_reach_the_attempt_rule(self):
+        for name in ("plain", "double-quoted key", "extra spaces", "double-quoted value", "single-quoted value"):
+            with self.subTest(spelling=name):
+                _, _, stderr = run_validator(GATE_LEDGER.format(profile_line=self.SPELLINGS[name]))
+                self.assertIn("pull_requests[0].ci_runs[0].attempt: must be a positive integer", stderr)
+
+    def test_unreadable_marked_blocks_are_named_errors(self):
+        cases = {
+            "inline comment (QA L-2)": (GATE_LEDGER.format(profile_line=self.SPELLINGS["inline comment"]),
+                                        "pull_requests"),
+            "completion_results comment": (ledger_with("completion_results:\n  - result_id: x  # note\n"),
+                                           "completion_results"),
+            "completion_results block scalar": (ledger_with("completion_results: |\n  text\n"),
+                                                "completion_results"),
+        }
+        for name, (text, key) in cases.items():
+            with self.subTest(case=name):
+                code, _, stderr = run_validator(text)
+                self.assertEqual(code, 1)
+                self.assertTrue(stderr.startswith(f"FAIL: {key}"), stderr)
+
+    def test_empty_completion_results_validate(self):
+        for body in ("completion_results: null\n", "completion_results: []\n"):
+            with self.subTest(body=body):
+                code, _, stderr = run_validator(ledger_with(body))
+                self.assertEqual(code, 0, stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
