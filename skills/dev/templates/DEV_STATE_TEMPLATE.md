@@ -602,12 +602,12 @@ parent_acceptance:
         reason: "criterion amended 2026-10-21; tests and evaluator judgment to be reassessed against the new intent; PR 24 pending"
       - id: AC-4@b17e
         evaluator:
-          type: human
-          id: owner
+          type: independent_reviewer
+          id: reviewer lane
         outcome: pending
-        reason: human evaluation not yet performed
+        reason: independent review not yet performed
     outcome: not_complete
-    reason: "2 of 4 criteria withdrawn by rollback, 1 amended and unassessed, 1 awaiting its human evaluator"
+    reason: "2 of 4 criteria withdrawn by rollback, 1 amended and unassessed, 1 awaiting its independent reviewer"
     observed_at: 2026-10-23T09:30:00Z
     goal_completion_ref: null
 ```
