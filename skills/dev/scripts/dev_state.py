@@ -1392,8 +1392,10 @@ _STRUCTURED_REF_KEYS = ("run", "job", "attempt")
 
 _LEDGER_KEY_RE = re.compile(r'^(?:"([^"]+)"|([A-Za-z0-9_][A-Za-z0-9_.\-/#@]*)):(?:\s+(.*))?$')
 _STRICT_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)$")
-_EVIDENCE_PROFILE_LINE_RE = re.compile(
-    r"^\s+(?:-\s+)?profile_version:\s*[\"']?" + re.escape(COMPLETION_EVIDENCE_PROFILE) + r"[\"']?\s*$")
+# Fix batch 1 (B2): the gate is a mention, not a spelling. A frontmatter that
+# mentions either marker anywhere has its blocks read by read_ledger_block,
+# the reader GV uses; a block it cannot read is a named error, never a skip.
+_EVIDENCE_MARKERS = (COMPLETION_EVIDENCE_PROFILE, COMPLETION_RESULTS_KEY)
 
 
 class LedgerBlockError(GoalRunError):
@@ -1646,9 +1648,187 @@ def validate_evidence_pull_requests(records) -> None:
                 _validate_structured_ref(item.get("evidence_ref"), f"{base}.{rel}.evidence_ref")
 
 
+_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_QUALIFIED_ISSUE_PARTS_RE = re.compile(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([0-9]+)$")
+_REASON_CLASSES = ("not_complete", "inconclusive", "advisory")
+# Producer identity keys D4.5 names. They must be present; a value may be null
+# when the producer could not know it (no identity data is invented).
+_PRODUCER_IDENTITY_KEYS = ("skill_revision", "invoker_role", "invoker_id", "invoker_harness",
+                           "consumer_context")
+
+
+def _result_utc(value) -> bool:
+    return isinstance(value, str) and _is_strict_utc(value.strip())
+
+
+def _malformed_reason_code(item) -> bool:
+    if not isinstance(item, dict) or not _nonempty(item.get("code")):
+        return True
+    if item.get("class") not in _REASON_CLASSES or not isinstance(item.get("blocking"), bool):
+        return True
+    if item["blocking"] != (item["class"] != "advisory"):
+        return True
+    named = [item.get(name) for name in ("issues", "prs", "criteria")]
+    if any(not isinstance(value, list) for value in named):
+        return True
+    return not any(named)
+
+
+def read_completion_result(record):
+    """Read one ``completion-result-v1`` record by the SDP D4.5 reader rules.
+
+    This is the single usability rule (D4.5 item 4, rule 5, and the identity
+    and coverage of rule 1). The completion verifier's ``read_result`` is this
+    function, and ``validate_completion_results`` refuses every record it does
+    not accept. Returns ``(verdict, reasons)``:
+
+    * ``unknown``: a missing or unknown ``profile_version``; it goes back to Dev.
+    * ``reject``: a goal GV never covers (an empty goal set, a bare Issue id,
+      an Issue outside the goal repository).
+    * ``unusable``: the record cannot be relied on. Examples:
+      ``missing_field:<name>``, ``malformed_container:<name>``, an outcome
+      outside its purpose's vocabulary, a criterion line without ``id``,
+      ``criteria_ref``, evaluator, state or reason code, a reason code
+      without ``code``, ``class``, ``blocking`` or what it affects, or a
+      success (``verified``, ``evidence_ready``) with an unmet criterion
+      (``success_with_unmet_criterion``), a blocking reason
+      (``success_with_blocking_reason``), or an unconfirmed floor fact.
+    * ``accept``: none of the above (reasons ``[]``).
+
+    An exit code never substitutes for this reading. Pure: it reads only the
+    record and ``goal_run``'s plan_ref check."""
+    if not isinstance(record, dict):
+        return "unusable", ["malformed_record"]
+    if record.get("profile_version") != COMPLETION_RESULT_PROFILE:
+        return "unknown", ["unknown_profile_version"]
+    purpose = record.get("purpose")
+    if purpose not in COMPLETION_RESULT_VOCABULARY:
+        return "unusable", ["unknown_purpose"]
+    outcome = record.get("outcome")
+    if outcome not in COMPLETION_RESULT_VOCABULARY[purpose]:
+        return "unusable", ["outcome_outside_vocabulary"]
+
+    goal = record.get("goal")
+    if not isinstance(goal, dict):
+        return "unusable", ["missing_field:goal"]
+    repository = goal.get("repository")
+    if not isinstance(repository, str) or not _REPOSITORY_RE.match(repository):
+        return "unusable", ["missing_field:goal.repository"]
+    issues = goal.get("fixed_issues")
+    if not isinstance(issues, list) or not issues:
+        return "reject", ["empty_goal_set"]
+    for issue in issues:
+        match = _QUALIFIED_ISSUE_PARTS_RE.match(issue) if isinstance(issue, str) else None
+        if match is None:
+            return "reject", ["bare_ambiguous_issue_id"]
+        if match.group(1) != repository:
+            return "reject", ["cross_repo_goal"]
+
+    reasons = []
+    reason_codes = record.get("reason_codes", [])
+    if not isinstance(reason_codes, list) or not all(isinstance(r, dict) for r in reason_codes):
+        return "unusable", ["malformed_container:reason_codes"]
+    reason_names = {r.get("code") for r in reason_codes}
+    success = outcome in ("verified", "evidence_ready")
+    shapes = {
+        "result_id": str, "run_id": str, "plan_ref": dict, "evidence_profile": str,
+        "consumed_inputs": list, "repository_facts": dict, "criteria": list, "producer": dict,
+    }
+    for name, kind in shapes.items():
+        value = record.get(name)
+        if name == "criteria" and value == [] and not success and "criteria_unavailable" in reason_names:
+            continue  # a negative result that could not locate the criteria says so
+        if value in (None, "", [], {}):
+            reasons.append(f"missing_field:{name}")
+        elif not isinstance(value, kind):
+            reasons.append(f"malformed_container:{name}")
+    for name in ("supersedes", "unread_inputs"):
+        if name in record and not isinstance(record[name], list):
+            reasons.append(f"malformed_container:{name}")
+    if reasons:
+        return "unusable", reasons
+    if not goal.get("frozen_at"):
+        reasons.append("missing_field:goal.frozen_at")
+    try:
+        checked = _load_goal_run_module()._validate_plan_ref(record["plan_ref"])
+    except GoalRunError:
+        reasons.append("plan_ref_unverifiable")
+    else:
+        if not checked.ok:
+            reasons.append(f"invalid_plan_ref:{checked.reason}:{checked.detail.get('field', '')}")
+    if record.get("evidence_profile") != COMPLETION_EVIDENCE_PROFILE:
+        reasons.append("unknown_evidence_profile")
+    for item in record["consumed_inputs"]:
+        if not isinstance(item, dict) or not item.get("reference") or not item.get("digest") \
+                or not (item.get("revision") or item.get("recorded_at")):
+            reasons.append("unidentifiable_consumed_input")
+            break
+    facts = record["repository_facts"]
+    if not _result_utc(facts.get("observed_at")):
+        reasons.append("repository_facts_without_observed_at")
+    fact_prs = facts.get("pull_requests")
+    fact_issues = facts.get("closed_issues")
+    if not isinstance(fact_prs, list) or not all(isinstance(p, dict) for p in fact_prs):
+        reasons.append("malformed_container:repository_facts.pull_requests")
+        fact_prs = []
+    if not isinstance(fact_issues, list) or not all(
+            isinstance(i, dict) and isinstance(i.get("issue"), str) for i in fact_issues):
+        reasons.append("malformed_container:repository_facts.closed_issues")
+        fact_issues = []
+    producer = record["producer"]
+    if producer.get("recorded_by") != "lead":
+        reasons.append("not_recorded_by_lead")
+    if not producer.get("helper_revision"):
+        reasons.append("missing_field:producer.helper_revision")
+    for name in _PRODUCER_IDENTITY_KEYS:
+        if name not in producer:
+            reasons.append(f"missing_field:producer.{name}")
+    criteria = record["criteria"]
+    ids = []
+    for item in criteria:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item.get("id") \
+                or not isinstance(item.get("evaluator"), str) or not item.get("evaluator") \
+                or item.get("state") not in ("met", "unmet", "inconclusive") \
+                or not _nonempty(item.get("criteria_ref")) or not _nonempty(item.get("reason_code")):
+            reasons.append("malformed_criterion_line")
+            break
+        ids.append(item.get("id"))
+        if item.get("state") == "met" and not item.get("accepted_proof"):
+            reasons.append(f"met_without_proof:{item.get('id')}")
+    for item in reason_codes:
+        if _malformed_reason_code(item):
+            reasons.append(f"malformed_reason_code:{item.get('code')}")
+    blocking = [r for r in reason_codes if r.get("blocking") is not False]
+    if success:
+        if any(isinstance(i, dict) and i.get("state") != "met" for i in criteria):
+            reasons.append("success_with_unmet_criterion")
+        if len(ids) != len(set(ids)):
+            reasons.append("success_with_duplicate_criterion_id")
+        if blocking:
+            reasons.append("success_with_blocking_reason")
+        if not fact_prs or any(p.get("reachable_from_destination") is not True or not p.get("merge_sha")
+                               for p in fact_prs):
+            reasons.append("success_without_confirmed_floor_fact")
+        if any((p.get("gate_result") == "applies_verbatim" or "tree_equivalent" in p)
+               and p.get("tree_equivalent") is not True for p in fact_prs):
+            reasons.append("success_without_tree_equivalence")
+        states = {i.get("issue"): i.get("state") for i in fact_issues}
+        if any(issue not in states or states[issue] is None for issue in issues):
+            reasons.append("success_without_confirmed_floor_fact")
+        if outcome == "verified" and any(states.get(issue) != "closed" for issue in issues):
+            reasons.append("verified_with_open_issue")
+    elif not blocking and not record.get("unread_inputs"):
+        reasons.append("negative_outcome_without_reason")
+    return ("unusable", sorted(set(reasons))) if reasons else ("accept", [])
+
+
 def validate_completion_results(records) -> None:
     """``completion_results``: completion-result-v1 records the lead recorded
-    from GV's output (SDP D4.5). Raises ``LedgerBlockError``."""
+    from GV's output (SDP D4.5). Each record passes the named identity checks
+    below, the ``supersedes`` chain, and then ``read_completion_result``, the
+    one usability rule GV also reads by: anything it does not accept is
+    refused as ``completion_results[i]: <verdict>: <reasons>``. Raises
+    ``LedgerBlockError``."""
     key = COMPLETION_RESULTS_KEY
     if records is None or records is LEDGER_ABSENT or records == []:
         return
@@ -1683,8 +1863,6 @@ def validate_completion_results(records) -> None:
         if producer.get("recorded_by") != "lead":
             raise LedgerBlockError(f"{base}.producer.recorded_by", "must be lead (the sole ledger writer)")
         supersedes = record.get("supersedes", [])
-        if supersedes is None:
-            supersedes = []
         if not isinstance(supersedes, list):
             raise LedgerBlockError(f"{base}.supersedes", "must be a list of result_id strings")
         for j, prior in enumerate(supersedes):
@@ -1697,47 +1875,30 @@ def validate_completion_results(records) -> None:
                 raise LedgerBlockError(where, f"names no earlier result ({prior!r})")
             if seen[prior] != (record["run_id"], purpose):
                 raise LedgerBlockError(where, "chains only within one (run_id, purpose)")
+        verdict, reasons = read_completion_result(record)
+        if verdict != "accept":
+            raise LedgerBlockError(base, f"{verdict}: {', '.join(reasons)}")
         seen[result_id] = (record["run_id"], purpose)
 
 
-def _top_level_value(lines, key: str):
-    """The raw inline value of every ``key:`` header line, in order."""
-    return [line[len(key) + 1:].strip() for line in lines if re.match(rf"^{re.escape(key)}:(\s|$)", line)]
-
-
-def _pull_requests_declare_evidence_profile(lines) -> bool:
-    inside = False
-    for line in lines:
-        if re.match(r"^pull_requests:(\s|$)", line):
-            inside = True
-            continue
-        if inside:
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#") and not line.startswith((" ", "\t")):
-                inside = False
-                continue
-            if _EVIDENCE_PROFILE_LINE_RE.match(line):
-                return True
-    return False
-
-
 def validate_evidence_text(text: str) -> None:
-    """Entry point from main(), after the goal-run check. A no-op unless the
-    ledger carries ``completion_results`` (not null or ``[]``) or a
-    ``completion-evidence-v1`` pull request entry, so older ledgers are
-    untouched. Reports ``<path>: <reason>`` and fails closed."""
+    """Entry point from main(), after the goal-run check. Fix batch 1 (B2):
+    the decision comes from the parsed ledger, not from how a key is spelled.
+
+    A frontmatter that never mentions ``completion-evidence-v1`` or
+    ``completion_results`` is untouched (older ledgers never reach the
+    reader). Otherwise ``completion_results`` and ``pull_requests`` are read by
+    ``read_ledger_block``, the reader GV uses: every spelling it accepts
+    (a quoted key, extra spaces, a quoted value) is validated, and a block it
+    cannot read (an inline comment, a single-quoted key, a block scalar) is a
+    named error. Reports ``<path>: <reason>`` and fails closed."""
     end = text.find("\n---\n")
-    lines = text[4:end].split("\n") if text.startswith("---\n") and end != -1 else []
-    results = _top_level_value(lines, COMPLETION_RESULTS_KEY)
-    check_results = bool(results) and not (len(results) == 1 and results[0] in ("null", "~", "[]"))
-    check_prs = _pull_requests_declare_evidence_profile(lines)
-    if not (check_results or check_prs):
+    frontmatter = text[4:end] if text.startswith("---\n") and end != -1 else ""
+    if not any(marker in frontmatter for marker in _EVIDENCE_MARKERS):
         return
     try:
-        if check_results:
-            validate_completion_results(read_ledger_block(text, COMPLETION_RESULTS_KEY))
-        if check_prs:
-            validate_evidence_pull_requests(read_ledger_block(text, "pull_requests"))
+        validate_completion_results(read_ledger_block(text, COMPLETION_RESULTS_KEY))
+        validate_evidence_pull_requests(read_ledger_block(text, "pull_requests"))
     except GoalRunError as exc:
         fail(str(exc))
     except Exception as exc:  # fail closed, never a traceback

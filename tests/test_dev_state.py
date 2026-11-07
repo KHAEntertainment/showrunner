@@ -1280,12 +1280,24 @@ def worked_pull_requests() -> list:
     return dev_state.read_ledger_block(worked_evidence_ledger(), "pull_requests")
 
 
+SC3_ACCEPTED_RESULT = Path(__file__).parent.parent / "docs" / "v2.2" / "contracts" / "fixtures" / "sc-3" / \
+    "accepted-final-verified-completion.json"
+
+
 def result_record(result_id="gv-1", run_id="goal-1", purpose="final", outcome="verified", supersedes=()):
-    return {"profile_version": "completion-result-v1", "result_id": result_id, "run_id": run_id,
-            "plan_ref": {"origin": "traycer-artifact:e/p/index.md", "approved_revision": "sha256:2222"},
-            "purpose": purpose, "outcome": outcome,
-            "producer": {"helper": "skills/dev/scripts/verify_goal_completion.py", "recorded_by": "lead"},
-            "supersedes": list(supersedes)}
+    """A complete completion-result-v1 record: the SC-3 accepted fixture (read
+    only), re-identified. A negative outcome carries the blocking reason D4.5
+    requires of it."""
+    import json  # noqa: PLC0415
+
+    record = copy.deepcopy(json.loads(SC3_ACCEPTED_RESULT.read_text(encoding="utf-8"))["input"])
+    record.update(result_id=result_id, run_id=run_id, purpose=purpose, outcome=outcome,
+                  supersedes=list(supersedes))
+    if outcome not in ("verified", "evidence_ready"):
+        record["reason_codes"] = [{"code": "post_merge_pending", "class": "inconclusive", "blocking": True,
+                                   "issues": list(record["goal"]["fixed_issues"]), "prs": [], "criteria": [],
+                                   "detail": {}}]
+    return record
 
 
 class TestLedgerBlockReader(unittest.TestCase):
@@ -1338,8 +1350,6 @@ class TestEvidenceAdditionsLedgerCompat(unittest.TestCase):
             "L4 20-key": ledger_with(render_goal_run(authority_block())),
             "L6 25-key": ledger_with(render_goal_run(clocks.l6_block())),
             "L7 context_resets": ledger_with(render_goal_run(clocks._context_resets_block(True, 0))),
-            "completion_results null": ledger_with("completion_results: null\n"),
-            "completion_results []": ledger_with("completion_results: []\n"),
         }
 
     def test_legacy_ledgers_never_reach_the_evidence_validator(self):
@@ -1490,7 +1500,8 @@ class TestCompletionResultsValidate(unittest.TestCase):
             "---\nschema_version: 2\nrun_id: example\nrun_status: active\n" + example + "---\n")
         self.assertEqual(code, 0, stderr)
         records = dev_state.read_ledger_block("---\n" + example + "---\n", "completion_results")
-        self.assertEqual(records[1]["supersedes"], [records[0]["result_id"]])
+        self.assertEqual([dev_state.read_completion_result(r) for r in records], [("accept", [])])
+        self.assertEqual(records[0]["supersedes"], [])
 
     def test_template_section_examples_parse(self):
         ref = dev_state.read_ledger_block("---\n" + evidence_section_example(0) + "---\n", "evidence_ref")

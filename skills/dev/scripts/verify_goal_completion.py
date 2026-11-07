@@ -745,121 +745,12 @@ def check_evidence_record(record):
 # --- Result reader (D4.5 reader rules, l.441-l.448) ------------------------------
 
 
-def read_result(record):
-    """Read a completion-result-v1 record.
-
-    Returns (``accept``|``reject``|``unusable``|``unknown``, reasons). An exit
-    code never substitutes for this reading (rule 5)."""
-    if not isinstance(record, dict):
-        return "unusable", ["malformed_record"]
-    if record.get("profile_version") != RESULT_PROFILE:
-        return "unknown", ["unknown_profile_version"]
-    purpose = record.get("purpose")
-    if purpose not in VOCABULARY:
-        return "unusable", ["unknown_purpose"]
-    outcome = record.get("outcome")
-    if outcome not in VOCABULARY[purpose]:
-        return "unusable", ["outcome_outside_vocabulary"]
-
-    goal = record.get("goal")
-    if not isinstance(goal, dict):
-        return "unusable", ["missing_field:goal"]
-    repository = goal.get("repository")
-    issues = goal.get("fixed_issues")
-    if not isinstance(issues, list) or not issues:
-        return "reject", ["empty_goal_set"]
-    for issue in issues:
-        parts = _split_issue(issue)
-        if parts is None:
-            return "reject", ["bare_ambiguous_issue_id"]
-        if parts[0] != repository:
-            return "reject", ["cross_repo_goal"]
-
-    reasons = []
-    reason_codes = record.get("reason_codes", [])
-    if not isinstance(reason_codes, list) or not all(isinstance(r, dict) for r in reason_codes):
-        return "unusable", ["malformed_container:reason_codes"]
-    reason_names = {r.get("code") for r in reason_codes}
-    success = outcome in ("verified", "evidence_ready")
-    shapes = {
-        "result_id": str, "run_id": str, "plan_ref": dict, "evidence_profile": str,
-        "consumed_inputs": list, "repository_facts": dict, "criteria": list, "producer": dict,
-    }
-    for name, kind in shapes.items():
-        value = record.get(name)
-        if name == "criteria" and value == [] and not success and "criteria_unavailable" in reason_names:
-            continue  # a negative result that could not locate the criteria says so
-        if value in (None, "", [], {}):
-            reasons.append(f"missing_field:{name}")
-        elif not isinstance(value, kind):
-            reasons.append(f"malformed_container:{name}")
-    for name in ("supersedes", "unread_inputs"):
-        if name in record and not isinstance(record[name], list):
-            reasons.append(f"malformed_container:{name}")
-    if reasons:
-        return "unusable", reasons
-    if not goal.get("frozen_at"):
-        reasons.append("missing_field:goal.frozen_at")
-    checked = goal_run._validate_plan_ref(record["plan_ref"])
-    if not checked.ok:
-        reasons.append(f"invalid_plan_ref:{checked.reason}:{checked.detail.get('field', '')}")
-    if record.get("evidence_profile") != EVIDENCE_PROFILE:
-        reasons.append("unknown_evidence_profile")
-    for item in record["consumed_inputs"]:
-        if not isinstance(item, dict) or not item.get("reference") or not item.get("digest") \
-                or not (item.get("revision") or item.get("recorded_at")):
-            reasons.append("unidentifiable_consumed_input")
-            break
-    facts = record["repository_facts"]
-    if not _parse_utc(facts.get("observed_at")):
-        reasons.append("repository_facts_without_observed_at")
-    fact_prs = facts.get("pull_requests")
-    fact_issues = facts.get("closed_issues")
-    if not isinstance(fact_prs, list) or not all(isinstance(p, dict) for p in fact_prs):
-        reasons.append("malformed_container:repository_facts.pull_requests")
-        fact_prs = []
-    if not isinstance(fact_issues, list) or not all(
-            isinstance(i, dict) and isinstance(i.get("issue"), str) for i in fact_issues):
-        reasons.append("malformed_container:repository_facts.closed_issues")
-        fact_issues = []
-    producer = record["producer"]
-    if producer.get("recorded_by") != "lead":
-        reasons.append("not_recorded_by_lead")
-    if not producer.get("helper_revision"):
-        reasons.append("missing_field:producer.helper_revision")
-    criteria = record["criteria"]
-    ids = []
-    for item in criteria:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item.get("id") \
-                or not isinstance(item.get("evaluator"), str) or not item.get("evaluator") \
-                or item.get("state") not in ("met", "unmet", "inconclusive"):
-            reasons.append("malformed_criterion_line")
-            break
-        ids.append(item.get("id"))
-        if item.get("state") == "met" and not item.get("accepted_proof"):
-            reasons.append(f"met_without_proof:{item.get('id')}")
-    blocking = [r for r in reason_codes if r.get("blocking") is not False]
-    if success:
-        if any(isinstance(i, dict) and i.get("state") != "met" for i in criteria):
-            reasons.append("success_with_unmet_criterion")
-        if len(ids) != len(set(ids)):
-            reasons.append("success_with_duplicate_criterion_id")
-        if blocking:
-            reasons.append("success_with_blocking_reason")
-        if not fact_prs or any(p.get("reachable_from_destination") is not True or not p.get("merge_sha")
-                               for p in fact_prs):
-            reasons.append("success_without_confirmed_floor_fact")
-        if any((p.get("gate_result") == "applies_verbatim" or "tree_equivalent" in p)
-               and p.get("tree_equivalent") is not True for p in fact_prs):
-            reasons.append("success_without_tree_equivalence")
-        states = {i.get("issue"): i.get("state") for i in fact_issues}
-        if any(issue not in states or states[issue] is None for issue in issues):
-            reasons.append("success_without_confirmed_floor_fact")
-        if outcome == "verified" and any(states.get(issue) != "closed" for issue in issues):
-            reasons.append("verified_with_open_issue")
-    elif not blocking and not record.get("unread_inputs"):
-        reasons.append("negative_outcome_without_reason")
-    return ("unusable", sorted(set(reasons))) if reasons else ("accept", [])
+# One usability rule for GV and the ledger (PR #247 fix batch 1, B1): the D4.5
+# reader rules live in dev_state.read_completion_result, which the ledger
+# validator also applies to every recorded completion_results entry. Returns
+# (``accept``|``reject``|``unusable``|``unknown``, reasons); an exit code never
+# substitutes for this reading (rule 5).
+read_result = dev_state.read_completion_result
 
 
 # --- Evaluation -----------------------------------------------------------------
