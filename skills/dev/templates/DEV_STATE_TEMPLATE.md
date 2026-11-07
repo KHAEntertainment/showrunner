@@ -399,6 +399,23 @@ pull_requests:
           to: 4e683b4
           established: true
           note: "all four required commands ran; merge ref of head onto the then-current base"
+      - run: 130
+        job: build
+        attempt: 1
+        definition_ref:
+          ref: .github/workflows/ci.yml#build
+          rev: 2ab2b59
+        tested_subject:
+          sha: d44f1e0
+          kind: head
+        environment: "ubuntu-latest / node 22 / prisma generate, tsc --noEmit, eslint, vitest run"
+        conclusion: success
+        url: https://github.com/KHAEntertainment/SupaConsole/actions/runs/130
+        observed_at: 2026-10-20T16:25:00Z
+        applicability:
+          to: d44f1e0
+          established: true
+          note: "post-merge full required gate rerun: a push run on the merge commit"
     checks:
       - id: build
         definition_ref:
@@ -408,7 +425,10 @@ pull_requests:
         tested_subject: 7a0b5d1
         environment: ci
         outcome: pass
-        evidence_ref: "run 123 attempt 1"
+        evidence_ref:
+          run: 123
+          job: build
+          attempt: 1
         observed_at: 2026-10-20T15:02:11Z
       - id: acceptance:e2e-verify
         definition_ref:
@@ -429,7 +449,10 @@ pull_requests:
           type: test
           id: "vitest src/app/api/projects/rename.test.ts"
         outcome: pass
-        evidence_ref: "run 123 attempt 1"
+        evidence_ref:
+          run: 123
+          job: build
+          attempt: 1
       - id: AC-2@9f3c
         evaluator:
           type: demonstration
@@ -480,7 +503,10 @@ pull_requests:
             at: d44f1e0
             outcome: pass
             basis: fresh
-            evidence_ref: "run 130 attempt 1"
+            evidence_ref:
+              run: 130
+              job: build
+              attempt: 1
           - id: acceptance:e2e-verify
             at: d44f1e0
             outcome: pass
@@ -494,7 +520,11 @@ pull_requests:
             basis: fresh
             evaluator:
               type: test
-            evidence_ref: "run 130 attempt 1 (vitest re-executed on the merged tree)"
+            # vitest re-executed on the merged tree
+            evidence_ref:
+              run: 130
+              job: build
+              attempt: 1
           - id: AC-2@9f3c
             at: d44f1e0
             outcome: pass
@@ -592,6 +622,195 @@ approved example, the meanings map as follows:
 | `pull_request` | the entry's existing `number` |
 | `fix_batches` (private) | the `fix_batches` of the episode named by `defect_episode_ref` |
 | `tier` (private) | the risk tier the lead records for the PR |
+
+Since Issue #195 (L195-2b) the example writes every CI `evidence_ref` in the
+structured form and records the post-merge rerun, run 130, as a `ci_runs` entry
+of its own, so each test proof and the rerun resolve to a recorded run, job and
+attempt. The section below defines these forms.
+
+## Completion results and evidence additions (v2.2, Issue #195)
+
+These definitions are additive under `schema_version: 2`. `dev_state.py
+--validate` checks them only when the ledger carries a `completion_results`
+record (not null or `[]`) or a `pull_requests` entry with `profile_version:
+completion-evidence-v1`, and only on those records; every older ledger
+validates exactly as before. A record that breaks a rule below fails with a
+named error, `<path>: <reason>`.
+
+**Structured CI `evidence_ref`.** A CI reference, in `checks`, `criteria`, and
+`post_merge` checks and criteria, is written in structured form only: a map
+with exactly `run` (the run id), `job` (the `ci_runs` entry's `job`) and
+`attempt` (a positive integer). All three are required and any other field is
+refused.
+
+```yaml
+evidence_ref:
+  run: 130
+  job: build
+  attempt: 1
+```
+
+A reader tells the forms apart by type. A map with `run` is a structured CI
+reference; a map without `run` is a non-CI reference (`comment` with
+`snapshot`, or `review_id`); a string is the legacy text form (`run 123
+attempt 1`, `run 123 job build attempt 1` or `123/build/attempt-1`). Text
+forms in older ledgers are still read, and never better than before: a text
+reference holding more than one `attempt <n>` clause is `inconclusive`
+(`ambiguous_evidence_ref`). The completion verifier treats a structured
+reference missing its job or attempt as `inconclusive`
+(`ci_identity_incomplete`). The reader refuses a repeated key, so a
+structured reference is never ambiguous.
+
+**Subject fields.** On a `completion-evidence-v1` record:
+- Every `ci_runs` entry records `attempt` as a positive integer, prior-gate runs
+  included.
+- A `tested_subject` of `kind: merge_ref` records `head` (the source head it
+  merged) and `base_oid` (the base it merged onto).
+- A record with any merge-ref entry records `target_branch`, the PR's base
+  branch. The verifier compares it with the run's pull-request context, so it
+  stays on the record and is not copied into `tested_subject`.
+- The post-merge rerun is a `ci_runs` entry like any other (`kind: head` at the
+  merge sha). The `post_merge.run` and the post-merge evidence references then
+  resolve to a recorded entry; with no matching entry the verifier says
+  `ci_run_unrecorded`.
+
+**`fallback_approved_by`.** A `ci_runs` entry is LOCAL when it records a
+non-CI `executor`, a `host:` environment, or a run id that is not a GitHub run
+id. A LOCAL run counts as test proof only under an approved fallback, and only
+for a `host:<id>` check whose executor it names. It then records `executor` and
+`fallback_approved_by`:
+
+```yaml
+fallback_approved_by:
+  who: owner
+  at: 2026-10-20T16:20:00Z
+  instruction: "owner message 2026-10-20T16:18Z: CI runners down; run the build gate on host:mac-1"
+```
+
+`who` is `owner`, or `lead` when the lead acts on an owner instruction recorded
+in the ledger. `at` is a strict UTC time. `instruction` names that owner
+instruction. The approval is required for a LOCAL run to count as proof. A LOCAL
+entry without it is an unapproved local run and never counts, and no LOCAL
+entry ever satisfies a `ci` or `ci:<runner>` check, approved or not.
+`dev_state.py` validates the map where it is present and requires `executor`
+beside it.
+
+**`required_check_unbound`.** The verifier binds every consumed CI run to the
+PR's `checks` entry whose `id` is the run's `job`. A `ci_runs` job with no
+matching `checks` entry is `inconclusive` in the verifier
+(`required_check_unbound`). Record the check every governing run serves.
+
+**Completion results.** `completion_results` is a top-level list of
+completion verifier results (`completion-result-v1`, SDP D4.5). The verifier
+prints a result and never writes the ledger; the lead, as sole ledger writer,
+appends it as printed. Each entry needs:
+- `profile_version: completion-result-v1`
+- `result_id`, unique in the list
+- `run_id`
+- `plan_ref`, a map
+- `purpose`, either `final` or `readiness`
+- `outcome`, in that purpose's vocabulary:
+  - `final`: `verified`, `not_complete`, `inconclusive`
+  - `readiness`: `evidence_ready`, `not_ready`, `inconclusive`. A
+    `readiness` result never records `verified`.
+- `producer.recorded_by: lead`
+- `supersedes`, a list of earlier `result_id`s with the same `run_id` and
+  `purpose`. It is empty for the first result of that pair.
+
+The rest of the printed record is kept as printed: `goal` (`repository`,
+`fixed_issues`, `frozen_at`), `evidence_profile`, `consumed_inputs` (each with
+`reference`, `digest`, and `revision` or `recorded_at`), `repository_facts`
+(with `observed_at`), `criteria` (one line per criterion with `criteria_ref`,
+`id`, `evaluator`, `state`, `reason_code`, and `accepted_proof` when met),
+`reason_codes` (each with `code`, `class`, `blocking`, and the `issues`, `prs`
+or `criteria` it affects), `unread_inputs`, and the other `producer` fields
+(`helper_revision`, `skill_revision`, `invoker_role`, `invoker_id`,
+`invoker_harness`, `consumer_context`, present even when null).
+`dev_state.py` then applies the D4.5 reader rules through
+`read_completion_result`, the same function the verifier reads results by. A
+record that rule does not accept is refused with the rule's reasons (for
+example `completion_results[0]: unusable: success_with_unmet_criterion`).
+A result that a `goal_completion_ref` points to, or that an audit or closure
+comment cites, stays in the list through trimming. There is no human-acceptance
+field and no owner-account setting (owner ruling 2026-11-06). Example: a
+readiness result recorded before the post-merge rerun finished. A later result
+for the same `run_id` and `purpose` lists `gv-1a2b3c4d5e6f7a8b` in its
+`supersedes`.
+
+```yaml
+completion_results:
+  - profile_version: completion-result-v1
+    result_id: gv-1a2b3c4d5e6f7a8b
+    run_id: goal-2026-10-20
+    plan_ref:
+      origin: docs/plans/2026-10-19-rename-plan.md
+      source_revision: sha256:1111111111111111111111111111111111111111111111111111111111111111
+      approved_revision: sha256:2222222222222222222222222222222222222222222222222222222222222222
+      approval:
+        authority:
+          agent_id: owner
+          harness: claude
+        evidence:
+          reference: KHAEntertainment/SupaConsole@0123456789abcdef0123456789abcdef01234567
+          digest: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      producer:
+        session: lead-session-1
+        harness: claude
+    goal:
+      repository: KHAEntertainment/SupaConsole
+      fixed_issues:
+        - KHAEntertainment/SupaConsole#41
+      frozen_at: 2026-10-19T12:00:00Z
+    evidence_profile: completion-evidence-v1
+    consumed_inputs:
+      - reference: .agent/dev-state.md
+        revision: null
+        recorded_at: 2026-10-20T16:12:00Z
+        digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        supplies: the ledger snapshot read
+    purpose: readiness
+    repository_facts:
+      observed_at: 2026-10-20T16:12:00Z
+      pull_requests:
+        - pr: KHAEntertainment/SupaConsole#23
+          state: merged
+          merge_sha: d44f1e0
+          destination_branch: main
+          reachable_from_destination: true
+          gate_result: rerun_pass
+      closed_issues:
+        - issue: KHAEntertainment/SupaConsole#41
+          state: open
+    criteria:
+      - criteria_ref: sha256:9f3c
+        id: AC-1@9f3c
+        evaluator: test
+        state: inconclusive
+        reason_code: post_merge_pending
+        accepted_proof: null
+    outcome: not_ready
+    reason_codes:
+      - code: post_merge_pending
+        class: inconclusive
+        blocking: true
+        issues:
+          - KHAEntertainment/SupaConsole#41
+        prs:
+          - KHAEntertainment/SupaConsole#23
+        criteria:
+          - AC-1@9f3c
+    unread_inputs: []
+    producer:
+      helper: skills/dev/scripts/verify_goal_completion.py
+      helper_revision: sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+      skill_revision: 2.2.0
+      invoker_role: lead
+      invoker_id: lead-agent-1
+      invoker_harness: claude
+      consumer_context: lead status
+      recorded_by: lead
+    supersedes: []
+```
 
 ## Inventory record schema (Issue #73)
 

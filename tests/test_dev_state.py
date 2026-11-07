@@ -1259,5 +1259,391 @@ class TestGoalRunAuthorityElementTypes(unittest.TestCase):
                     dev_state.validate_goal_run(block)
                 self.assertEqual(str(raised.exception), expected)
 
+# --- Issue #195 lane L195-2b: completion results and evidence additions -------
+
+from unittest import mock  # noqa: E402
+
+
+def evidence_section_example(fence: int) -> str:
+    """The n-th yaml block of the template's L195-2b section."""
+    section = TEMPLATE.read_text().split(
+        "## Completion results and evidence additions (v2.2, Issue #195)", 1)[1].split("\n## ", 1)[0]
+    return re.findall(r"^```yaml\n(.*?)^```", section, re.M | re.S)[fence]
+
+
+def worked_evidence_ledger() -> str:
+    return ("---\nschema_version: 2\nrun_id: example\nrun_status: active\n"
+            + TestEvidenceFieldsReader.evidence_example() + "---\n")
+
+
+def worked_pull_requests() -> list:
+    return dev_state.read_ledger_block(worked_evidence_ledger(), "pull_requests")
+
+
+SC3_ACCEPTED_RESULT = Path(__file__).parent.parent / "docs" / "v2.2" / "contracts" / "fixtures" / "sc-3" / \
+    "accepted-final-verified-completion.json"
+
+
+def result_record(result_id="gv-1", run_id="goal-1", purpose="final", outcome="verified", supersedes=()):
+    """A complete completion-result-v1 record: the SC-3 accepted fixture (read
+    only), re-identified. A negative outcome carries the blocking reason D4.5
+    requires of it."""
+    import json  # noqa: PLC0415
+
+    record = copy.deepcopy(json.loads(SC3_ACCEPTED_RESULT.read_text(encoding="utf-8"))["input"])
+    record.update(result_id=result_id, run_id=run_id, purpose=purpose, outcome=outcome,
+                  supersedes=list(supersedes))
+    if outcome not in ("verified", "evidence_ready"):
+        record["reason_codes"] = [{"code": "post_merge_pending", "class": "inconclusive", "blocking": True,
+                                   "issues": list(record["goal"]["fixed_issues"]), "prs": [], "criteria": [],
+                                   "detail": {}}]
+    return record
+
+
+class TestLedgerBlockReader(unittest.TestCase):
+    """Item 6: the folded reader is public, documented, and fails closed."""
+
+    def test_reads_lists_of_maps_and_at_sign_keys(self):
+        text = worked_evidence_ledger()
+        prs = dev_state.read_ledger_block(text, "pull_requests")
+        parents = dev_state.read_ledger_block(text, "parent_acceptance")
+        self.assertEqual(prs[0]["number"], 23)
+        self.assertEqual(parents[0]["criteria_map"]["AC-1@9f3c"], "AC-1@b17e")
+        self.assertIs(dev_state.read_ledger_block(text, "completion_results"), dev_state.LEDGER_ABSENT)
+        self.assertEqual(dev_state.read_ledger_block(text, "run_id"), "example")
+
+    def test_fails_closed_with_a_named_error(self):
+        cases = {
+            "pull_requests:\n\t- x\n": "tab indentation",
+            "pull_requests:\n  - a: |\n    text\n": "block scalars",
+            "pull_requests:\n  - a: 1\n    a: 2\n": "duplicate key",
+            "pull_requests:\n  - [flow]\n": "flow syntax",
+            "pull_requests:\n  - - nested\n": "nested list",
+            "pull_requests:\n": "block is empty",
+            "pull_requests:\n  - a: 1\npull_requests: []\n": "duplicate key",
+        }
+        for body, phrase in cases.items():
+            with self.subTest(body=body):
+                with self.assertRaises(dev_state.LedgerBlockError) as raised:
+                    dev_state.read_ledger_block(f"---\n{body}---\n", "pull_requests")
+                self.assertIn(phrase, str(raised.exception))
+        with self.assertRaises(dev_state.LedgerBlockError):
+            dev_state.read_ledger_block("no frontmatter", "pull_requests")
+
+    def test_is_documented(self):
+        self.assertFalse(dev_state.read_ledger_block.__name__.startswith("_"))
+        self.assertGreater(len(dev_state.read_ledger_block.__doc__ or ""), 200)
+
+
+class TestEvidenceAdditionsLedgerCompat(unittest.TestCase):
+    """Foreman condition: every legacy form validates unchanged, and the new
+    evidence validator is never reached for it."""
+
+    def legacy_ledgers(self) -> dict:
+        import tests.test_goal_lifecycle_clocks as clocks  # noqa: PLC0415 (it imports this module)
+
+        return {
+            "template (goal_run null)": TEMPLATE.read_text(),
+            "goal_run null": ledger_with("goal_run: null\n"),
+            "real-shape pre-L2": REAL_SHAPE_PRE_L2_LEDGER,
+            "L2 16-key": ledger_with(render_goal_run(armed_block())),
+            "L4 20-key": ledger_with(render_goal_run(authority_block())),
+            "L6 25-key": ledger_with(render_goal_run(clocks.l6_block())),
+            "L7 context_resets": ledger_with(render_goal_run(clocks._context_resets_block(True, 0))),
+        }
+
+    def test_legacy_ledgers_never_reach_the_evidence_validator(self):
+        def boom(*_args, **_kwargs):
+            raise AssertionError("evidence validator reached")
+
+        with mock.patch.object(dev_state, "read_ledger_block", boom):
+            for name, text in self.legacy_ledgers().items():
+                with self.subTest(name=name):
+                    self.assertIsNone(dev_state.validate_evidence_text(text))
+
+    def test_legacy_ledgers_validate_unchanged(self):
+        for name, text in self.legacy_ledgers().items():
+            with self.subTest(name=name):
+                code, stdout, stderr = run_validator(text)
+                self.assertEqual(code, 0, stderr)
+                self.assertIn("OK:", stdout)
+                self.assertEqual(stderr, "")
+
+    def test_non_evidence_pull_requests_are_left_alone(self):
+        """A pre-#155 PR entry with a text CI reference and no attempt still passes."""
+        content = ("---\nschema_version: 2\nrun_id: old\nrun_status: active\npull_requests:\n"
+                   "  - number: 142\n    ci_runs:\n      - run: 123\n        job: build\n"
+                   "    checks:\n      - id: build\n        evidence_ref: \"run 123\"\n---\n")
+        code, _, stderr = run_validator(content)
+        self.assertEqual(code, 0, stderr)
+
+
+class TestEvidencePullRequestsValidate(unittest.TestCase):
+    """Items 2, 3, 4 and 7 on completion-evidence-v1 PR records."""
+
+    def assert_error(self, mutate, path, phrase):
+        prs = worked_pull_requests()
+        mutate(prs[0])
+        with self.assertRaises(dev_state.GoalRunError) as raised:
+            dev_state.validate_evidence_pull_requests(prs)
+        self.assertEqual(raised.exception.field, path)
+        self.assertIn(phrase, raised.exception.message)
+
+    def test_worked_example_validates_and_uses_the_structured_form(self):
+        code, stdout, stderr = run_validator(worked_evidence_ledger())
+        self.assertEqual(code, 0, stderr)
+        rec = worked_pull_requests()[0]
+        self.assertEqual(rec["post_merge"][0]["criteria"][0]["evidence_ref"],
+                         {"run": 130, "job": "build", "attempt": 1})
+        rerun = [r for r in rec["ci_runs"] if r["run"] == 130]
+        self.assertEqual(len(rerun), 1)
+        self.assertEqual(rerun[0]["tested_subject"], {"sha": "d44f1e0", "kind": "head"})
+        self.assertEqual((rerun[0]["job"], rerun[0]["attempt"]),
+                         (rec["post_merge"][0]["run"]["job"], rec["post_merge"][0]["run"]["attempt"]))
+
+    def test_structured_evidence_ref_rules(self):
+        def ref(**fields):
+            def mutate(rec):
+                rec["criteria"][0]["evidence_ref"] = fields
+            return mutate
+        base = "pull_requests[0].criteria[0].evidence_ref"
+        self.assert_error(ref(run=123, job="build"), f"{base}.attempt", "positive integer")
+        self.assert_error(ref(run=123, job="build", attempt=0), f"{base}.attempt", "positive integer")
+        self.assert_error(ref(run=123, job="build", attempt="1"), f"{base}.attempt", "positive integer")
+        self.assert_error(ref(run=123, attempt=1), f"{base}.job", "must name the job")
+        self.assert_error(ref(run="", job="build", attempt=1), f"{base}.run", "run id")
+        self.assert_error(ref(run=123, job="build", attempt=1, url="x"), f"{base}.url", "unknown")
+        self.assert_error(
+            lambda rec: rec["post_merge"][0]["checks"][0].update(evidence_ref={"run": 130, "job": "build"}),
+            "pull_requests[0].post_merge[0].checks[0].evidence_ref.attempt", "positive integer")
+
+    def test_text_and_non_ci_references_stay_readable(self):
+        prs = worked_pull_requests()
+        prs[0]["criteria"][0]["evidence_ref"] = "run 123 attempt 1"
+        prs[0]["post_merge"][0]["criteria"][0]["evidence_ref"] = "123/build/attempt-1"
+        self.assertIsNone(dev_state.validate_evidence_pull_requests(prs))
+        self.assertIsInstance(prs[0]["checks"][1]["evidence_ref"], dict)  # comment + snapshot
+
+    def test_ci_runs_entries_record_attempt(self):
+        for bad in (None, 0, "1", True):
+            with self.subTest(attempt=bad):
+                self.assert_error(lambda rec, bad=bad: rec["ci_runs"][0].update(attempt=bad),
+                                  "pull_requests[0].ci_runs[0].attempt", "positive integer")
+        self.assert_error(lambda rec: rec["ci_runs"][0].pop("attempt"),
+                          "pull_requests[0].ci_runs[0].attempt", "positive integer")
+
+    def test_merge_ref_subject_records_head_base_oid_and_the_record_target_branch(self):
+        for name in ("head", "base_oid"):
+            with self.subTest(field=name):
+                self.assert_error(lambda rec, name=name: rec["ci_runs"][0]["tested_subject"].pop(name),
+                                  f"pull_requests[0].ci_runs[0].tested_subject.{name}", "merge_ref")
+        self.assert_error(lambda rec: rec.pop("target_branch"), "pull_requests[0].target_branch", "merge ref")
+        prs = worked_pull_requests()
+        prs[0].pop("target_branch")
+        prs[0]["ci_runs"] = [r for r in prs[0]["ci_runs"] if r["tested_subject"]["kind"] == "head"]
+        self.assertIsNone(dev_state.validate_evidence_pull_requests(prs))
+
+    def test_fallback_approved_by(self):
+        approval = {"who": "owner", "at": "2026-10-20T16:20:00Z", "instruction": "owner message 16:18Z"}
+
+        def local(**changes):
+            def mutate(rec):
+                entry = dict(rec["ci_runs"][1], run="local-7", executor="host:mac-1",
+                             environment="host:mac-1", fallback_approved_by=dict(approval))
+                entry.update(changes)
+                rec["ci_runs"].append(entry)
+            return mutate
+
+        prs = worked_pull_requests()
+        local()(prs[0])
+        self.assertIsNone(dev_state.validate_evidence_pull_requests(prs))
+        prs = worked_pull_requests()
+        local(fallback_approved_by=dict(approval, who="lead", instruction="owner message 16:18Z, quoted"))(prs[0])
+        self.assertIsNone(dev_state.validate_evidence_pull_requests(prs))
+        base = "pull_requests[0].ci_runs[2]"
+        self.assert_error(local(fallback_approved_by=dict(approval, who="worker")),
+                          f"{base}.fallback_approved_by.who", "owner")
+        self.assert_error(local(fallback_approved_by=dict(approval, at="2026-10-20 16:20")),
+                          f"{base}.fallback_approved_by.at", "UTC")
+        self.assert_error(local(fallback_approved_by=dict(approval, at="2026-10-20T16:20:00+02:00")),
+                          f"{base}.fallback_approved_by.at", "UTC")
+        self.assert_error(local(fallback_approved_by=dict(approval, instruction=" ")),
+                          f"{base}.fallback_approved_by.instruction", "owner instruction")
+        self.assert_error(local(fallback_approved_by={"who": "owner", "at": "2026-10-20T16:20:00Z"}),
+                          f"{base}.fallback_approved_by.instruction", "missing")
+        self.assert_error(local(fallback_approved_by=dict(approval, account="x")),
+                          f"{base}.fallback_approved_by.account", "unknown")
+        self.assert_error(local(fallback_approved_by="synthetic-owner"),
+                          f"{base}.fallback_approved_by", "map")
+        self.assert_error(local(executor=None), f"{base}.executor", "fallback_approved_by")
+
+    def test_cli_reports_the_named_error(self):
+        text = worked_evidence_ledger().replace("        attempt: 1\n        definition_ref:\n", "        definition_ref:\n", 1)
+        code, _, stderr = run_validator(text)
+        self.assertNotEqual(code, 0)
+        self.assertIn("FAIL: pull_requests[0].ci_runs[0].attempt: must be a positive integer", stderr)
+
+
+class TestCompletionResultsValidate(unittest.TestCase):
+    """Item 1: the GV result record (completion-result-v1) in the ledger."""
+
+    def assert_error(self, records, path, phrase):
+        with self.assertRaises(dev_state.GoalRunError) as raised:
+            dev_state.validate_completion_results(records)
+        self.assertEqual(raised.exception.field, path)
+        self.assertIn(phrase, raised.exception.message)
+
+    def test_template_example_validates(self):
+        example = evidence_section_example(2)
+        self.assertTrue(example.startswith("completion_results:\n"))
+        code, stdout, stderr = run_validator(
+            "---\nschema_version: 2\nrun_id: example\nrun_status: active\n" + example + "---\n")
+        self.assertEqual(code, 0, stderr)
+        records = dev_state.read_ledger_block("---\n" + example + "---\n", "completion_results")
+        self.assertEqual([dev_state.read_completion_result(r) for r in records], [("accept", [])])
+        self.assertEqual(records[0]["supersedes"], [])
+
+    def test_template_section_examples_parse(self):
+        ref = dev_state.read_ledger_block("---\n" + evidence_section_example(0) + "---\n", "evidence_ref")
+        self.assertEqual(ref, {"run": 130, "job": "build", "attempt": 1})
+        approval = dev_state.read_ledger_block("---\n" + evidence_section_example(1) + "---\n",
+                                               "fallback_approved_by")
+        self.assertIsNone(dev_state._validate_fallback_approved_by(approval, "fallback_approved_by"))
+
+    def test_readiness_never_records_verified(self):
+        self.assert_error([result_record(purpose="readiness", outcome="verified")],
+                          "completion_results[0].outcome", "outside the readiness vocabulary")
+        code, _, stderr = run_validator(ledger_with(
+            "completion_results:\n  - profile_version: completion-result-v1\n    result_id: gv-1\n"
+            "    run_id: goal-1\n    plan_ref:\n      origin: x\n    purpose: readiness\n"
+            "    outcome: verified\n    producer:\n      recorded_by: lead\n"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("completion_results[0].outcome: 'verified' is outside the readiness vocabulary", stderr)
+
+    def test_vocabulary_per_purpose(self):
+        for purpose, outcomes in dev_state.COMPLETION_RESULT_VOCABULARY.items():
+            for outcome in outcomes:
+                self.assertIsNone(dev_state.validate_completion_results(
+                    [result_record(purpose=purpose, outcome=outcome)]))
+        self.assert_error([result_record(outcome="evidence_ready")], "completion_results[0].outcome", "final")
+        self.assert_error([result_record(purpose="accept")], "completion_results[0].purpose", "final or readiness")
+
+    def test_required_identity_and_writer(self):
+        cases = (
+            ("profile_version", "completion-result-v2", "completion-result-v1"),
+            ("result_id", "", "non-empty"),
+            ("run_id", None, "non-empty"),
+            ("plan_ref", "sha256:2222", "map"),
+            ("producer", None, "map"),
+        )
+        for name, value, phrase in cases:
+            with self.subTest(field=name):
+                self.assert_error([dict(result_record(), **{name: value})], f"completion_results[0].{name}", phrase)
+        record = result_record()
+        record["producer"]["recorded_by"] = "worker"
+        self.assert_error([record], "completion_results[0].producer.recorded_by", "lead")
+        record["producer"].pop("recorded_by")
+        self.assert_error([record], "completion_results[0].producer.recorded_by", "lead")
+        self.assert_error({"result_id": "x"}, "completion_results", "list")
+        self.assert_error(["gv-1"], "completion_results[0]", "map")
+
+    def test_supersedes_chains_within_one_run_and_purpose(self):
+        first = result_record("gv-1", outcome="inconclusive")
+        self.assertIsNone(dev_state.validate_completion_results([first, result_record("gv-2", supersedes=["gv-1"])]))
+        self.assert_error([first, result_record("gv-1")], "completion_results[1].result_id", "repeats")
+        self.assert_error([first, result_record("gv-2", supersedes=["gv-0"])],
+                          "completion_results[1].supersedes[0]", "names no earlier result")
+        self.assert_error([result_record("gv-2", supersedes=["gv-1"]), first],
+                          "completion_results[0].supersedes[0]", "names no earlier result")
+        self.assert_error([first, result_record("gv-2", supersedes=["gv-2"])],
+                          "completion_results[1].supersedes[0]", "never supersedes itself")
+        self.assert_error([first, result_record("gv-2", purpose="readiness", outcome="not_ready",
+                                                supersedes=["gv-1"])],
+                          "completion_results[1].supersedes[0]", "one (run_id, purpose)")
+        self.assert_error([first, result_record("gv-2", run_id="goal-2", supersedes=["gv-1"])],
+                          "completion_results[1].supersedes[0]", "one (run_id, purpose)")
+        self.assert_error([dict(result_record(), supersedes="gv-0")], "completion_results[0].supersedes", "list")
+
+    def test_no_human_acceptance_fields_are_defined(self):
+        section = TEMPLATE.read_text().split(
+            "## Completion results and evidence additions (v2.2, Issue #195)", 1)[1].split("\n## ", 1)[0]
+        for word in ("/accept", "owner_account", "owner-account setting"):
+            self.assertNotIn(f"`{word}`", section)
+        self.assertNotIn("owner_account", " ".join(dir(dev_state)))
+
+
+# --- PR #247 fix batch 1: the gate follows the reader (B2, QA M-1, L-1, L-2) --
+
+GATE_LEDGER = """---
+schema_version: 2
+run_id: probe
+run_status: active
+pull_requests:
+  - number: 10
+    {profile_line}
+    ci_runs:
+      - run: 130
+        job: build
+        attempt: 0
+---
+"""
+
+
+class TestEvidenceGateFollowsTheReader(unittest.TestCase):
+    """B2: the decision to validate comes from the parsed ledger. Every spelling
+    the reader accepts is validated; a marked block it cannot read is a named
+    error, never a skip."""
+
+    SPELLINGS = {
+        "plain": "profile_version: completion-evidence-v1",
+        "double-quoted key": '"profile_version": completion-evidence-v1',
+        "single-quoted key": "'profile_version': completion-evidence-v1",
+        "extra spaces": "profile_version:     completion-evidence-v1",
+        "double-quoted value": 'profile_version: "completion-evidence-v1"',
+        "single-quoted value": "profile_version: 'completion-evidence-v1'",
+        "inline comment": "profile_version: completion-evidence-v1  # evidence profile",
+    }
+
+    def test_quoted_key_repro_is_validated(self):
+        text = GATE_LEDGER.format(profile_line='"profile_version": completion-evidence-v1')
+        code, stdout, stderr = run_validator(text)
+        self.assertEqual(code, 1, stdout)
+        self.assertIn("FAIL: pull_requests[0].ci_runs[0].attempt: must be a positive integer", stderr)
+
+    def test_spelling_table_never_passes(self):
+        for name, line in self.SPELLINGS.items():
+            with self.subTest(spelling=name):
+                code, stdout, stderr = run_validator(GATE_LEDGER.format(profile_line=line))
+                self.assertEqual(code, 1, f"{name}: {stdout}")
+                self.assertRegex(stderr, r"^FAIL: pull_requests(\[0\][.\w\[\]]*)?: ")
+
+    def test_spellings_the_reader_accepts_reach_the_attempt_rule(self):
+        for name in ("plain", "double-quoted key", "extra spaces", "double-quoted value", "single-quoted value"):
+            with self.subTest(spelling=name):
+                _, _, stderr = run_validator(GATE_LEDGER.format(profile_line=self.SPELLINGS[name]))
+                self.assertIn("pull_requests[0].ci_runs[0].attempt: must be a positive integer", stderr)
+
+    def test_unreadable_marked_blocks_are_named_errors(self):
+        cases = {
+            "inline comment (QA L-2)": (GATE_LEDGER.format(profile_line=self.SPELLINGS["inline comment"]),
+                                        "pull_requests"),
+            "completion_results comment": (ledger_with("completion_results:\n  - result_id: x  # note\n"),
+                                           "completion_results"),
+            "completion_results block scalar": (ledger_with("completion_results: |\n  text\n"),
+                                                "completion_results"),
+        }
+        for name, (text, key) in cases.items():
+            with self.subTest(case=name):
+                code, _, stderr = run_validator(text)
+                self.assertEqual(code, 1)
+                self.assertTrue(stderr.startswith(f"FAIL: {key}"), stderr)
+
+    def test_empty_completion_results_validate(self):
+        for body in ("completion_results: null\n", "completion_results: []\n"):
+            with self.subTest(body=body):
+                code, _, stderr = run_validator(ledger_with(body))
+                self.assertEqual(code, 0, stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
