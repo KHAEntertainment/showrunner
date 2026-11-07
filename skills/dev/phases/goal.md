@@ -27,7 +27,7 @@ Every call returns a `Result` with `outcome`, `reason`, `value` and `detail`. `o
 
 ## Ledger fields this phase writes
 
-The lead is the sole writer of `.agent/dev-state.md`. This phase writes the `goal_run` block documented in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md` (Goal run record schema), the existing top-level `next_action`, the top-level `completion_results` and the optional keys named below:
+The lead is the sole writer of `.agent/dev-state.md`. This phase writes the `goal_run` block (the first five bullets; documented in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`, Goal run record schema), the existing top-level `next_action`, the optional top-level keys in the sixth bullet, and the top-level `completion_results` in the seventh:
 
 - the frozen scope: every key of `Assignment.to_dict()` (`run`, `mode`, `repo`, `fixed_issues`, `source`, `approval_revision`, `lead`, `plan_ref`, `coordinator`, `charter_revision`, `contract_refs`);
 - `approval_time`, `next_wake_at`, `paused`;
@@ -80,23 +80,32 @@ Sleep only after persisting both `next_wake_at` and `next_action`. A pause is re
 
 ### Completion verification
 
-On `claim_requires_gv`, and at no other time, the lead, and only the lead, runs the verifier. No worker, QA or reviewer lane runs it for the lead. It is read-only: it never merges, closes, reopens or writes. Closing Issues stays with the foreman's audit.
+The lead, and only the lead, runs the verifier. No worker, QA or reviewer lane runs it for the lead. Run it at each of these three triggers:
+
+- a `GOAL-COMPLETE` claim (`claim_requires_gv`);
+- a resume or recovery of a run that had claimed completion or recorded a result;
+- immediately before reporting completion.
+
+It is read-only: it never merges, closes, reopens or writes.
 
 ```bash
 rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/verify_goal_completion.py" --ledger .agent/dev-state.md --purpose final --marker "<last line of the turn>" --approved-revision "<approval_revision>" --invoker-role lead --invoker-id "<lead id>" --invoker-harness "<harness>"
 ```
 
-Add `--supersedes <result_id>` once for each earlier result of the same run and purpose. The printed record then carries `supersedes`; never edit it by hand. Read the exit code:
+Pass `--marker` only when there is a marker; at a resume or before reporting, leave it out. Add `--supersedes <result_id>` once for each earlier result of the same run and purpose. The printed record then carries `supersedes`; never edit it by hand. Read the exit code:
 
 - **0, `verified`:** the only goal success. Record it, then report completion.
-- **1, `not_complete`:** never success, and not the end of the run. Read the reason codes, dispatch fixes within the run's bounds (step 3), then run the verifier again.
-- **3, `inconclusive`:** never success. The verifier already tries each read three times. A lead re-run is bounded by `policy.gv_retries`; each re-run adds one to `counters.gv_retries_used`. When the bound is spent, report `inconclusive` and stop the claim.
-- **2** (usage, internal or arming error): never success, and no result is printed. Repair the call or the ledger it names, then run again. If it persists, report the run incomplete.
+- **1, `not_complete`:** never success, and not the end of the run. Read the reason codes, dispatch fixes within the run's bounds (step 3), then run the verifier again at the next trigger.
+- **3, `inconclusive`:** never success. The verifier already retries each read itself; the lead never loops it. The lead reports the claim as `inconclusive`, naming the failed read or reason, and stops claiming completion. Run the verifier again only at a trigger above, or after the named cause is fixed.
+- **2** (usage, internal or arming error): never success. It prints an error or an arming rejection, not a completion result, so never record exit 2 output. Repair the cause it names, then run again.
 - **4, `evidence_ready`:** only from `--purpose readiness`, and never a final result. A readiness run reports whether evidence is ready; it never completes a goal.
+- any other exit code, or a crash, is a failure: never success, and never recorded.
 
-Recheck after any resume or recovery, and immediately before reporting completion. A stored result is never reused across a state change.
+A stored result is never reused across a state change.
 
-The lead alone records each printed result: append it as printed to the top-level `completion_results` (`producer.recorded_by: lead`), then run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state.py" --validate .agent/dev-state.md`. Repair a failure it names before any further step.
+Closing Issues follows the run's normal duties, never the verifier. In a managed run, the foreman's audit closes merged Issues that stay open. In a standalone run, the Phase 4 post-merge closure and verification steps apply.
+
+The lead alone records each result that exit 0, 1 or 3 printed (or, for readiness, exit 4, 1 or 3). The verifier prints JSON, and the ledger refuses flow syntax, so do not paste the printed text. Write the record as a block YAML entry of the top-level `completion_results`, with `producer.recorded_by: lead`. Convert the representation only: keep every field and value exactly as printed, adding, dropping or editing nothing, and copy the `outcome`, the reason codes and the criteria lines verbatim. Then run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state.py" --validate .agent/dev-state.md`. Repair a failure it names before any further step.
 
 A goal's criteria never use a `human` evaluator in v2.2: there is no GitHub `/accept` and no owner account. The verifier returns `evaluator_unsupported` for such a criterion, and it never verifies. The owner signs off in chat, outside the verifier.
 
