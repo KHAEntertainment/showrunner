@@ -480,6 +480,41 @@ class IdleNeverDoneTest(unittest.TestCase):
             self.assertNotIn(value.strip(",:{}[]"), {"inferred_complete", "delete", "deletable"})
 
 
+class LegacyRowTest(unittest.TestCase):
+    """A #73-era inventory row without the #112 fields still reads, and never
+    comes out archive_due (additive schema; absence is unknown, not none)."""
+
+    def legacy_row(self, **extra):
+        row = {"id": "worker-1", "kind": "agent", "pr": 12, "role": "worker-new",
+               "created_at": "2026-11-06T08:00:00Z", "state": "active"}
+        row.update(extra)
+        return row
+
+    def test_row_without_either_field_is_blocked(self):
+        report = run([self.legacy_row()])
+        self.assertEqual(report["status"], "ok", report)
+        item = finding_for(report, "worker-1")
+        self.assertEqual((item["finding"], item["reason"]), ("blocked", "open_requests_unknown"))
+
+    def test_row_without_last_exchange_is_idle_unknown(self):
+        report = run([self.legacy_row(open_requests=[])])
+        item = finding_for(report, "worker-1")
+        self.assertEqual((item["finding"], item["reason"]), ("blocked", "idle_unknown"))
+
+    def test_row_without_open_requests_but_long_idle_is_blocked(self):
+        report = run([self.legacy_row(last_exchange_at=_iso(NOW - timedelta(days=3)))])
+        item = finding_for(report, "worker-1")
+        self.assertEqual((item["finding"], item["reason"]), ("blocked", "open_requests_unknown"))
+        self.assertEqual(report["counts"]["archive_due"], 0)
+
+    def test_template_inventory_reads(self):
+        template = (ROOT / "skills" / "dev" / "templates" / "DEV_STATE_TEMPLATE.md").read_text(encoding="utf-8")
+        self.assertEqual(MODULE.load_inventory(template), [])
+        self.assertIn("archived-idle-timeout", template)
+        for state in MODULE.STATES["agent"]:
+            self.assertIn(f"`{state}`", template, state)
+
+
 class ClaudeNativeTest(unittest.TestCase):
     def test_agent_count_is_not_applicable(self):
         report = run([agent_row(idle=timedelta(hours=3))], backend="claude-native", agents=None, lead=None,

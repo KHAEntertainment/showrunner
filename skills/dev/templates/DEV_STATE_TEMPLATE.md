@@ -829,7 +829,7 @@ locally minted id (`review:<path>`, `shell:<hostid>:<name>`).
 
 Allowed `state` values, by kind:
 
-- `agent`: `planned`, `active`, `report-back-pending`, `report-back-complete`, `report-back-incomplete`, `archived-on-accept`, `archived-on-closeout`, `foreign-idle`, `foreign-archived`. The two `foreign` states name agents the lead did not spawn; cleanup rows in those states never appear in a `Not mine` entry of the reply-contract cleanup line without a separate row write.
+- `agent`: `planned`, `active`, `report-back-pending`, `report-back-complete`, `report-back-incomplete`, `archived-on-accept`, `archived-on-closeout`, `archived-idle-timeout`, `foreign-idle`, `foreign-archived`. The two `foreign` states name agents the lead did not spawn; cleanup rows in those states never appear in a `Not mine` entry of the reply-contract cleanup line without a separate row write. `archived-idle-timeout` (Issue #112) is the state the lead writes after archiving an agent the reconcile reported `archive_due`; like the other `archived-*` states it is reversible and never means done.
 - `worktree`: `in-progress`, `review-only`, `landed-eligible`, `landed-eligible-and-approved`, `cleaned`, `foreign`. `landed-eligible` flips automatically after the lane's post-merge verification record lands; transition to `landed-eligible-and-approved` happens only after the user approves the row in a consolidation batch.
 - `review_checkout`: `in-use`, `clean`, `removed`.
 - `shell`: `running`, `stopped`, `exited`.
@@ -847,6 +847,35 @@ after that. Removing a worktree still goes through the wrapper's
 approved one at a time — that rule lives with the cleanup line in
 `reply-contract.md` and a row's `state` cannot reach `cleaned` without
 that approval.
+
+### Idle-timeout fields (Issue #112)
+
+Additive under `schema_version: 2`; a row written without them stays valid.
+`python3 ${CLAUDE_SKILL_DIR}/scripts/inventory_reconcile.py` reads them, and
+the turn-boundary procedure that acts on its report is § 7.3 of
+`reply-contract.md`.
+
+- `last_exchange_at` (`kind: agent`): the timezone-qualified UTC time of the
+  last message exchanged with that agent. The lead writes it on every send
+  to that agent and on every reply received from it. It is the idle signal:
+  the Traycer agent listing carries no last-activity timestamp, so the clock
+  is only as reliable as these writes. Absent, without a timezone, or in the
+  future, the row is `idle_unknown` and never archivable.
+- `open_requests` (`kind: agent`): a list of `{id, what, opened_at}` maps,
+  one per request the lead has open with that agent (a pending reply, a
+  wait, a shared-surface grant it is holding). `[]` means none. An entry is
+  removed only when that request is answered. Absent means unknown, and the
+  row is blocked from archiving (`open_requests_unknown`).
+- `shell_id` (`kind: shell`, optional): the shell id the lead's shell
+  listing uses. Without it, the reconcile matches the last segment of the
+  minted `shell:<hostid>:<name>` id.
+- `path` (`kind: review_checkout`, optional): the checkout path. Without
+  it, the reconcile matches the `review:<path>` id.
+
+An agent row in `active` or `report-back-complete` is archivable only when
+it is idle for more than 60 minutes, `open_requests` is `[]`, the listing
+does not show it active, and neither the recovery `obligations.children`
+list nor the `custody` record (Goal run record schema, below) names it.
 
 ## Workspace-debt gauge record (Issue #73)
 
