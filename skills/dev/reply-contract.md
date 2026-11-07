@@ -69,7 +69,7 @@ Fields, in order:
 
 - `retired <N>` — the count of artifacts this turn archived, stopped, or removed (with their kind), grouped by what the lead actually did (lanes archived, shells stopped, review checkouts removed, agents archived on accept). Zero is itself a value and must be quoted as `retired 0`.
 - `Still open:` — every inventory row whose `state` is anything other than `archived`, `landed-eligible-and-approved`, or `cleaned`. The reason field is the row's `state`, never a paraphrase (e.g. `worker (PR not merged)`, `qa-blocked`, `review-checkout-uncommitted`). Rows the lead did not spawn appear here, not under `Not mine`.
-- `Not mine:` — agents in this task whose `parentId` is not this lead, listed by id and a single backend hint (`idle`, `archived`, `sandbox-blocked`). The lead never stops or archives these. On the claude-native backend this field is always empty.
+- `Not mine:` — agents in this task whose `parentId` is not this lead, listed by id and a single backend hint (`idle`, `archived`, `sandbox-blocked`). The lead never stops or archives these. On the claude-native backend this field is always empty. On traycer, this field's source is the reconcile of § 7.3: its `not_mine` findings, which are listed agents in this project that are absent from the inventory, plus `foreign-*` inventory rows.
 
 The cleanup line is a fixed-shape record; it does not bury debt or migration status, which live in the inventory and the post-merge verification record respectively. The cap of § 2 still applies to the prose around it.
 
@@ -92,3 +92,28 @@ Consolidation: <project> has <landed-eligible> landed-eligible worktrees (review
 ```
 
 The lead never invents a count: the offer's number is the gauge's `counts.worktrees.landed_eligible` for this run's project, and the offer is omitted entirely when that field is `null` (an unavailable gauge) or `0`. Removing a worktree still goes through user approval per the consolidation batch in fix item 5 of Issue #73; the offer is a question, not a commit, and the lead does not pre-empt it by listing the paths in the reply body (they belong in the proposal the user reviews out-of-band).
+
+### 7.3 Idle timeout at turn boundaries (Issue #112)
+
+At the start and at the end of every lead turn on the traycer backend, the lead runs the inventory reconcile:
+
+```
+rtk proxy python3 ${CLAUDE_SKILL_DIR}/scripts/inventory_reconcile.py --dev-state .agent/dev-state.md --repo-dir <repo> --lead-agent-id <verified agent id> --shells-json <file>
+```
+
+`--shells-json` holds the lead's own shell listing (no CLI lists shells); it is required when the inventory has a `running` shell row. The script is **report-only**: it never archives, stops, deletes or messages anything. The lead acts on its report, and only on inventory rows:
+
+- `status: unavailable`, for any `reason_code` (a CLI error or timeout, a partial or paged listing, an unreadable ledger, `two_active_writers`): act on nothing this turn and report it as `Still open: reconcile (unavailable: <reason_code>)`. `counts` is `null`; an unavailable report is never read as zero findings.
+- `archive_due`: the agent has been idle for **more than** 60 minutes (exactly 60 is not due) with no open request. Archive it with `agent archive`, write its row `state: archived-idle-timeout`, and count it under `retired`. Archiving is reversible: the next message unarchives the agent and wakes it with its context. It never marks the agent's work done and never deletes its worktree.
+- `blocked_by_open_request`: do not archive. List it as `Still open: <role-or-id> (idle >60m, open request: <id> <what>)`, naming every open request.
+- `blocked`, `not_due`, `tracked`: no action. The row stays under `Still open` with its `state` as the reason.
+- `target_gone`, `already_archived`: no action on the target. Correct the row in the ledger and report the correction.
+- `not_mine`: list it under `Not mine:`. Never archive or stop it.
+
+**The idle signal.** The Traycer agent listing has no last-activity timestamp, so the clock is the ledger's `last_exchange_at` (inventory schema in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`). The lead writes it on every send to that agent and on every reply received from it. When it sends a request that expects an answer, starts a wait, or holds a shared-surface grant with that agent, it adds an `open_requests` entry, and it removes the entry only when that request is answered. A row missing either field is never archived. A listing that shows the agent active overrides the clock.
+
+**Lead swap.** The reconcile acts for exactly one writer of the run ledger: `lead.agent_id` and `execution.traycer_agent_id` must both equal `--lead-agent-id`. After a lead swap, the new lead updates both (the lead-swap recovery entry in `${CLAUDE_SKILL_DIR}/backends/traycer.md`) before it runs the reconcile. Until then the reconcile returns `two_active_writers`, and the lead acts on nothing and reports it.
+
+**Two timers.** In a Foreman-managed run, Foreman's 4-hour close-out of a finished lane stays separate from this 60-minute idle archive (SDP D7.1 item 4). Neither replaces the other, and neither acts on agents its owner did not spawn.
+
+On the claude-native backend there is no agent listing: the reconcile reports `counts.agents: not_applicable`, agent rows come out `not_applicable`, and there is no idle archive.
