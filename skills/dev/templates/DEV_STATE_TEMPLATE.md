@@ -951,7 +951,7 @@ an extension rewrites `policy` and never touches `counters`.
 | `request_issues` | Request id → the Issue it was counted under. |
 | `usage_measured` | Ledger-only. `true` when the harness reports usage. This is how the ledger keeps D3's "unknown, never 0": when `false`, `spend` must be `unknown`, and `0` fails as `goal_run.counters.spend: unmeasured usage must be unknown, never 0`. When `true`, `spend` is a finite number `>= 0`. |
 | `spend` | Measured usage, or `unknown`. Unknown usage never stops a run. |
-| `gv_retries_used` | Ledger-only. GV query retries (D3 item 4), an integer `>= 0` or `unknown`. The verifier makes these retries itself (READ_TRIES); the lead does not write this field in v2.2. `policy.gv_retries` is not yet wired to READ_TRIES (debt). |
+| `gv_retries_used` | Ledger-only. GV query retries (D3 item 4), an integer `>= 0` or `unknown`. The verifier makes these retries itself (READ_TRIES); the lead writes only the initial `0` at arming and never increments it in v2.2. `policy.gv_retries` is not yet wired to READ_TRIES (debt). |
 
 Counters are monotonic. A compaction, wake, restart, lead change or extension
 never resets one.
