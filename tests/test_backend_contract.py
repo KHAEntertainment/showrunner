@@ -3932,14 +3932,43 @@ class GoalCompletionRoutingTests(unittest.TestCase):
                      "**2** (usage, internal or arming error): never success",
                      "**4, `evidence_ready`:**"):
             self.assertIn(code, body)
-        self.assertIn("`policy.gv_retries`", body)
-        self.assertIn("`counters.gv_retries_used`", body)
         self.assertIn("never a final result", body)
+        # Fix batch 1 (Q1): gv_retries / gv_retries_used are GV's own D3 query
+        # retries, never a lead re-run budget.
+        self.assertNotIn("gv_retries", body)
+        self.assertIn("reports the claim as `inconclusive`", body)
+        self.assertIn("never loops", body)
+
+    def test_exit_two_and_unknown_exits_are_never_recorded(self) -> None:
+        # Fix batch 1 (QA L1, L2).
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertIn("never record exit 2 output", body)
+        self.assertIn("any other exit code, or a crash, is a failure", body)
+
+    def test_gv_runs_at_three_triggers_and_not_exclusively(self) -> None:
+        # Fix batch 1 (B2).
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertNotIn("at no other time", body)
+        for trigger in ("a `GOAL-COMPLETE` claim (`claim_requires_gv`)",
+                        "a resume or recovery of a run that had claimed completion or recorded a result",
+                        "immediately before reporting completion"):
+            self.assertIn(trigger, body)
+        self.assertIn("Pass `--marker` only when there is a marker", body)
+
+    def test_closure_follows_the_runs_normal_duties(self) -> None:
+        # Fix batch 1 (B3): GV never closes; closure is not assigned to the
+        # foreman unconditionally.
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertNotIn("Closing Issues stays with the foreman's audit", body)
+        self.assertIn("managed run", body)
+        self.assertIn("foreman's audit", body)
+        self.assertIn("standalone run", body)
+        self.assertIn("Phase 4 post-merge closure", body)
 
     def test_goal_md_rechecks_and_records_through_the_lead(self) -> None:
         body = self.section(self.read("phases/goal.md"), "### Completion verification")
-        self.assertIn("Recheck after any resume or recovery, and immediately before reporting completion", body)
-        self.assertIn("never reused across a state change", body)
+        self.assertIn("A stored result is never reused across a state change", body)
+        self.assertIn("copy the `outcome`, the reason codes and the criteria lines verbatim", body)
         self.assertIn("`completion_results`", body)
         self.assertIn("`producer.recorded_by: lead`", body)
         self.assertIn("dev_state.py", body)
@@ -3957,6 +3986,10 @@ class GoalCompletionRoutingTests(unittest.TestCase):
                     "recovery_receipts", "unknown_effects", "completion_results"):
             self.assertIn(f"`{key}`", body)
         self.assertIn("Each of the six is optional: absent or `null` is valid", body)
+        # Fix batch 1 (QA L3): the intro says which bullet is which.
+        self.assertIn("the first five bullets", body)
+        self.assertIn("the optional top-level keys in the sixth bullet", body)
+        self.assertIn("`completion_results` in the seventh", body)
         for kept in ("every key of `Assignment.to_dict()`",
                      "`approval_time`, `next_wake_at`, `paused`",
                      "`policy`: the `BoundsPolicy` fields",
