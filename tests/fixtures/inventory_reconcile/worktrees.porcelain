@@ -1,0 +1,15 @@
+worktree /synthetic/repo/main
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree /synthetic/repo/wt-lead
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/orch
+
+worktree /synthetic/repo/wt-worker
+HEAD 3333333333333333333333333333333333333333
+branch refs/heads/feat/synthetic
+
+worktree /synthetic/repo/review-12
+HEAD 3333333333333333333333333333333333333333
+detached

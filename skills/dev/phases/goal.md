@@ -142,7 +142,7 @@ This section states the owner's settled D7.1 (SDP l.518–533) as procedure. It 
 
 **Standalone mode.** There is no mandatory clock. The lead records each count in the ledger under `context_resets`, reports the total in its status and final reports, and at the second count tells the user once that the owner's rule recommends preparing a handover; it then continues unless the user says otherwise. No count stops a standalone run by itself. The two-compaction rule means prepare to hand over, never a hard stop.
 
-**The two idle timers stay separate.** #112 archives a Dev inventory agent after 60 minutes idle with no open request; it is open, P4, not implemented, and nothing here acts on it. Foreman's timer closes out a finished lane after 4 hours. They mean different things, neither replaces the other, and they share only the inventory observation. Neither acts on agents its owner did not spawn.
+**The two idle timers stay separate.** #112 archives a Dev inventory agent after 60 minutes idle with no open request; the lead does it at its turn boundary on the report of `scripts/inventory_reconcile.py` (report-only), by § 7.3 of `reply-contract.md`, tested in `tests/test_inventory_reconcile.py`, and nothing here acts on it. Foreman's timer closes out a finished lane after 4 hours. They mean different things, neither replaces the other, and they share only the inventory observation. Neither acts on agents its owner did not spawn.
 
 The D3 `run_time_hours` bound and the `WAKE` / `next_wake_at` marker are Dev's own bounds and scheduling. They are not Foreman's clock.
 

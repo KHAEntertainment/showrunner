@@ -1,0 +1,17 @@
+{
+  "type": "result",
+  "status": "ok",
+  "data": {
+    "caller": {"agentId": "lead-1", "canSendMessages": true},
+    "scope": "user",
+    "agents": [
+      {"id": "lead-1", "parentId": "foreman-1", "title": "Synthetic lead", "active": true, "archived": false, "sessionState": null, "lastExit": null, "folderPaths": ["/synthetic/repo/wt-lead"]},
+      {"id": "worker-1", "parentId": "lead-1", "title": "Synthetic worker", "active": false, "archived": false, "sessionState": null, "lastExit": null, "folderPaths": ["/synthetic/repo/wt-worker"]},
+      {"id": "qa-1", "parentId": "previous-lead", "title": "Synthetic QA from a previous lead", "active": false, "archived": false, "sessionState": null, "lastExit": null, "folderPaths": ["/synthetic/repo/wt-worker"]},
+      {"id": "foreign-1", "parentId": "someone-else", "title": "Synthetic foreign agent", "active": false, "archived": false, "sessionState": null, "lastExit": null, "folderPaths": ["/synthetic/repo/main"]},
+      {"id": "foreign-archived", "parentId": "someone-else", "title": "Synthetic archived foreign agent", "active": false, "archived": true, "sessionState": null, "lastExit": null, "folderPaths": ["/synthetic/repo/main"]},
+      {"id": "other-project-1", "parentId": "someone-else", "title": "Agent in another project", "active": false, "archived": false, "sessionState": null, "lastExit": null, "folderPaths": ["/synthetic/other-repo"]}
+    ]
+  },
+  "timestamp": 1794017055286
+}

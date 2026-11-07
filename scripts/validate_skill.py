@@ -45,6 +45,7 @@ REQUIRED = {
     "scripts/dev_config.py",
     "scripts/resolve_repository.py",
     "scripts/workspace_debt.py",
+    "scripts/inventory_reconcile.py",
     "scripts/locate_pinned_skill.py",
     "scripts/goal_run.py",
     "scripts/goal_authority.py",
@@ -1411,6 +1412,19 @@ def main() -> int:
             "`python3 ${CLAUDE_SKILL_DIR}/scripts/workspace_debt.py`",
             "Two `unavailable`",
             "A zero count",
+            # Issue #112: the idle-timeout inventory fields. Each clause pins
+            # one way the idle archive could be softened: a clock the lead
+            # does not keep, an open request cleared before it is answered,
+            # or an absent field read as "none".
+            "### Idle-timeout fields (Issue #112)",
+            "`archived-idle-timeout`",
+            "The lead writes it on every send",
+            "on every reply received from it",
+            "removed only when that request is answered",
+            "row is blocked from archiving (`open_requests_unknown`)",
+            "it is idle for more than 60 minutes, `open_requests` is `[]`",
+            "(`open_requests_malformed`)",
+            "is blocked (`shell_unmatched`)",
         ),
         # Issue #33: the gate's own bypass path had become the routine path
         # because a review invalidated by the author's own fix-commit push
@@ -1619,6 +1633,27 @@ def main() -> int:
             "Threshold: debt",
             "Consolidation:",
             "Approve the deletion batch?",
+            # Issue #112: the idle-timeout procedure. Each clause pins one
+            # fail-closed or report-only rule the lead follows at its turn
+            # boundary.
+            "### 7.3 Idle timeout at turn boundaries (Issue #112)",
+            "rtk proxy python3 ${CLAUDE_SKILL_DIR}/scripts/inventory_reconcile.py",
+            "The script is **report-only**: it never archives, stops, deletes or messages anything.",
+            "act on nothing this turn",
+            "an unavailable report is never read as zero findings",
+            "idle for **more than** 60 minutes (exactly 60 is not due)",
+            "It never marks the agent's work done and never deletes its worktree.",
+            "naming every open request",
+            "Never archive or stop it.",
+            "The lead writes it on every send to that agent and on every reply received from it.",
+            "it removes the entry only when that request is answered",
+            "`lead.agent_id` and `execution.traycer_agent_id` must both equal `--lead-agent-id`",
+            "the lead acts on nothing and reports it",
+            "Foreman's 4-hour close-out of a finished lane stays separate from this 60-minute idle archive (SDP D7.1 item 4)",
+            "`counts.agents: not_applicable`",
+            "counts as `archived` for § 7's `Still open` exclusion",
+            "never marked `cleaned` or `removed` here",
+            "with a non-blank `id` and `what`",
         ),
         # Each adapter must state its own bound; `contract.md` requires one to
         # exist but cannot supply a page size or a timeout for a transport it
@@ -1674,6 +1709,11 @@ def main() -> int:
             # out as an SOP exit so the two do not read as a contradiction.
             "Do not add cost, rate-limit, or performance routing heuristics.",
             "is a documented SOP exit, not a routing heuristic",
+            # Issue #112: the listing has no idle signal; the reconcile and
+            # its procedure are named here so the pointer cannot drift.
+            "**Idle timeout (Issue #112).**",
+            "`agent list --json` carries no last-activity timestamp",
+            "${CLAUDE_SKILL_DIR}/scripts/inventory_reconcile.py",
         ),
         "backends/claude-native.md": (
             "seven required sections",

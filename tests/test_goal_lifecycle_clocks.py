@@ -460,7 +460,7 @@ class TestForemanClocksDistinctFrom112(unittest.TestCase):
             "4 hours",
             "neither replaces the other",
             "Neither acts on agents its owner did not spawn",
-            "not implemented",
+            "scripts/inventory_reconcile.py",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, self.section)
