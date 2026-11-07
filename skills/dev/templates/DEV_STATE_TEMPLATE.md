@@ -602,12 +602,12 @@ parent_acceptance:
         reason: "criterion amended 2026-10-21; tests and evaluator judgment to be reassessed against the new intent; PR 24 pending"
       - id: AC-4@b17e
         evaluator:
-          type: human
-          id: owner
+          type: independent_reviewer
+          id: reviewer lane
         outcome: pending
-        reason: human evaluation not yet performed
+        reason: independent review not yet performed
     outcome: not_complete
-    reason: "2 of 4 criteria withdrawn by rollback, 1 amended and unassessed, 1 awaiting its human evaluator"
+    reason: "2 of 4 criteria withdrawn by rollback, 1 amended and unassessed, 1 awaiting its independent reviewer"
     observed_at: 2026-10-23T09:30:00Z
     goal_completion_ref: null
 ```
@@ -951,7 +951,7 @@ an extension rewrites `policy` and never touches `counters`.
 | `request_issues` | Request id → the Issue it was counted under. |
 | `usage_measured` | Ledger-only. `true` when the harness reports usage. This is how the ledger keeps D3's "unknown, never 0": when `false`, `spend` must be `unknown`, and `0` fails as `goal_run.counters.spend: unmeasured usage must be unknown, never 0`. When `true`, `spend` is a finite number `>= 0`. |
 | `spend` | Measured usage, or `unknown`. Unknown usage never stops a run. |
-| `gv_retries_used` | Ledger-only. GV query retries used, an integer `>= 0` or `unknown`. Documented and validated only; GV and its retry bound are governed by the existing Dev gates until a GV lane lands. |
+| `gv_retries_used` | Ledger-only. GV query retries (D3 item 4), an integer `>= 0` or `unknown`. The verifier makes these retries itself (READ_TRIES); the lead writes only the initial `0` at arming and never increments it in v2.2. `policy.gv_retries` is not yet wired to READ_TRIES (debt). |
 
 Counters are monotonic. A compaction, wake, restart, lead change or extension
 never resets one.

@@ -3900,5 +3900,128 @@ class EvidenceProfileTests(unittest.TestCase):
         self.assertTrue(any("exactly the seven required sections" in error for error in errors), errors)
 
 
+class GoalCompletionRoutingTests(unittest.TestCase):
+    """Issue #195 lane L195-2b: goal.md routes GOAL-COMPLETE through the verifier."""
+
+    def read(self, relative: str) -> str:
+        return (SKILL / relative).read_text(encoding="utf-8")
+
+    def section(self, text: str, heading: str) -> str:
+        start = text.index(heading)
+        match = re.search(r"^#{1,3} ", text[start + len(heading):], re.M)
+        end = start + len(heading) + match.start() if match else len(text)
+        return text[start:end]
+
+    def test_goal_md_gives_the_exact_final_gv_command(self) -> None:
+        goal = self.read("phases/goal.md")
+        self.assertIn(
+            'rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/verify_goal_completion.py" '
+            "--ledger .agent/dev-state.md --purpose final",
+            goal,
+        )
+        for flag in ("--marker", "--approved-revision", "--invoker-role lead",
+                     "--invoker-id", "--invoker-harness", "--supersedes"):
+            self.assertIn(flag, goal)
+        self.assertIn("only the lead", self.section(goal, "### Completion verification"))
+
+    def test_goal_md_only_exit_zero_is_success(self) -> None:
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertIn("**0, `verified`:** the only goal success", body)
+        for code in ("**1, `not_complete`:** never success",
+                     "**3, `inconclusive`:** never success",
+                     "**2** (usage, internal or arming error): never success",
+                     "**4, `evidence_ready`:**"):
+            self.assertIn(code, body)
+        self.assertIn("never a final result", body)
+        # Fix batch 1 (Q1): gv_retries / gv_retries_used are GV's own D3 query
+        # retries, never a lead re-run budget.
+        self.assertNotIn("gv_retries", body)
+        self.assertIn("reports the claim as `inconclusive`", body)
+        self.assertIn("never loops", body)
+
+    def test_exit_two_and_unknown_exits_are_never_recorded(self) -> None:
+        # Fix batch 1 (QA L1, L2).
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertIn("never record exit 2 output", body)
+        self.assertIn("any other exit code, or a crash, is a failure", body)
+
+    def test_gv_runs_at_three_triggers_and_not_exclusively(self) -> None:
+        # Fix batch 1 (B2).
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertNotIn("at no other time", body)
+        for trigger in ("a `GOAL-COMPLETE` claim (`claim_requires_gv`)",
+                        "a resume or recovery of a run that had claimed completion or recorded a result",
+                        "immediately before reporting completion"):
+            self.assertIn(trigger, body)
+        self.assertIn("Pass `--marker` only when there is a marker", body)
+        # R2-A1: no fourth trigger. After a fix, GV runs again only at one of
+        # the three; a renewed claim is the first.
+        self.assertNotIn("after the named cause is fixed", body)
+        self.assertIn("only at one of these three triggers", body)
+        self.assertIn("A renewed `GOAL-COMPLETE` claim counts", body)
+
+    def test_closure_follows_the_runs_normal_duties(self) -> None:
+        # Fix batch 1 (B3): GV never closes; closure is not assigned to the
+        # foreman unconditionally.
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertNotIn("Closing Issues stays with the foreman's audit", body)
+        self.assertIn("managed run", body)
+        self.assertIn("foreman's audit", body)
+        self.assertIn("standalone run", body)
+        self.assertIn("Phase 4 post-merge closure", body)
+
+    def test_goal_md_rechecks_and_records_through_the_lead(self) -> None:
+        body = self.section(self.read("phases/goal.md"), "### Completion verification")
+        self.assertIn("A stored result is never reused across a state change", body)
+        self.assertIn("copy the `outcome`, the reason codes and the criteria lines verbatim", body)
+        self.assertIn("`completion_results`", body)
+        self.assertIn("`producer.recorded_by: lead`", body)
+        self.assertIn("dev_state.py", body)
+        self.assertIn("never merges, closes, reopens or writes", body)
+
+    def test_claim_bullet_no_longer_says_there_is_no_gv_step(self) -> None:
+        goal = self.read("phases/goal.md")
+        self.assertNotIn("This runtime has no GV step", goal)
+        self.assertNotIn("until a GV lane lands", goal)
+
+    def test_ledger_fields_list_names_the_optional_keys_and_completion_results(self) -> None:
+        # Issue #230 AC 1-4.
+        body = self.section(self.read("phases/goal.md"), "## Ledger fields this phase writes")
+        for key in ("context_resets", "obligations", "custody", "event_ledger",
+                    "recovery_receipts", "unknown_effects", "completion_results"):
+            self.assertIn(f"`{key}`", body)
+        self.assertIn("Each of the six is optional: absent or `null` is valid", body)
+        # Fix batch 1 (QA L3): the intro says which bullet is which.
+        # R2-B1: the six optional keys are goal_run fields; only
+        # completion_results is a top-level ledger key.
+        self.assertIn("The first six bullets are `goal_run` fields", body)
+        self.assertIn("`completion_results` (the seventh bullet) is a top-level ledger key", body)
+        self.assertNotIn("optional top-level keys", body)
+        for kept in ("every key of `Assignment.to_dict()`",
+                     "`approval_time`, `next_wake_at`, `paused`",
+                     "`policy`: the `BoundsPolicy` fields",
+                     "`counters`: the `RunCounters` fields",
+                     "`grant`, `merge_ledger`, `gate_evidence` and `delegated_records`"):
+            self.assertIn(kept, body)
+
+    def test_goal_md_states_no_human_evaluator_in_v2_2(self) -> None:
+        goal = self.read("phases/goal.md")
+        self.assertIn("never use a `human` evaluator in v2.2", goal)
+        self.assertIn("`evaluator_unsupported`", goal)
+        self.assertIn("owner signs off in chat, outside the verifier", goal)
+
+    def test_qa_agent_marks_human_unsupported_in_v2_2(self) -> None:
+        qa = self.read("agents/qa-agent.md")
+        self.assertGreaterEqual(qa.count("unsupported in v2.2"), 4)
+        self.assertIn("`evaluator_unsupported`", qa)
+
+    def test_template_worked_example_has_no_human_evaluator(self) -> None:
+        template = self.read("templates/DEV_STATE_TEMPLATE.md")
+        self.assertNotIn("type: human", template)
+        self.assertNotIn("human evaluator", template)
+        self.assertNotIn("human evaluation not yet performed", template)
+        self.assertIn("1 awaiting its independent reviewer", template)
+
+
 if __name__ == "__main__":
     unittest.main()

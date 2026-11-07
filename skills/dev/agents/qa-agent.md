@@ -85,7 +85,7 @@ restating it.
 6. Verify each acceptance criterion using:
    `[AC-N] [criterion] → evaluator: [ci / test / demonstration / independent reviewer / human] → method: [code analysis / test execution / CI evidence] → outcome: [pass / fail / inconclusive / not_applicable] + reason`
 
-   Every criterion has one assigned **evaluator type**, taken from the Issue, the lead's envelope or the criteria record; where none is assigned, record the evaluator you used and say so. A criterion passes only by its assigned evaluator. A worker demonstration satisfies only a criterion whose assigned evaluator is the demonstration; it never stands in for `ci`, `test`, `independent reviewer` or `human`. A pass by static reading alone satisfies no criterion: reading the code or diff is a method, never an evaluator type. Unless the criterion's assigned evaluator ran, the outcome is `inconclusive`, with the evaluator that was not run named.
+   Every criterion has one assigned **evaluator type**, taken from the Issue, the lead's envelope or the criteria record; where none is assigned, record the evaluator you used and say so. A criterion passes only by its assigned evaluator. A worker demonstration satisfies only a criterion whose assigned evaluator is the demonstration; it never stands in for `ci`, `test`, `independent reviewer` or `human`. `human` is unsupported in v2.2 (no GitHub `/accept`, no human evaluator; the owner signs off in chat, outside GV): a human-evaluated criterion is never `pass`, and the goal verifier returns `evaluator_unsupported` for it. A pass by static reading alone satisfies no criterion: reading the code or diff is a method, never an evaluator type. Unless the criterion's assigned evaluator ran, the outcome is `inconclusive`, with the evaluator that was not run named.
 
 7. Static-check the following common issues:
    - Boundary conditions: is there handling code for empty input, None, extreme values, special characters?
@@ -118,11 +118,11 @@ restating it.
     | `inconclusive` | Could not be evaluated: missing infrastructure, service unavailable, evaluator absent, CI evidence pending, missing, skipped, cancelled or stale, or not executed |
     | `not_applicable` | Does not apply, with a stated reason the lead can contest |
 
-    Each entry records its **evaluator type** (`ci`, `test`, `demonstration`, `independent reviewer` or `human`), its **executor**, an **evidence reference** (command with exit code, or CI run, job and attempt with the tested subject) and a **reason**. Outcome detail is evidence: report it as it came back, never rounded up.
+    Each entry records its **evaluator type** (`ci`, `test`, `demonstration`, `independent reviewer` or `human`), its **executor**, an **evidence reference** (command with exit code, or CI run, job and attempt with the tested subject) and a **reason**. `human` is unsupported in v2.2, so an entry with that evaluator type is never `pass`. Outcome detail is evidence: report it as it came back, never rounded up.
 
     - **A criterion that cannot be evaluated is `inconclusive`.** Name the missing infrastructure or the missing evaluator in its reason. The lane does not pass on an `inconclusive` entry. "Not executed" is an `inconclusive` reason, not a deduction and not a pass.
     - **A required check or criterion cannot be `not_applicable`.** Every criterion in the Issue is required. A Verification Gate command recorded in `PROJECT_CONTEXT.md` is required unless the project marks it optional. `not_applicable` is available only to an optional check, with a reason; a required check or criterion that does not apply, cannot be evaluated or was dropped is `inconclusive`, never `not_applicable`.
-    - **Evaluator rule.** A criterion passes only by its assigned evaluator. A worker demonstration satisfies only a criterion whose assigned evaluator is the demonstration; where the assigned evaluator is `ci`, `test`, `independent reviewer` or `human`, the demonstration cannot replace it.
+    - **Evaluator rule.** A criterion passes only by its assigned evaluator. A worker demonstration satisfies only a criterion whose assigned evaluator is the demonstration; where the assigned evaluator is `ci`, `test`, `independent reviewer` or `human`, the demonstration cannot replace it. A `human` criterion is unsupported in v2.2 (`evaluator_unsupported`) and is never `pass`.
     - **Gate checks.** A CI-owned check whose evidence is pending, missing, skipped, cancelled or stale is `inconclusive`, never `pass`. A check this lane ran is `pass` or `fail` by its exit code. Any `fail` fails the lane.
 
     **Lane conclusion.** The lane passes (`QA ✓ Pass`) when every applicable criterion and every required check is `pass` by its assigned evaluator and no material finding is unresolved. Any `fail`, any `inconclusive`, or any unresolved material finding makes the conclusion `Needs Fix`. The conclusion is determined by the outcomes and findings alone.
@@ -164,6 +164,8 @@ QA focus: [directly related files/functions]
 | Criterion | Outcome | Evaluator type | Executor | Evidence ref | Reason |
 |---|---|---|---|---|---|
 | AC-1 [criterion] | pass / fail / inconclusive / not_applicable | ci / test / demonstration / independent reviewer / human | [who ran it] | [command + exit code, or CI run/job/attempt] | [why; for `inconclusive`, the missing infrastructure or evaluator] |
+
+`human` is unsupported in v2.2: a row with that evaluator type is never `pass` (`evaluator_unsupported`).
 
 ### Findings
 **Critical:** [items or none]

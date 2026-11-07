@@ -27,13 +27,15 @@ Every call returns a `Result` with `outcome`, `reason`, `value` and `detail`. `o
 
 ## Ledger fields this phase writes
 
-The lead is the sole writer of `.agent/dev-state.md`. This phase writes only the `goal_run` block documented in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md` (Goal run record schema) and the existing top-level `next_action`:
+The lead is the sole writer of `.agent/dev-state.md`. This phase writes the `goal_run` block and the existing top-level `next_action`. The first six bullets are `goal_run` fields (documented in `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`, Goal run record schema); `completion_results` (the seventh bullet) is a top-level ledger key:
 
 - the frozen scope: every key of `Assignment.to_dict()` (`run`, `mode`, `repo`, `fixed_issues`, `source`, `approval_revision`, `lead`, `plan_ref`, `coordinator`, `charter_revision`, `contract_refs`);
 - `approval_time`, `next_wake_at`, `paused`;
 - `policy`: the `BoundsPolicy` fields (`run_time_hours`, `dispatch_cap_per_issue`, `gv_retries`, `spend_cap`);
 - `counters`: the `RunCounters` fields (`dispatch_counts`, `dispatch_request_ids`, `request_issues`, `spend`) plus the ledger-only `usage_measured` and `gv_retries_used`;
-- the grant and gate records (step 7): `grant`, `merge_ledger`, `gate_evidence` and `delegated_records`, each `null` until used.
+- the grant and gate records (step 7): `grant`, `merge_ledger`, `gate_evidence` and `delegated_records`, each `null` until used;
+- `context_resets` (the lifecycle clock count, see Lifecycle clocks) and the five recovery records `obligations`, `custody`, `event_ledger`, `recovery_receipts` and `unknown_effects` (see Recovery and resume). Each of the six is optional: absent or `null` is valid;
+- the top-level `completion_results`: the completion verifier results the lead records (step 4). It is optional until the first result is recorded.
 
 After every write, run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state.py" --validate .agent/dev-state.md`. A failure names the field (`goal_run.<field>: <reason>`); repair the ledger before any further step.
 
@@ -69,12 +71,43 @@ Existing limits stay in force alongside D3: fix batches per defect episode, exte
 
 The last nonempty line of a turn may carry one marker: `HARD-STOP: H<1-5> — <reason>`, `WAKE: <UTC time> — <action>` or `GOAL-COMPLETE: <source>` (an em dash before the argument). Parse it with `parse_turn_end_marker(text, expected_source, next_wake_at, next_action, paused, now)`, passing the persisted `next_wake_at`, top-level `next_action` and `paused`, and the frozen `source` as `expected_source`.
 
-- `claim_requires_gv`: a completion **claim**, never proof. Nothing is complete because of it. This runtime has no GV step. Completion is decided by the existing Dev gates (Phase 4 and Phase 5 for every frozen Issue), and GV with its retry bound (`gv_retries`, `gv_retries_used`) is governed by the existing gates until a GV lane lands.
+- `claim_requires_gv`: a completion **claim**, never proof. Nothing is complete because of it. Run the completion verifier (**Completion verification** below). Only its `verified` result is goal success.
 - `protected_stop`: escalate to the user immediately with the `detail` level and reason. H1–H4 are protected stops: "proceed unless stopped" never applies to them. H5 is an unrecoverable failure after the finite permitted retries: report the run incomplete and do not retry.
 - `accept`: a `WAKE` that matches the persisted `next_wake_at` and `next_action`. Continue with that action. A wake renews nothing and creates no scheduling capability the harness lacks.
 - `invalid` (`no_marker`, `marker_not_last`, `multiple_markers`, `malformed_marker`, `wrong_source`, `wake_mismatch`, `wake_during_pause`, `wake_time_not_utc`): the marker verifies nothing and schedules nothing. Record the reason, mark nothing complete, and continue only under the existing gates.
 
 Sleep only after persisting both `next_wake_at` and `next_action`. A pause is recorded as `paused: true`; a wake never overrides it.
+
+### Completion verification
+
+The lead, and only the lead, runs the verifier. No worker, QA or reviewer lane runs it for the lead. Run it at each of these three triggers:
+
+- a `GOAL-COMPLETE` claim (`claim_requires_gv`);
+- a resume or recovery of a run that had claimed completion or recorded a result;
+- immediately before reporting completion.
+
+It is read-only: it never merges, closes, reopens or writes.
+
+```bash
+rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/verify_goal_completion.py" --ledger .agent/dev-state.md --purpose final --marker "<last line of the turn>" --approved-revision "<approval_revision>" --invoker-role lead --invoker-id "<lead id>" --invoker-harness "<harness>"
+```
+
+Pass `--marker` only when there is a marker; at a resume or before reporting, leave it out. Add `--supersedes <result_id>` once for each earlier result of the same run and purpose. The printed record then carries `supersedes`; never edit it by hand. Read the exit code:
+
+- **0, `verified`:** the only goal success. Record it, then report completion.
+- **1, `not_complete`:** never success, and not the end of the run. Read the reason codes, dispatch fixes within the run's bounds (step 3), then run the verifier again at the next trigger.
+- **3, `inconclusive`:** never success. The verifier already retries each read itself; the lead never loops it. The lead reports the claim as `inconclusive`, naming the failed read or reason, and stops claiming completion.
+- **2** (usage, internal or arming error): never success. It prints an error or an arming rejection, not a completion result, so never record exit 2 output. Repair the cause it names.
+- **4, `evidence_ready`:** only from `--purpose readiness`, and never a final result. A readiness run reports whether evidence is ready; it never completes a goal.
+- any other exit code, or a crash, is a failure: never success, and never recorded.
+
+After a fix, run the verifier again only at one of these three triggers. A renewed `GOAL-COMPLETE` claim counts. A stored result is never reused across a state change.
+
+Closing Issues follows the run's normal duties, never the verifier. In a managed run, the foreman's audit closes merged Issues that stay open. In a standalone run, the Phase 4 post-merge closure and verification steps apply.
+
+The lead alone records each result that exit 0, 1 or 3 printed (or, for readiness, exit 4, 1 or 3). The verifier prints JSON, and the ledger refuses flow syntax, so do not paste the printed text. Write the record as a block YAML entry of the top-level `completion_results`, with `producer.recorded_by: lead`. Convert the representation only: keep every field and value exactly as printed, adding, dropping or editing nothing, and copy the `outcome`, the reason codes and the criteria lines verbatim. Write each string literally between double quotes with no escapes, because the ledger reader decodes none. Every value must be written so that it reads back identically. A value that cannot be written that way (for example one containing a line break) is not recorded: do not record it; report it. Then run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state.py" --validate .agent/dev-state.md`, and read the entry back and compare it with the printed record. A validator failure or any difference means the result is not recorded: repair the entry before any further step.
+
+A goal's criteria never use a `human` evaluator in v2.2: there is no GitHub `/accept` and no owner account. The verifier returns `evaluator_unsupported` for such a criterion, and it never verifies. The owner signs off in chat, outside the verifier.
 
 ## 5. Inputs and questions
 
@@ -118,7 +151,7 @@ The D3 `run_time_hours` bound and the `WAKE` / `next_wake_at` marker are Dev's o
 A goal run grants no release, credential or other Tier C authority, and no merge authority beyond a D2 bounded grant checked by `decide_merge` (step 7). Delegation never renews an exhausted budget. For the following, existing Dev gates govern:
 
 - **Recovery and resume** after a restart, compaction or lead change: see **Recovery and resume** below.
-- **GV:** completion stays a claim until the existing gates verify every frozen Issue.
+- **GV:** completion stays a claim until the verifier returns `verified` (**Completion verification**, step 4); the existing gates still govern each frozen Issue.
 
 ## Recovery and resume
 
