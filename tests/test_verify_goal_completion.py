@@ -506,7 +506,7 @@ class TestReuse(unittest.TestCase):
         self.assertIn("fixed_issues", gv._ASSIGNMENT_KEYS)
 
 
-# --- Second YAML block reader (pinned to the template's real shape) ------------
+# --- The ledger block reader, folded into dev_state.py in L195-2b (pinned to the template's real shape) ---
 
 
 class TestBlockReader(unittest.TestCase):
@@ -514,8 +514,8 @@ class TestBlockReader(unittest.TestCase):
         text = TEMPLATE.read_text(encoding="utf-8")
         example = re.search(r"Worked example \(the approved §2 records.*?```yaml\n(.*?)```", text, re.S).group(1)
         ledger = "---\n" + example + "---\n"
-        prs = gv.read_block(ledger, "pull_requests")
-        parents = gv.read_block(ledger, "parent_acceptance")
+        prs = dev_state.read_ledger_block(ledger, "pull_requests")
+        parents = dev_state.read_ledger_block(ledger, "parent_acceptance")
         self.assertEqual(prs[0]["number"], 23)
         self.assertEqual(prs[0]["ci_runs"][0]["tested_subject"]["kind"], "merge_ref")
         self.assertEqual(prs[0]["post_merge"][0]["criteria"][1]["evaluator"]["id"], "worker:9b2")
@@ -527,18 +527,18 @@ class TestBlockReader(unittest.TestCase):
 
     def test_block_reader_round_trips_the_base_fixture(self):
         text = render(BASE_LEDGER)
-        self.assertEqual(gv.read_block(text, "pull_requests"), BASE_LEDGER["pull_requests"])
-        self.assertEqual(gv.read_block(text, "parent_acceptance"), BASE_LEDGER["parent_acceptance"])
+        self.assertEqual(dev_state.read_ledger_block(text, "pull_requests"), BASE_LEDGER["pull_requests"])
+        self.assertEqual(dev_state.read_ledger_block(text, "parent_acceptance"), BASE_LEDGER["parent_acceptance"])
 
     def test_block_reader_fails_closed_and_the_result_is_inconclusive(self):
         good = render(BASE_LEDGER)
         broken = good.replace("pull_requests:\n", "pull_requests:\n  - [flow, syntax]\n", 1)
         with self.assertRaises(gv.LedgerError):
-            gv.read_block(broken, "pull_requests")
+            dev_state.read_ledger_block(broken, "pull_requests")
         for bad in ("pull_requests:\n\t- x\n", "pull_requests:\n  - a: |\n    text\n",
                     "pull_requests:\n  - a: 1\n    a: 2\n"):
             with self.assertRaises(gv.LedgerError):
-                gv.read_block(f"---\n{bad}---\n", "pull_requests")
+                dev_state.read_ledger_block(f"---\n{bad}---\n", "pull_requests")
         runner = FakeRunner(copy.deepcopy(BASE_GH))
         result = gv.evaluate(broken, runner=runner, sleep=lambda s: None, now=NOW)
         self.assertEqual(result.outcome, "inconclusive")

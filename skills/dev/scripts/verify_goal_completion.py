@@ -55,7 +55,13 @@ lane's own evidence comment, by id.
 
 Test proof binding (D4.4, GV reading accepted by the lead and foreman). A
 ``test`` criterion is proved by the CI job attempt its post-merge
-``evidence_ref`` names (``run <id> attempt <n>`` or ``<run>/<job>/attempt-<n>``).
+``evidence_ref`` names. The template's form is structured (L195-2b), a map
+``{run, job, attempt}``; the legacy text forms (``run <id> attempt <n>`` or
+``<run>/<job>/attempt-<n>``) stay readable for older ledgers. GV tells the forms
+apart by type: a map carrying ``run`` is structured, a string is text, and a
+map without ``run`` is not a CI reference. A structured reference missing its
+job or attempt is ``inconclusive`` (``ci_identity_incomplete``); it is never
+ambiguous, because the ledger reader refuses a repeated key.
 That reference, and the post-merge ``run`` itself, resolve to the ``ci_runs``
 entry with the same (run, job, attempt); ``environment``, ``definition_ref`` and
 ``conclusion`` come from that entry. No matching entry is ``inconclusive``
@@ -127,7 +133,8 @@ the test proof, every governing prior-gate run, and the post-merge rerun
 (``RUN_CONSUMERS``). A missing check
 environment, or a missing runner descriptor where ``ci:<runner>`` needs one, is
 ``inconclusive``. A different executor class or runner never verifies.
-``fallback_approved_by`` is GV's spelling; the template does not define it yet.
+``fallback_approved_by`` is defined by the template (L195-2b) as ``{who, at,
+instruction}`` and validated by dev_state.py; GV reads only its presence.
 
 Prior gate (B2). ``applies_verbatim`` selects ``ci_runs`` entries by subject
 first (the post-merge ``tested_subject`` when recorded, else the runs at the PR
@@ -150,11 +157,9 @@ unusable.
 
 Ledger reading. The goal block is read by ``dev_state.parse_goal_run_block``
 and armed through ``goal_run.arm``. The evidence blocks (``pull_requests``,
-``parent_acceptance``, ``workers``) are lists of maps, which that reader does
-not accept, so GV carries a second block reader here. It handles map items in
-lists and ``@`` in keys, and delegates every scalar to
-``dev_state._goal_scalar``. It is a candidate to fold into dev_state.py in
-L195-2.
+``parent_acceptance``, ``workers``) are lists of maps, read by
+``dev_state.read_ledger_block``, the ledger's one public block reader (folded
+from GV in L195-2b). GV keeps no reader of its own.
 """
 
 from __future__ import annotations
@@ -177,18 +182,16 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import dev_state  # noqa: E402  (sibling payload module)
 import goal_run  # noqa: E402  (sibling payload module)
 
-RESULT_PROFILE = "completion-result-v1"
-EVIDENCE_PROFILE = "completion-evidence-v1"
+RESULT_PROFILE = dev_state.COMPLETION_RESULT_PROFILE
+EVIDENCE_PROFILE = dev_state.COMPLETION_EVIDENCE_PROFILE
 ARMING_REJECTION_KIND = "gv-arming-rejection"
 ERROR_KIND = "gv-error"
 DEFAULT_LEDGER_REF = ".agent/dev-state.md"
 
 PURPOSE_FINAL = "final"
 PURPOSE_READINESS = "readiness"
-VOCABULARY = {
-    PURPOSE_FINAL: ("verified", "not_complete", "inconclusive"),
-    PURPOSE_READINESS: ("evidence_ready", "not_ready", "inconclusive"),
-}
+# One source for each purpose's outcome vocabulary: the ledger validator's.
+VOCABULARY = dev_state.COMPLETION_RESULT_VOCABULARY
 
 EXIT_VERIFIED = 0
 EXIT_NOT_COMPLETE = 1
@@ -252,7 +255,6 @@ _COMMENT_REF_RE = re.compile(r"issuecomment-([0-9]+)")
 _REVIEW_REF_RE = re.compile(r"pullrequestreview-([0-9]+)")
 _ACCEPTING_REVIEW_STATES = ("APPROVED", "COMMENTED")
 _STRICT_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$")
-_BLOCK_KEY_RE = re.compile(r'^(?:"([^"]+)"|([A-Za-z0-9_][A-Za-z0-9_.\-/#@]*)):(?:\s+(.*))?$')
 
 # The assignment-v1 keys, exactly the fields of goal_run.Assignment.
 _ASSIGNMENT_KEYS = tuple(f.name for f in fields(goal_run.Assignment))
@@ -382,129 +384,20 @@ class _Reader:
 # --- Ledger block reader --------------------------------------------------------
 
 
-class LedgerError(Exception):
-    """A ledger block outside the supported YAML subset."""
-
-    def __init__(self, field_name: str, message: str) -> None:
-        super().__init__(f"{field_name}: {message}")
-        self.field = field_name
-        self.message = message
-
-
-_ABSENT = object()
-
-
-def _frontmatter_lines(text):
-    if not isinstance(text, str) or not text.startswith("---\n"):
-        raise LedgerError("frontmatter", "missing opening delimiter")
-    end = text.find("\n---\n")
-    if end == -1:
-        raise LedgerError("frontmatter", "missing closing delimiter")
-    return text[4:end].split("\n")
-
-
-def _scalar(raw: str, path: str, lineno: int):
-    if raw in ("|", ">") or raw.startswith(("|-", "|+", ">-", ">+")):
-        raise LedgerError(path, f"block scalars are not supported (line {lineno})")
-    try:
-        return dev_state._goal_scalar(raw, path, lineno)
-    except dev_state.GoalRunError as exc:
-        raise LedgerError(exc.field, exc.message) from exc
-
-
-def _append_token(tokens: list, indent: int, content: str, lineno: int, path: str) -> None:
-    if content == "-" or content.startswith("- "):
-        rest = content[1:]
-        inner = rest.strip()
-        if inner.startswith("- ") or inner == "-":
-            raise LedgerError(path, f"nested list items are not supported (line {lineno})")
-        if inner and inner[0] not in "\"'" and _BLOCK_KEY_RE.match(inner):
-            offset = 1 + (len(rest) - len(rest.lstrip(" ")))
-            tokens.append((indent, "-", lineno))
-            tokens.append((indent + offset, inner, lineno))
-            return
-    tokens.append((indent, content, lineno))
-
-
-def _parse_node(tokens: list, index: int, indent: int, path: str):
-    first = tokens[index][1]
-    if first == "-" or first.startswith("- "):
-        items = []
-        while index < len(tokens) and tokens[index][0] == indent:
-            _, content, lineno = tokens[index]
-            if not (content == "-" or content.startswith("- ")):
-                raise LedgerError(path, f"mixed list and map on line {lineno}")
-            raw = content[1:].strip()
-            index += 1
-            if raw:
-                items.append(_scalar(raw, path, lineno))
-                continue
-            if index >= len(tokens) or tokens[index][0] <= indent:
-                raise LedgerError(path, f"empty list item on line {lineno}")
-            child, index = _parse_node(tokens, index, tokens[index][0], f"{path}[{len(items)}]")
-            items.append(child)
-        return items, index
-
-    mapping = {}
-    while index < len(tokens) and tokens[index][0] == indent:
-        _, content, lineno = tokens[index]
-        if content == "-" or content.startswith("- "):
-            raise LedgerError(path, f"mixed list and map on line {lineno}")
-        match = _BLOCK_KEY_RE.match(content)
-        if not match:
-            raise LedgerError(path, f"malformed line {lineno}")
-        key = match.group(1) if match.group(1) is not None else match.group(2)
-        child_path = f"{path}.{key}"
-        if key in mapping:
-            raise LedgerError(child_path, f"duplicate key on line {lineno}")
-        raw = (match.group(3) or "").strip()
-        index += 1
-        if raw:
-            mapping[key] = _scalar(raw, child_path, lineno)
-            continue
-        if index >= len(tokens) or tokens[index][0] <= indent:
-            raise LedgerError(child_path, f"missing value on line {lineno}")
-        mapping[key], index = _parse_node(tokens, index, tokens[index][0], child_path)
-    if index < len(tokens) and tokens[index][0] > indent:
-        raise LedgerError(path, f"unexpected indentation on line {tokens[index][2]}")
-    return mapping, index
-
-
-def read_block(text: str, key: str):
-    """Read one top-level frontmatter key. Returns ``_ABSENT`` when missing."""
-    lines = _frontmatter_lines(text)
-    starts = [i for i, line in enumerate(lines) if re.match(rf"^{re.escape(key)}:(\s|$)", line)]
-    if not starts:
-        return _ABSENT
-    if len(starts) > 1:
-        raise LedgerError(key, f"duplicate key on line {starts[1] + 2}")
-    start = starts[0]
-    rest = lines[start][len(key) + 1:].strip()
-    if rest:
-        return _scalar(rest, key, start + 2)
-    tokens = []
-    for i in range(start + 1, len(lines)):
-        line = lines[i]
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if "\t" in line[: len(line) - len(line.lstrip())]:
-            raise LedgerError(key, f"tab indentation on line {i + 2}")
-        if not line.startswith(" "):
-            break
-        _append_token(tokens, len(line) - len(line.lstrip(" ")), stripped, i + 2, key)
-    if not tokens:
-        raise LedgerError(key, "block is empty")
-    value, index = _parse_node(tokens, 0, tokens[0][0], key)
-    if index != len(tokens):
-        raise LedgerError(key, f"unexpected indentation on line {tokens[index][2]}")
-    return value
+# The ledger block reader is dev_state's (L195-2b fold): one reader for the
+# ledger, no private copy here. Its error type is GV's ``LedgerError``.
+LedgerError = dev_state.LedgerBlockError
 
 
 def read_goal_block(text: str) -> dict:
     """The armed goal block, read by dev_state's own goal-run reader."""
     key = dev_state.GOAL_RUN_KEY
-    lines = _frontmatter_lines(text)
+    if not isinstance(text, str) or not text.startswith("---\n"):
+        raise LedgerError("frontmatter", "missing opening delimiter")
+    end = text.find("\n---\n")
+    if end == -1:
+        raise LedgerError("frontmatter", "missing closing delimiter")
+    lines = text[4:end].split("\n")
     heads = [line for line in lines if re.match(rf"^{key}:(\s|$)", line)]
     if not heads or heads[0][len(key) + 1:].strip() in ("null", "~"):
         raise LedgerError(key, "no goal run is armed in this ledger")
@@ -603,7 +496,26 @@ def _find(items, key, value):
 
 
 def _run_identity(evidence_ref):
-    """(run, job, attempt) named by a CI evidence reference, or None."""
+    """(run, job, attempt) named by a CI evidence reference, or None.
+
+    Two forms (L195-2b). A map carrying ``run`` is the structured form the
+    template defines, ``{run, job, attempt}``: its fields are taken as they
+    are, and a missing job or a missing or non-positive attempt reads as
+    ``None`` (``ci_identity_incomplete`` downstream). A string is the legacy
+    text form: the path form, the ``run <id> [job <name>] attempt <n>`` form,
+    or a bare ``run <id>``. Anything else is None."""
+    if isinstance(evidence_ref, dict):
+        if "run" not in evidence_ref:
+            return None
+        run = evidence_ref.get("run")
+        if isinstance(run, bool) or run in (None, ""):
+            return None
+        job = evidence_ref.get("job")
+        job = job.strip() if isinstance(job, str) and job.strip() else None
+        attempt = evidence_ref.get("attempt")
+        if not (isinstance(attempt, int) and not isinstance(attempt, bool) and attempt >= 1):
+            attempt = None
+        return str(run), job, attempt
     if not isinstance(evidence_ref, str):
         return None
     text = evidence_ref.strip()
@@ -1831,6 +1743,9 @@ class _Evaluation:
         identity = _run_identity(item.get("evidence_ref"))
         if identity is None:
             return INCONCLUSIVE, "evidence_ref_unbound", None, {"evidence_ref": item.get("evidence_ref")}
+        if isinstance(item.get("evidence_ref"), dict) and (identity[1] is None or identity[2] is None):
+            return INCONCLUSIVE, "ci_identity_incomplete", None, {"run": identity[0], "job": identity[1],
+                                                                  "attempt": identity[2]}
         entry, why = self.resolve_ci_run(rec, *identity)
         if entry is None:
             return INCONCLUSIVE, why, None, {"run": identity[0], "job": identity[1], "attempt": identity[2]}
@@ -2043,12 +1958,12 @@ def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, runner=None, sleep=None,
     block_failures = []
     for key in ("pull_requests", "parent_acceptance", "workers"):
         try:
-            value = read_block(ledger_text, key)
+            value = dev_state.read_ledger_block(ledger_text, key)
         except LedgerError as exc:
             block_failures.append((key, str(exc)))
             value = None
         else:
-            if value is _ABSENT or value is None:
+            if value is dev_state.LEDGER_ABSENT or value is None:
                 value = []
             elif not isinstance(value, list):
                 block_failures.append((key, "must be a list"))
@@ -2080,7 +1995,7 @@ def evaluate(ledger_text, *, purpose=PURPOSE_FINAL, runner=None, sleep=None,
 
     ledger_digest = "sha256:" + hashlib.sha256(ledger_text.encode("utf-8")).hexdigest()
     try:
-        updated_at = read_block(ledger_text, "updated_at")
+        updated_at = dev_state.read_ledger_block(ledger_text, "updated_at")
     except LedgerError:
         updated_at = None
     run.inputs.append({"reference": ledger_ref, "revision": None,
