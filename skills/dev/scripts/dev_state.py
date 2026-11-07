@@ -16,6 +16,7 @@ import dataclasses
 import math
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 
@@ -1360,6 +1361,389 @@ def validate_goal_run_text(text: str, data: dict) -> None:
         fail(f"{GOAL_RUN_KEY}: malformed block ({type(exc).__name__}: {exc})")
 
 
+# --- Ledger block reader and completion evidence (Issue #195 lane L195-2b) ---
+#
+# One reader for the evidence blocks, shared with the completion verifier
+# (verify_goal_completion.py imports it; it keeps no copy of its own). The
+# goal-run reader above accepts only lists of scalars; the evidence blocks
+# (`pull_requests`, `parent_acceptance`, `workers`, `completion_results`) are
+# lists of maps and carry `@` in keys (`criteria_map: {AC-1@9f3c: ...}`).
+#
+# The evidence validator below is additive and gated: it runs only when the
+# frontmatter has a top-level `completion_results:` header that is not null or
+# `[]`, or a `pull_requests` entry declaring
+# `profile_version: completion-evidence-v1`. Every other ledger (null, L2, L4,
+# L6 and L7 shapes included) never reaches it and validates exactly as before.
+
+COMPLETION_RESULT_PROFILE = "completion-result-v1"
+COMPLETION_EVIDENCE_PROFILE = "completion-evidence-v1"
+COMPLETION_RESULTS_KEY = "completion_results"
+# SDP D4.5 item 2: each purpose's outcome vocabulary. `readiness` never
+# returns `verified`.
+COMPLETION_RESULT_VOCABULARY = MappingProxyType({
+    "final": ("verified", "not_complete", "inconclusive"),
+    "readiness": ("evidence_ready", "not_ready", "inconclusive"),
+})
+# `who` values allowed in `fallback_approved_by` (template: "Completion results
+# and evidence additions (v2.2)").
+FALLBACK_APPROVERS = ("owner", "lead")
+_FALLBACK_APPROVED_BY_KEYS = ("who", "at", "instruction")
+_STRUCTURED_REF_KEYS = ("run", "job", "attempt")
+
+_LEDGER_KEY_RE = re.compile(r'^(?:"([^"]+)"|([A-Za-z0-9_][A-Za-z0-9_.\-/#@]*)):(?:\s+(.*))?$')
+_STRICT_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)$")
+_EVIDENCE_PROFILE_LINE_RE = re.compile(
+    r"^\s+(?:-\s+)?profile_version:\s*[\"']?" + re.escape(COMPLETION_EVIDENCE_PROFILE) + r"[\"']?\s*$")
+
+
+class LedgerBlockError(GoalRunError):
+    """A ledger block outside the supported YAML subset. ``field`` is the
+    dotted path of the offending node, rooted at the top-level key."""
+
+
+class _Absent:
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "LEDGER_ABSENT"
+
+
+# Returned by read_ledger_block when the key is not in the frontmatter.
+LEDGER_ABSENT = _Absent()
+
+
+def _frontmatter_lines(text):
+    if not isinstance(text, str) or not text.startswith("---\n"):
+        raise LedgerBlockError("frontmatter", "missing opening delimiter")
+    end = text.find("\n---\n")
+    if end == -1:
+        raise LedgerBlockError("frontmatter", "missing closing delimiter")
+    return text[4:end].split("\n")
+
+
+def _ledger_scalar(raw: str, path: str, lineno: int):
+    if raw in ("|", ">") or raw.startswith(("|-", "|+", ">-", ">+")):
+        raise LedgerBlockError(path, f"block scalars are not supported (line {lineno})")
+    try:
+        return _goal_scalar(raw, path, lineno)
+    except LedgerBlockError:
+        raise
+    except GoalRunError as exc:
+        raise LedgerBlockError(exc.field, exc.message) from exc
+
+
+def _ledger_append_token(tokens: list, indent: int, content: str, lineno: int, path: str) -> None:
+    if content == "-" or content.startswith("- "):
+        rest = content[1:]
+        inner = rest.strip()
+        if inner.startswith("- ") or inner == "-":
+            raise LedgerBlockError(path, f"nested list items are not supported (line {lineno})")
+        if inner and inner[0] not in "\"'" and _LEDGER_KEY_RE.match(inner):
+            offset = 1 + (len(rest) - len(rest.lstrip(" ")))
+            tokens.append((indent, "-", lineno))
+            tokens.append((indent + offset, inner, lineno))
+            return
+    tokens.append((indent, content, lineno))
+
+
+def _ledger_parse_node(tokens: list, index: int, indent: int, path: str):
+    first = tokens[index][1]
+    if first == "-" or first.startswith("- "):
+        items = []
+        while index < len(tokens) and tokens[index][0] == indent:
+            _, content, lineno = tokens[index]
+            if not (content == "-" or content.startswith("- ")):
+                raise LedgerBlockError(path, f"mixed list and map on line {lineno}")
+            raw = content[1:].strip()
+            index += 1
+            if raw:
+                items.append(_ledger_scalar(raw, path, lineno))
+                continue
+            if index >= len(tokens) or tokens[index][0] <= indent:
+                raise LedgerBlockError(path, f"empty list item on line {lineno}")
+            child, index = _ledger_parse_node(tokens, index, tokens[index][0], f"{path}[{len(items)}]")
+            items.append(child)
+        return items, index
+
+    mapping = {}
+    while index < len(tokens) and tokens[index][0] == indent:
+        _, content, lineno = tokens[index]
+        if content == "-" or content.startswith("- "):
+            raise LedgerBlockError(path, f"mixed list and map on line {lineno}")
+        match = _LEDGER_KEY_RE.match(content)
+        if not match:
+            raise LedgerBlockError(path, f"malformed line {lineno}")
+        key = match.group(1) if match.group(1) is not None else match.group(2)
+        child_path = f"{path}.{key}"
+        if key in mapping:
+            raise LedgerBlockError(child_path, f"duplicate key on line {lineno}")
+        raw = (match.group(3) or "").strip()
+        index += 1
+        if raw:
+            mapping[key] = _ledger_scalar(raw, child_path, lineno)
+            continue
+        if index >= len(tokens) or tokens[index][0] <= indent:
+            raise LedgerBlockError(child_path, f"missing value on line {lineno}")
+        mapping[key], index = _ledger_parse_node(tokens, index, tokens[index][0], child_path)
+    if index < len(tokens) and tokens[index][0] > indent:
+        raise LedgerBlockError(path, f"unexpected indentation on line {tokens[index][2]}")
+    return mapping, index
+
+
+def read_ledger_block(text: str, key: str):
+    """Read one top-level frontmatter key of a ledger into Python values.
+
+    This is the ledger's one reader for blocks the goal-run reader cannot
+    hold: block maps, block lists whose items are scalars or maps (``- key:
+    value`` starts a map item), quoted keys, and ``@``, ``#``, ``/``, ``.`` and
+    ``-`` inside keys. Every scalar goes through the goal-run scalar rule
+    (``null``/``~``, booleans, ``[]``, ``{}``, quoted strings, integers, finite
+    floats, plain strings). Comment lines and blank lines are skipped.
+
+    Returns ``LEDGER_ABSENT`` when the frontmatter has no such key, the scalar
+    when the key holds one inline (``key: null``, ``key: []``), and the parsed
+    block otherwise. Raises ``LedgerBlockError`` (a ``GoalRunError``, with
+    ``field`` and ``message``) on anything outside the subset: a missing
+    frontmatter delimiter, a repeated top-level key, tab indentation, block
+    scalars (``|``, ``>``), flow syntax, inline comments, nested list items,
+    mixed lists and maps, duplicate keys, a key with no value, or an empty
+    block. It never guesses: an unreadable block is an error, not a default.
+
+    Used by ``validate_evidence_text`` here and by the completion verifier
+    (``verify_goal_completion.py``) for ``pull_requests``,
+    ``parent_acceptance``, ``workers`` and ``updated_at``."""
+    lines = _frontmatter_lines(text)
+    starts = [i for i, line in enumerate(lines) if re.match(rf"^{re.escape(key)}:(\s|$)", line)]
+    if not starts:
+        return LEDGER_ABSENT
+    if len(starts) > 1:
+        raise LedgerBlockError(key, f"duplicate key on line {starts[1] + 2}")
+    start = starts[0]
+    rest = lines[start][len(key) + 1:].strip()
+    if rest:
+        return _ledger_scalar(rest, key, start + 2)
+    tokens = []
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "\t" in line[: len(line) - len(line.lstrip())]:
+            raise LedgerBlockError(key, f"tab indentation on line {i + 2}")
+        if not line.startswith(" "):
+            break
+        _ledger_append_token(tokens, len(line) - len(line.lstrip(" ")), stripped, i + 2, key)
+    if not tokens:
+        raise LedgerBlockError(key, "block is empty")
+    value, index = _ledger_parse_node(tokens, 0, tokens[0][0], key)
+    if index != len(tokens):
+        raise LedgerBlockError(key, f"unexpected indentation on line {tokens[index][2]}")
+    return value
+
+
+def _is_positive_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+
+
+def _is_strict_utc(value) -> bool:
+    if not isinstance(value, str) or not _STRICT_UTC_RE.match(value):
+        return False
+    try:
+        datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_structured_ref(ref, path: str) -> None:
+    """A CI ``evidence_ref`` in structured form: ``{run, job, attempt}``.
+
+    A map carrying ``run`` is the structured CI form; a string is the legacy
+    text form (still read, never validated here); a map without ``run`` is a
+    non-CI reference (comment, snapshot, review id)."""
+    if not isinstance(ref, dict) or "run" not in ref:
+        return
+    for name in ref:
+        if name not in _STRUCTURED_REF_KEYS:
+            raise LedgerBlockError(f"{path}.{name}", "unknown structured evidence_ref field")
+    run = ref.get("run")
+    if not (_is_positive_int(run) or _nonempty(run)):
+        raise LedgerBlockError(f"{path}.run", "must be a run id")
+    if not _nonempty(ref.get("job")):
+        raise LedgerBlockError(f"{path}.job", "must name the job")
+    if not _is_positive_int(ref.get("attempt")):
+        raise LedgerBlockError(f"{path}.attempt", "must be a positive integer")
+
+
+def _validate_fallback_approved_by(value, path: str) -> None:
+    _closed_map(value, path, _FALLBACK_APPROVED_BY_KEYS, "fallback_approved_by")
+    if value["who"] not in FALLBACK_APPROVERS:
+        raise LedgerBlockError(f"{path}.who", "must be owner, or lead acting on a recorded owner instruction")
+    if not _is_strict_utc(value["at"]):
+        raise LedgerBlockError(f"{path}.at", "must be a strict UTC ISO 8601 time")
+    if not _nonempty(value["instruction"]):
+        raise LedgerBlockError(f"{path}.instruction", "must reference the owner instruction")
+
+
+def _validate_ci_run_entry(entry, path: str) -> bool:
+    """One ``ci_runs`` entry of an evidence-v1 PR record. Returns True when its
+    tested subject is a merge ref (the record then needs ``target_branch``)."""
+    if not isinstance(entry, dict):
+        raise LedgerBlockError(path, "must be a map")
+    if not _is_positive_int(entry.get("attempt")):
+        raise LedgerBlockError(f"{path}.attempt", "must be a positive integer")
+    if "fallback_approved_by" in entry:
+        if not _nonempty(entry.get("executor")):
+            raise LedgerBlockError(f"{path}.executor", "required when fallback_approved_by is recorded")
+        _validate_fallback_approved_by(entry["fallback_approved_by"], f"{path}.fallback_approved_by")
+    subject = entry.get("tested_subject")
+    if isinstance(subject, dict) and subject.get("kind") == "merge_ref":
+        for name in ("head", "base_oid"):
+            if not _nonempty(subject.get(name)):
+                raise LedgerBlockError(f"{path}.tested_subject.{name}", "required for kind merge_ref")
+        return True
+    return False
+
+
+def _evidence_items(record):
+    """(relative path, item) for every place a PR record carries an evidence_ref."""
+    for name in ("checks", "criteria"):
+        items = record.get(name)
+        for j, item in enumerate(items if isinstance(items, list) else []):
+            yield f"{name}[{j}]", item
+    post_merge = record.get("post_merge")
+    for k, entry in enumerate(post_merge if isinstance(post_merge, list) else []):
+        if not isinstance(entry, dict):
+            continue
+        for name in ("checks", "criteria"):
+            items = entry.get(name)
+            for j, item in enumerate(items if isinstance(items, list) else []):
+                yield f"post_merge[{k}].{name}[{j}]", item
+
+
+def validate_evidence_pull_requests(records) -> None:
+    """Additions on ``completion-evidence-v1`` PR records (L195-2b). Entries of
+    any other profile are left alone. Raises ``LedgerBlockError``."""
+    if records is None or records is LEDGER_ABSENT:
+        return
+    if not isinstance(records, list):
+        raise LedgerBlockError("pull_requests", "must be a list")
+    for i, record in enumerate(records):
+        if not isinstance(record, dict) or record.get("profile_version") != COMPLETION_EVIDENCE_PROFILE:
+            continue
+        base = f"pull_requests[{i}]"
+        ci_runs = record.get("ci_runs")
+        merge_ref = False
+        if ci_runs is not None:
+            if not isinstance(ci_runs, list):
+                raise LedgerBlockError(f"{base}.ci_runs", "must be a list")
+            for j, entry in enumerate(ci_runs):
+                merge_ref = _validate_ci_run_entry(entry, f"{base}.ci_runs[{j}]") or merge_ref
+        if merge_ref and not _nonempty(record.get("target_branch")):
+            raise LedgerBlockError(f"{base}.target_branch", "required when a ci_runs entry tested a merge ref")
+        for rel, item in _evidence_items(record):
+            if isinstance(item, dict):
+                _validate_structured_ref(item.get("evidence_ref"), f"{base}.{rel}.evidence_ref")
+
+
+def validate_completion_results(records) -> None:
+    """``completion_results``: completion-result-v1 records the lead recorded
+    from GV's output (SDP D4.5). Raises ``LedgerBlockError``."""
+    key = COMPLETION_RESULTS_KEY
+    if records is None or records is LEDGER_ABSENT or records == []:
+        return
+    if not isinstance(records, list):
+        raise LedgerBlockError(key, "must be a list")
+    seen = {}
+    for i, record in enumerate(records):
+        base = f"{key}[{i}]"
+        if not isinstance(record, dict):
+            raise LedgerBlockError(base, "must be a map")
+        if record.get("profile_version") != COMPLETION_RESULT_PROFILE:
+            raise LedgerBlockError(f"{base}.profile_version", f"must be {COMPLETION_RESULT_PROFILE}")
+        for name in ("result_id", "run_id"):
+            if not _nonempty(record.get(name)):
+                raise LedgerBlockError(f"{base}.{name}", "must be a non-empty string")
+        result_id = record["result_id"]
+        if result_id in seen:
+            raise LedgerBlockError(f"{base}.result_id", f"repeats {result_id!r}")
+        if not isinstance(record.get("plan_ref"), dict):
+            raise LedgerBlockError(f"{base}.plan_ref", "must be a map")
+        purpose = record.get("purpose")
+        if purpose not in COMPLETION_RESULT_VOCABULARY:
+            raise LedgerBlockError(f"{base}.purpose", "must be final or readiness")
+        vocabulary = COMPLETION_RESULT_VOCABULARY[purpose]
+        if record.get("outcome") not in vocabulary:
+            raise LedgerBlockError(
+                f"{base}.outcome",
+                f"{record.get('outcome')!r} is outside the {purpose} vocabulary ({', '.join(vocabulary)})")
+        producer = record.get("producer")
+        if not isinstance(producer, dict):
+            raise LedgerBlockError(f"{base}.producer", "must be a map")
+        if producer.get("recorded_by") != "lead":
+            raise LedgerBlockError(f"{base}.producer.recorded_by", "must be lead (the sole ledger writer)")
+        supersedes = record.get("supersedes", [])
+        if supersedes is None:
+            supersedes = []
+        if not isinstance(supersedes, list):
+            raise LedgerBlockError(f"{base}.supersedes", "must be a list of result_id strings")
+        for j, prior in enumerate(supersedes):
+            where = f"{base}.supersedes[{j}]"
+            if not _nonempty(prior):
+                raise LedgerBlockError(where, "must be a result_id string")
+            if prior == result_id:
+                raise LedgerBlockError(where, "a result never supersedes itself")
+            if prior not in seen:
+                raise LedgerBlockError(where, f"names no earlier result ({prior!r})")
+            if seen[prior] != (record["run_id"], purpose):
+                raise LedgerBlockError(where, "chains only within one (run_id, purpose)")
+        seen[result_id] = (record["run_id"], purpose)
+
+
+def _top_level_value(lines, key: str):
+    """The raw inline value of every ``key:`` header line, in order."""
+    return [line[len(key) + 1:].strip() for line in lines if re.match(rf"^{re.escape(key)}:(\s|$)", line)]
+
+
+def _pull_requests_declare_evidence_profile(lines) -> bool:
+    inside = False
+    for line in lines:
+        if re.match(r"^pull_requests:(\s|$)", line):
+            inside = True
+            continue
+        if inside:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and not line.startswith((" ", "\t")):
+                inside = False
+                continue
+            if _EVIDENCE_PROFILE_LINE_RE.match(line):
+                return True
+    return False
+
+
+def validate_evidence_text(text: str) -> None:
+    """Entry point from main(), after the goal-run check. A no-op unless the
+    ledger carries ``completion_results`` (not null or ``[]``) or a
+    ``completion-evidence-v1`` pull request entry, so older ledgers are
+    untouched. Reports ``<path>: <reason>`` and fails closed."""
+    end = text.find("\n---\n")
+    lines = text[4:end].split("\n") if text.startswith("---\n") and end != -1 else []
+    results = _top_level_value(lines, COMPLETION_RESULTS_KEY)
+    check_results = bool(results) and not (len(results) == 1 and results[0] in ("null", "~", "[]"))
+    check_prs = _pull_requests_declare_evidence_profile(lines)
+    if not (check_results or check_prs):
+        return
+    try:
+        if check_results:
+            validate_completion_results(read_ledger_block(text, COMPLETION_RESULTS_KEY))
+        if check_prs:
+            validate_evidence_pull_requests(read_ledger_block(text, "pull_requests"))
+    except GoalRunError as exc:
+        fail(str(exc))
+    except Exception as exc:  # fail closed, never a traceback
+        fail(f"evidence: malformed block ({type(exc).__name__}: {exc})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate ledger profile")
     parser.add_argument("--validate", metavar="PATH", required=True,
@@ -1387,6 +1771,7 @@ def main() -> int:
         fail(f"profile validation error: {e}")
     
     validate_goal_run_text(content, data)
+    validate_evidence_text(content)
 
     print(f"OK: {path}")
     return 0
