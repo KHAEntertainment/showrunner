@@ -214,23 +214,35 @@ def load_inventory(text: str) -> list[dict[str, Any]]:
 def check_single_writer(text: str, lead_agent_id: str | None) -> None:
     """SC-7 ``rejected-two-active-writers``: one run ledger has one writer.
 
-    The lead is the sole writer of its ledger (``lead.agent_id``). A caller
-    whose id is not that writer is a second active writer on the same run
-    ledger, and the report refuses. Inventory rows (workers, QA, reviewers,
-    a re-dispatched worker) are never writers and never trip this.
+    The lead is the sole writer of its ledger. Its id is recorded twice:
+    ``lead.agent_id`` and ``execution.traycer_agent_id`` (the id the lead-swap
+    rule in ``backends/traycer.md`` compares). Every recorded id must equal
+    the caller; a caller that differs from either is a second active writer
+    on the same run ledger, and the report refuses. After a lead swap the new
+    lead updates both before it runs the reconcile. Inventory rows (workers,
+    QA, reviewers, a re-dispatched worker) are never writers and never trip
+    this.
     """
     if not isinstance(lead_agent_id, str) or not lead_agent_id.strip():
         raise Unavailable("lead_agent_id_missing", "the caller's lead agent id is required on traycer")
-    lead = _read_block(text, "lead")
-    recorded = lead.get("agent_id") if isinstance(lead, dict) else None
-    if not isinstance(recorded, str) or not recorded.strip():
-        raise Unavailable("lead_unrecorded", "the ledger records no lead.agent_id, so its writer is unknown")
-    if recorded != lead_agent_id:
+    recorded: dict[str, str] = {}
+    for block, field in (("lead", "agent_id"), ("execution", "traycer_agent_id")):
+        value = _read_block(text, block)
+        writer = value.get(field) if isinstance(value, dict) else None
+        if isinstance(writer, str) and writer.strip():
+            recorded[f"{block}.{field}"] = writer
+    if not recorded:
         raise Unavailable(
-            "two_active_writers",
-            f"the ledger's writer is {recorded}, not the caller {lead_agent_id}; "
-            "two active writers on one run ledger are refused",
+            "lead_unrecorded",
+            "the ledger records neither lead.agent_id nor execution.traycer_agent_id, so its writer is unknown",
         )
+    for where, writer in recorded.items():
+        if writer != lead_agent_id:
+            raise Unavailable(
+                "two_active_writers",
+                f"the ledger's {where} is {writer}, not the caller {lead_agent_id}; "
+                "two active writers on one run ledger are refused",
+            )
 
 
 def load_custody_blockers(text: str) -> dict[str, str]:

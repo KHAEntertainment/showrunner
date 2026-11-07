@@ -61,9 +61,10 @@ def _scalar(value):
     return json.dumps(value)
 
 
-def ledger(rows, *, lead=LEAD, goal_run=None, inventory=True):
+def ledger(rows, *, lead=LEAD, goal_run=None, inventory=True, execution_id=None):
     """Write a schema-v2 ledger frontmatter holding `rows` as inventory."""
-    out = ["---", "schema_version: 2", "lead:", f"  agent_id: {_scalar(lead)}"]
+    out = ["---", "schema_version: 2", "execution:", f"  traycer_agent_id: {_scalar(execution_id)}",
+           "lead:", f"  agent_id: {_scalar(lead)}"]
     if inventory:
         if not rows:
             out.append("inventory: []")
@@ -110,9 +111,9 @@ def agent_row(agent_id="worker-1", *, idle=None, state="active", open_requests=(
 
 
 def run(rows, *, backend="traycer", agents=AGENTS, worktrees=WORKTREES, shells=SHELLS, lead=LEAD,
-        lead_in_ledger=LEAD, **kw):
+        lead_in_ledger=LEAD, execution_id=None, **kw):
     """`lead` is the calling agent; `lead_in_ledger` is the ledger's recorded writer."""
-    text = kw.pop("text", None) or ledger(rows, lead=lead_in_ledger, **kw)
+    text = kw.pop("text", None) or ledger(rows, lead=lead_in_ledger, execution_id=execution_id, **kw)
     return MODULE.reconcile(
         text,
         backend=backend,
@@ -454,6 +455,16 @@ class SingleWriterTest(unittest.TestCase):
     def test_unrecorded_writer_and_missing_caller_are_refused(self):
         self.assertEqual(run([], lead_in_ledger=None)["reason_code"], "lead_unrecorded")
         self.assertEqual(run([], lead=None)["reason_code"], "lead_agent_id_missing")
+
+    def test_execution_id_is_a_recorded_writer_too(self):
+        # A lead swap that updated lead.agent_id but not execution.traycer_agent_id.
+        report = run([agent_row(idle=timedelta(hours=3))], execution_id="previous-lead")
+        self.assertEqual(report["reason_code"], "two_active_writers")
+        self.assertIsNone(report["counts"])
+        # Both ids updated to the caller: the reconcile runs.
+        self.assertEqual(run([agent_row(idle=timedelta(hours=3))], execution_id=LEAD)["status"], "ok")
+        # Only the execution id recorded, and it is the caller.
+        self.assertEqual(run([], lead_in_ledger=None, execution_id=LEAD)["status"], "ok")
 
 
 class IdleNeverDoneTest(unittest.TestCase):
