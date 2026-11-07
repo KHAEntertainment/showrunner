@@ -130,6 +130,16 @@ FINDINGS = (
     "not_applicable",
 )
 
+# Keys a listing level uses to declare how many rows it holds. Any one that is
+# present, at any level, must equal the rows received.
+TOTAL_KEYS = ("total", "count", "totalCount", "total_count", "totalRows", "total_rows")
+
+BACKENDS = frozenset({"traycer", "claude-native"})
+
+
+def _known_backend(backend: Any) -> bool:
+    return isinstance(backend, str) and backend in BACKENDS
+
 
 class Unavailable(Exception):
     """A fault that makes the whole report ``unavailable``."""
@@ -145,7 +155,7 @@ def _unavailable(reason_code: str, reason: str, backend: Any) -> dict[str, Any]:
         "status": "unavailable",
         "reason_code": reason_code,
         "reason": reason,
-        "backend": backend if backend in {"traycer", "claude-native"} else None,
+        "backend": backend if _known_backend(backend) else None,
         "report_only": True,
         "counts": None,
         "findings": [],
@@ -362,9 +372,13 @@ def _check_envelope_level(payload: dict[str, Any], what: str) -> None:
 
 
 def _check_total(payload: dict[str, Any], what: str, rows: list[Any]) -> None:
-    total = payload.get("total")
-    if total is not None and (isinstance(total, bool) or not isinstance(total, int) or total != len(rows)):
-        raise Unavailable("listing_partial", f"{what} reports total {total!r} but holds {len(rows)} rows")
+    """Every declared total at this level must equal the rows received."""
+    for key in TOTAL_KEYS:
+        if key not in payload or payload[key] is None:
+            continue
+        total = payload[key]
+        if isinstance(total, bool) or not isinstance(total, int) or total != len(rows):
+            raise Unavailable("listing_partial", f"{what} declares {key} {total!r} but holds {len(rows)} rows")
 
 
 def parse_agent_listing(envelope: Any, lead_agent_id: Any) -> dict[str, dict[str, Any]]:
@@ -382,7 +396,11 @@ def parse_agent_listing(envelope: Any, lead_agent_id: Any) -> dict[str, dict[str
     agents = data.get("agents")
     if not isinstance(agents, list):
         raise Unavailable("listing_unparseable", "agent listing has no agents array")
-    _check_total(data, "agent listing", agents)
+    # Totals at every level, so an outer total that disagrees with the rows,
+    # or with an inner total, is caught before any decision.
+    if data is not envelope:
+        _check_total(envelope, "agent listing", agents)
+    _check_total(data, "agent listing data" if data is not envelope else "agent listing", agents)
     if not agents:
         raise Unavailable("listing_partial", "agent listing is empty; it always lists at least the lead")
     by_id: dict[str, dict[str, Any]] = {}
@@ -560,7 +578,7 @@ def _reconcile(
     shells_data: Any,
     repo_dir: Path,
 ) -> dict[str, Any]:
-    if backend not in {"traycer", "claude-native"}:
+    if not _known_backend(backend):
         raise Unavailable("backend_incomplete", f"backend {backend!r} is not traycer or claude-native")
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise Unavailable("clock_invalid", "now must be a timezone-qualified time")

@@ -901,5 +901,67 @@ class OpenRequestsMalformedTest(unittest.TestCase):
         self.assertEqual((item["finding"], item["reason"]), ("blocked", "open_requests_malformed"))
 
 
+# --- Fix batch 2 (de-251-1) regression tests -------------------------------
+# Each fails at 883b7ca.
+
+
+class OuterTotalTest(unittest.TestCase):
+    """Residual B1: a total declared at the envelope level must match the rows."""
+
+    ROWS = [agent_row(idle=timedelta(hours=3))]
+    RECEIVED = len(AGENTS["data"]["agents"])
+
+    def ledger_file(self, tmp):
+        path = Path(tmp) / "dev-state.md"
+        path.write_text(ledger(self.ROWS), encoding="utf-8")
+        return path
+
+    def test_outer_total_mismatch_saved_path(self):
+        for key in ("total", "count", "totalCount"):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                agents_path = Path(tmp) / "agents.json"
+                agents_path.write_text(json.dumps(envelope(**{key: self.RECEIVED + 1})), encoding="utf-8")
+                code, report = main_report(base_argv(
+                    self.ledger_file(tmp), "--agents-json", str(agents_path),
+                    "--worktrees-porcelain", str(FIXTURES / "worktrees.porcelain")))
+                self.assertEqual(code, 2)
+                assert_unavailable(self, report, "listing_partial")
+
+    def test_outer_total_mismatch_live_path(self):
+        """Only subprocess.run is mocked."""
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = base_argv(self.ledger_file(tmp), "--worktrees-porcelain", str(FIXTURES / "worktrees.porcelain"))
+            done = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=json.dumps(envelope(total=self.RECEIVED + 1)), stderr="")
+            with mock.patch("subprocess.run", return_value=done):
+                code, report = main_report(argv)
+        self.assertEqual(code, 2)
+        assert_unavailable(self, report, "listing_partial")
+
+    def test_outer_inner_total_conflict(self):
+        both = envelope(total=self.RECEIVED + 1)
+        both["data"]["total"] = self.RECEIVED
+        assert_unavailable(self, run(self.ROWS, agents=both), "listing_partial")
+        reverse = envelope(total=self.RECEIVED)
+        reverse["data"]["total"] = self.RECEIVED + 1
+        assert_unavailable(self, run(self.ROWS, agents=reverse), "listing_partial")
+
+    def test_matching_totals_are_accepted(self):
+        both = envelope(total=self.RECEIVED)
+        both["data"]["count"] = self.RECEIVED
+        self.assertEqual(run(self.ROWS, agents=both)["status"], "ok")
+
+
+class BackendTypeTest(unittest.TestCase):
+    """Advisory: a non-string backend is unavailable, never a TypeError."""
+
+    def test_unhashable_backend(self):
+        for backend in ([], {}, 3):
+            with self.subTest(backend=backend):
+                report = run([], backend=backend)
+                assert_unavailable(self, report, "backend_incomplete")
+                self.assertIsNone(report["backend"])
+
+
 if __name__ == "__main__":
     unittest.main()
