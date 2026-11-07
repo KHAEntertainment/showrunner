@@ -2569,5 +2569,237 @@ class TestSC3Fixtures(unittest.TestCase):
         self.assertLessEqual(set(fixture["consumed_inputs"][0]), set(record["consumed_inputs"][0]))
 
 
+# --- L195-2b: the ledger side of GV (#195) ----------------------------------------
+
+EX_REPO = "KHAEntertainment/SupaConsole"
+EX_HEAD = "4e683b4" + "a" * 33
+EX_MERGE = "d44f1e0" + "c" * 33
+EX_BASE = "b720c68" + "e" * 33
+STRUCTURED_130 = {"run": 130, "job": "build", "attempt": 1}
+STRUCTURED_123 = {"run": 123, "job": "build", "attempt": 1}
+
+
+def template_example_pr():
+    """PR 23 of the template's §2 worked example, read by the ledger's one reader."""
+    text = TEMPLATE.read_text(encoding="utf-8")
+    example = re.search(r"Worked example \(the approved §2 records.*?```yaml\n(.*?)```", text, re.S).group(1)
+    return dev_state.read_ledger_block("---\n" + example + "---\n", "pull_requests")[0]
+
+
+def example_ledger(restore_integration):
+    """A goal ledger around the template's PR 23, taken verbatim.
+
+    The template's parent record is the multi-PR, amended record of the
+    approved example (PR 24 pending, AC-3 amended, AC-4 human), which is outside
+    this check. The goal here is Issue #41 alone, with a parent record built for
+    PR 23's two criteria and mirroring PR 23's integration state.
+    ``restore_integration`` undoes the recorded revert: the integration is
+    current and the assurance current again. Nothing else in PR 23 changes."""
+    rec = template_example_pr()
+    if restore_integration:
+        rec["integrated"] = {"current": {"branch": "main", "merge_sha": "d44f1e0", "revision": "4e683b4"},
+                             "history": []}
+        rec["assurance"].update(current=True, stale_reason=None)
+    goal = copy.deepcopy(BASE_LEDGER["goal_run"])
+    goal.update(repo=EX_REPO, fixed_issues=[f"{EX_REPO}#41"])
+    goal["plan_ref"]["approval"]["evidence"]["reference"] = EX_REPO + "@0123456789abcdef0123456789abcdef01234567"
+    parent_record = {
+        "profile_version": "completion-evidence-v1", "scope": "parent_acceptance", "parent": f"{EX_REPO}#40",
+        "mode": "standalone", "criteria_ref": rec["criteria_ref"], "criteria_map": [],
+        "contributions": [{"pr": 23, "issue": f"{EX_REPO}#41", "criteria": ["AC-1", "AC-2"],
+                           "assurance": {"outcome": "pass", "revision": "4e683b4",
+                                         "current": bool(restore_integration)},
+                           "integrated": "d44f1e0" if restore_integration else "withdrawn"}],
+        "criteria": [{"id": "AC-1@9f3c", "evaluator": {"type": "test"}, "outcome": "pass"},
+                     {"id": "AC-2@9f3c", "evaluator": {"type": "demonstration"}, "outcome": "pass"}],
+        "outcome": "pass", "reason": None, "observed_at": "2026-10-20T17:00:00Z", "goal_completion_ref": None}
+    return {"schema_version": 2,
+            "workers": [{"role": "worker", "issue": f"{EX_REPO}#41", "agent_id": "worker:9b2", "pr": 23}],
+            "pull_requests": [rec], "parent_acceptance": [parent_record], "goal_run": goal,
+            "run_id": "synthetic-run-195", "run_status": "active", "updated_at": "2026-10-20T17:00:00Z"}
+
+
+def example_github():
+    """Fake GitHub answers for the worked example, agreeing with its records."""
+    base = f"repos/{EX_REPO}"
+    attempt = lambda run: f"{base}/actions/runs/{run}/attempts/1"  # noqa: E731
+    jobs = {"total_count": 1, "jobs": [{"name": "build", "status": "completed", "conclusion": "success"}]}
+    return {
+        f"{base}/issues/41": {"number": 41, "state": "closed"},
+        f"{base}/pulls/23": {"number": 23, "state": "closed", "merged": True, "merge_commit_sha": EX_MERGE,
+                             "base": {"ref": "main", "repo": {"full_name": EX_REPO}}, "head": {"sha": EX_HEAD}},
+        f"{base}/compare/main...{EX_MERGE}": {"status": "behind"},
+        f"{base}/commits?sha=main&since=2026-10-20T16:10:00Z&per_page=100": [],
+        attempt(123): {"id": 123, "run_attempt": 1, "status": "completed", "conclusion": "success",
+                       "event": "pull_request", "head_sha": EX_HEAD,
+                       "pull_requests": [pr_entry(23, EX_HEAD, "main", EX_BASE, EX_REPO)]},
+        attempt(123) + "/jobs?per_page=100": copy.deepcopy(jobs),
+        attempt(130): {"id": 130, "run_attempt": 1, "status": "completed", "conclusion": "success",
+                       "event": "push", "head_sha": EX_MERGE, "pull_requests": []},
+        attempt(130) + "/jobs?per_page=100": copy.deepcopy(jobs),
+    }
+
+
+def evaluate_example(data):
+    runner = FakeRunner(example_github())
+    result = gv.evaluate(render(data), runner=runner, sleep=lambda s: None, now=NOW)
+    return result, runner
+
+
+def structured(data):
+    """The base scenario with every CI evidence_ref in the template's structured form."""
+    for item in pr(data)["checks"] + pr(data)["criteria"]:
+        if item["evidence_ref"] == "run 123 attempt 1":
+            item["evidence_ref"] = dict(STRUCTURED_123)
+    for item in pm(data)["checks"] + pm(data)["criteria"]:
+        if item["evidence_ref"] == "run 130 attempt 1":
+            item["evidence_ref"] = dict(STRUCTURED_130)
+
+
+CI_BINDING_CODES = {"ci_run_unrecorded", "ci_identity_incomplete", "evidence_ref_unbound",
+                    "evidence_ref_ambiguous", "ambiguous_evidence_ref", "required_check_unbound",
+                    "ci_run_unreadable", "ci_subject_unbound"}
+
+
+class TestL195_2bLedger(unittest.TestCase):
+    """Lane L195-2b: GV reads the ledger through dev_state and the template's forms."""
+
+    # Item 6: the folded reader.
+    def test_gv_reads_every_block_through_the_dev_state_reader(self):
+        with mock.patch.object(gv.dev_state, "read_ledger_block", wraps=dev_state.read_ledger_block) as reader:
+            result, _, _ = scenario()
+        self.assertEqual(result.outcome, "verified")
+        keys = [call.args[1] for call in reader.call_args_list]
+        for key in ("pull_requests", "parent_acceptance", "workers", "updated_at"):
+            self.assertIn(key, keys)
+
+    def test_gv_keeps_no_private_block_reader(self):
+        for name in ("read_block", "_parse_node", "_append_token", "_scalar", "_frontmatter_lines",
+                     "_BLOCK_KEY_RE", "_ABSENT"):
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(gv, name), name)
+        self.assertIs(gv.LedgerError, dev_state.LedgerBlockError)
+        tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+        called = {node.func.attr for node in ast.walk(tree) if isinstance(node, ast.Call)
+                  and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                  and node.func.value.id == "dev_state"}
+        self.assertIn("read_ledger_block", called)
+
+    def test_the_folded_reader_is_public_and_documented(self):
+        doc = dev_state.read_ledger_block.__doc__ or ""
+        for phrase in ("LEDGER_ABSENT", "LedgerBlockError", "flow syntax", "verify_goal_completion.py"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, doc)
+        self.assertTrue(issubclass(dev_state.LedgerBlockError, dev_state.GoalRunError))
+
+    def test_result_vocabulary_has_one_source(self):
+        self.assertIs(gv.VOCABULARY, dev_state.COMPLETION_RESULT_VOCABULARY)
+        self.assertEqual(gv.RESULT_PROFILE, dev_state.COMPLETION_RESULT_PROFILE)
+        self.assertEqual(gv.EVIDENCE_PROFILE, dev_state.COMPLETION_EVIDENCE_PROFILE)
+        self.assertNotIn("verified", gv.VOCABULARY[gv.PURPOSE_READINESS])
+
+    # Item 2: the structured evidence_ref.
+    def test_structured_evidence_ref_verifies_like_the_text_form(self):
+        text_result, _, _ = scenario()
+        result, _, _ = scenario(structured)
+        self.assertEqual(result.outcome, "verified", codes(result))
+        self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["run"],
+                         line(text_result, "AC-1@9f3c")["accepted_proof"]["run"])
+        self.assertEqual(line(result, "AC-1@9f3c")["accepted_proof"]["evidence_ref"], STRUCTURED_130)
+
+    def test_structured_evidence_ref_missing_job_or_attempt_is_identity_incomplete(self):
+        for drop in ("job", "attempt"):
+            with self.subTest(missing=drop):
+                def mutate(data, drop=drop):
+                    structured(data)
+                    ref = dict(STRUCTURED_130)
+                    ref.pop(drop)
+                    _find_item(pm(data)["criteria"], "AC-1@9f3c")["evidence_ref"] = ref
+                result, _, _ = scenario(mutate)
+                self.assertEqual(result.outcome, "inconclusive")
+                self.assertIn("ci_identity_incomplete", codes(result, "inconclusive"))
+
+    def test_structured_attempt_must_be_a_positive_integer(self):
+        for bad in ("1", 0, -1, True):
+            with self.subTest(attempt=bad):
+                def mutate(data, bad=bad):
+                    structured(data)
+                    _find_item(pm(data)["criteria"], "AC-1@9f3c")["evidence_ref"] = dict(STRUCTURED_130, attempt=bad)
+                result, _, _ = scenario(mutate)
+                self.assertNotEqual(result.outcome, "verified")
+                self.assertIn("ci_identity_incomplete", codes(result, "inconclusive"))
+
+    def test_structured_evidence_ref_to_an_unrecorded_attempt_is_unrecorded(self):
+        def mutate(data):
+            structured(data)
+            _find_item(pm(data)["criteria"], "AC-1@9f3c")["evidence_ref"] = dict(STRUCTURED_130, attempt=2)
+        result, _, _ = scenario(mutate)
+        self.assertEqual(result.outcome, "inconclusive")
+        self.assertIn("ci_run_unrecorded", codes(result, "inconclusive"))
+
+    def test_text_form_is_never_better_than_before(self):
+        def mutate(data):
+            _find_item(pm(data)["criteria"], "AC-1@9f3c")["evidence_ref"] = "run 130 job build attempt 1 (retry attempt 2)"
+        result, _, _ = scenario(mutate)
+        self.assertEqual(result.outcome, "inconclusive")
+        self.assertIn("ambiguous_evidence_ref", codes(result, "inconclusive"))
+        self.assertEqual(gv._run_identity("123/build/attempt-1"), ("123", "build", 1))
+        self.assertIsNone(gv._run_identity({"comment": "issuecomment-991", "snapshot": "x.txt"}))
+
+    # Item 4: the worked example's post-merge rerun is recorded and verifies.
+    def test_template_example_records_its_rerun_in_ci_runs(self):
+        rec = template_example_pr()
+        rerun = rec["post_merge"][0]["run"]
+        entry, why = gv._Evaluation.resolve_ci_run(rec, rerun["run"], rerun["job"], rerun["attempt"])
+        self.assertIsNone(why)
+        self.assertEqual(entry["tested_subject"], {"sha": "d44f1e0", "kind": "head"})
+        for item in rec["post_merge"][0]["checks"] + rec["post_merge"][0]["criteria"] + rec["checks"] + rec["criteria"]:
+            ref = item.get("evidence_ref")
+            if isinstance(ref, str):
+                self.assertIsNone(re.match(r"\s*run\s", ref), f"text CI evidence_ref left in the example: {ref}")
+
+    def test_template_example_with_its_integration_restored_verifies(self):
+        result, runner = evaluate_example(example_ledger(restore_integration=True))
+        self.assertEqual(result.outcome, "verified", [r["code"] for r in result.record["reason_codes"]])
+        self.assertEqual(runner.unknown, [])
+        proof = line(result, "AC-1@9f3c")["accepted_proof"]
+        self.assertEqual(proof["run"], {"run": 130, "job": "build", "attempt": 1})
+        self.assertEqual(runner.count(f"repos/{EX_REPO}/actions/runs/130/attempts/1"), 1)
+        for argv in runner.calls:
+            self.assertEqual(argv[:4], list(gv.GH_READ_PREFIX))
+
+    def test_template_example_verbatim_is_not_complete_for_the_withdrawal_only(self):
+        result, runner = evaluate_example(example_ledger(restore_integration=False))
+        self.assertEqual(result.outcome, "not_complete")
+        self.assertEqual(codes(result, "not_complete"), {"integration_withdrawn"})
+        # A withdrawn PR's evidence is not used, so its criteria are unproven: that
+        # is the withdrawal's consequence, not a separate defect.
+        self.assertEqual(codes(result, "inconclusive"), {"pr_evidence_unusable"})
+        self.assertFalse(codes(result) & CI_BINDING_CODES)
+        self.assertEqual(runner.unknown, [])
+
+    def test_template_example_without_the_recorded_rerun_is_unrecorded(self):
+        data = example_ledger(restore_integration=True)
+        pr(data)["ci_runs"] = [r for r in pr(data)["ci_runs"] if r["run"] != 130]
+        result, _ = evaluate_example(data)
+        self.assertEqual(result.outcome, "inconclusive")
+        self.assertIn("ci_run_unrecorded", codes(result, "inconclusive"))
+
+    # Item 1: a printed result is a valid ledger record.
+    def test_printed_results_round_trip_into_completion_results(self):
+        for purpose in (gv.PURPOSE_FINAL, gv.PURPOSE_READINESS):
+            with self.subTest(purpose=purpose):
+                result, _, _ = scenario(purpose=purpose)
+                text = render({"schema_version": 2, "completion_results": [result.record]})
+                back = dev_state.read_ledger_block(text, dev_state.COMPLETION_RESULTS_KEY)
+                self.assertEqual(back, [json.loads(json.dumps(result.record))])
+                self.assertIsNone(dev_state.validate_completion_results(back))
+                self.assertEqual(gv.read_result(back[0])[0], "accept")
+
+
+def _find_item(items, cid):
+    return next(item for item in items if item["id"] == cid)
+
+
 if __name__ == "__main__":
     unittest.main()
