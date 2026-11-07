@@ -1,0 +1,6 @@
+{
+  "shells": [
+    {"id": "dev-server", "status": "running"},
+    {"id": "old-watch", "status": "exited"}
+  ]
+}
