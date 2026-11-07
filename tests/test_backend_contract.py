@@ -3954,6 +3954,11 @@ class GoalCompletionRoutingTests(unittest.TestCase):
                         "immediately before reporting completion"):
             self.assertIn(trigger, body)
         self.assertIn("Pass `--marker` only when there is a marker", body)
+        # R2-A1: no fourth trigger. After a fix, GV runs again only at one of
+        # the three; a renewed claim is the first.
+        self.assertNotIn("after the named cause is fixed", body)
+        self.assertIn("only at one of these three triggers", body)
+        self.assertIn("A renewed `GOAL-COMPLETE` claim counts", body)
 
     def test_closure_follows_the_runs_normal_duties(self) -> None:
         # Fix batch 1 (B3): GV never closes; closure is not assigned to the
@@ -3987,9 +3992,11 @@ class GoalCompletionRoutingTests(unittest.TestCase):
             self.assertIn(f"`{key}`", body)
         self.assertIn("Each of the six is optional: absent or `null` is valid", body)
         # Fix batch 1 (QA L3): the intro says which bullet is which.
-        self.assertIn("the first five bullets", body)
-        self.assertIn("the optional top-level keys in the sixth bullet", body)
-        self.assertIn("`completion_results` in the seventh", body)
+        # R2-B1: the six optional keys are goal_run fields; only
+        # completion_results is a top-level ledger key.
+        self.assertIn("The first six bullets are `goal_run` fields", body)
+        self.assertIn("`completion_results` (the seventh bullet) is a top-level ledger key", body)
+        self.assertNotIn("optional top-level keys", body)
         for kept in ("every key of `Assignment.to_dict()`",
                      "`approval_time`, `next_wake_at`, `paused`",
                      "`policy`: the `BoundsPolicy` fields",

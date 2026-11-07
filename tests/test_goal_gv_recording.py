@@ -32,17 +32,26 @@ dev_state = t.dev_state
 gv = t.gv
 
 
+class Unwritable(ValueError):
+    """A value the ledger reader cannot read back identically."""
+
+
 def block_yaml(value, indent=0):
     """Lines of a block-YAML rendering of ``value``: maps, lists, scalars only.
 
-    Every key and value is kept exactly. Strings are double-quoted JSON strings,
-    which the ledger scalar rule reads back unchanged. An empty list or map is
-    written inline, as the ledger allows.
+    The ledger reader (``dev_state._goal_scalar``) strips the outer quotes of a
+    string and decodes nothing. So a string is written literally between double
+    quotes, with no escaping, and a value that cannot be written that way is
+    refused (``Unwritable``), never altered: a line break or any control
+    character cannot sit on one ledger line. Whether the rest reads back
+    identically is proved by ``record_entry``, which reads the entry back.
     """
     pad = " " * indent
     lines = []
     if isinstance(value, dict):
         for key, item in value.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise Unwritable(f"key {key!r}")
             if isinstance(item, (dict, list)) and item:
                 lines.append(f"{pad}{key}:")
                 lines += block_yaml(item, indent + 2)
@@ -54,8 +63,9 @@ def block_yaml(value, indent=0):
                 sub = block_yaml(item, indent + 2)
                 lines.append(f"{pad}- {sub[0].lstrip()}")
                 lines += sub[1:]
+            elif isinstance(item, (dict, list)) and item:
+                raise Unwritable("nested list")
             else:
-                assert not (isinstance(item, (dict, list)) and item), item
                 lines.append(f"{pad}- {scalar(item)}")
     return lines
 
@@ -69,9 +79,33 @@ def scalar(value):
         return "false"
     if isinstance(value, (int, float)):
         return json.dumps(value)
-    if value == [] or value == {}:
-        return "[]" if value == [] else "{}"
-    return json.dumps(value)
+    if value == []:
+        return "[]"
+    if value == {}:
+        return "{}"
+    if isinstance(value, str):
+        if any(ord(c) < 32 or ord(c) == 127 for c in value):
+            raise Unwritable(f"control character in {value!r}")
+        return '"' + value + '"'
+    raise Unwritable(f"unsupported value {value!r}")
+
+
+def record_entry(ledger_text, records):
+    """The ledger text with ``records`` as its ``completion_results`` block.
+
+    Raises ``Unwritable`` when a value cannot be written, or when the block
+    read back by ``dev_state.read_ledger_block`` differs from ``records``. The
+    caller's ledger text is never changed; nothing is appended on a refusal.
+    """
+    block = "completion_results:\n" + "\n".join(block_yaml(records, 2)) + "\n"
+    updated = ledger_text.replace("\n---\n\n", "\n" + block + "---\n\n", 1)
+    try:
+        stored = dev_state.read_ledger_block(updated, "completion_results")
+    except Exception as exc:
+        raise Unwritable(f"read-back failed: {exc}") from exc
+    if stored != records:
+        raise Unwritable("read-back differs from the printed record")
+    return updated
 
 
 class GvRecordingTests(unittest.TestCase):
@@ -155,19 +189,54 @@ class GvRecordingTests(unittest.TestCase):
         self.assertEqual(code, 1, err)
         self.assertIn("completion_results", err)
 
+    def record_and_check(self, printed_records, name):
+        """Record through the writer, validate, and return the stored records."""
+        path = self.dir / name
+        path.write_text(record_entry(t.render(self.data), printed_records), encoding="utf-8")
+        status, err = self.validate(path)
+        self.assertEqual(status, 0, err)
+        return dev_state.read_ledger_block(path.read_text(encoding="utf-8"), "completion_results")
+
     def test_block_yaml_conversion_validates_and_round_trips(self):
         code, raw = self.run_gv(self.data)
         printed = json.loads(raw)
-        lines = block_yaml([printed], 2)
-        path = self.dir / "block.md"
-        path.write_text(self.with_results(lines), encoding="utf-8")
-        status, err = self.validate(path)
-        self.assertEqual(status, 0, err)
-        stored = dev_state.read_ledger_block(path.read_text(encoding="utf-8"), "completion_results")
+        stored = self.record_and_check([printed], "block.md")
         self.assertEqual(len(stored), 1)
         for key in printed:
             self.assertEqual(stored[0][key], printed[key], key)
         self.assertEqual(stored[0], printed)
+
+    def test_non_ascii_quotes_and_backslashes_round_trip_equal(self):
+        # R2-B2: the reader strips the outer quotes and decodes nothing, so a
+        # string is written literally. café, quotes and backslashes survive.
+        for value in ("café", 'say "hi"', "back\\slash \\n", "it's \"mixed\" \\ é"):
+            with self.subTest(value=value):
+                code, raw = self.run_gv(self.data, extra=["--consumer-context", value])
+                printed = json.loads(raw)
+                self.assertEqual(printed["producer"]["consumer_context"], value)
+                stored = self.record_and_check([printed], "ctx.md")
+                self.assertEqual(stored, [printed])
+                self.assertEqual(stored[0]["producer"]["consumer_context"], value)
+
+    def test_a_newline_cannot_be_recorded_and_nothing_is_appended(self):
+        # R2-B2: a line break cannot sit on one ledger line. The writer refuses
+        # it; the ledger text is not changed.
+        code, raw = self.run_gv(self.data, extra=["--consumer-context", "line one\nline two"])
+        printed = json.loads(raw)
+        self.assertEqual(printed["producer"]["consumer_context"], "line one\nline two")
+        before = t.render(self.data)
+        with self.assertRaises(Unwritable):
+            record_entry(before, [printed])
+        self.assertNotIn("completion_results", before)
+        self.assertEqual(before, t.render(self.data))
+
+    def test_a_value_that_does_not_read_back_identically_is_refused(self):
+        # Fail closed: the read-back is the check, not the writer's confidence.
+        _, raw = self.run_gv(self.data)
+        printed = json.loads(raw)
+        printed["producer"]["consumer_context"] = float("inf")
+        with self.assertRaises(Unwritable):
+            record_entry(t.render(self.data), [printed])
 
     def test_supersedes_chain_survives_the_conversion(self):
         _, raw = self.run_gv(self.data)
@@ -177,10 +246,29 @@ class GvRecordingTests(unittest.TestCase):
         second = json.loads(raw2)
         self.assertEqual(second["supersedes"], [first["result_id"]])
         self.data.pop("completion_results")
-        path = self.dir / "chain.md"
-        path.write_text(self.with_results(block_yaml([first, second], 2)), encoding="utf-8")
-        status, err = self.validate(path)
-        self.assertEqual(status, 0, err)
+        stored = self.record_and_check([first, second], "chain.md")
+        self.assertEqual(stored, [first, second])
+
+    def test_optional_keys_validate_inside_goal_run_and_not_at_the_root(self):
+        # R2-B1: the six optional keys are goal_run fields (dev_state.py
+        # _GOAL_RUN_STATE_KEYS). completion_results is the top-level key.
+        bad = {"measured": True, "count": -1}
+        nested = copy.deepcopy(self.data)
+        nested["goal_run"]["context_resets"] = bad
+        path = self.dir / "nested.md"
+        path.write_text(t.render(nested), encoding="utf-8")
+        code, err = self.validate(path)
+        self.assertEqual(code, 1, err)
+        self.assertIn("goal_run.context_resets.count", err)
+
+        root = copy.deepcopy(self.data)
+        root["context_resets"] = bad
+        text = t.render(root)
+        self.assertNotIn("context_resets", dev_state.parse_goal_run_block(text))
+        path = self.dir / "root.md"
+        path.write_text(text, encoding="utf-8")
+        code, err = self.validate(path)
+        self.assertEqual(code, 0, err)
 
     def test_goal_md_tells_the_lead_to_convert_not_append_as_printed(self):
         goal = GOAL.read_text(encoding="utf-8")
@@ -189,6 +277,15 @@ class GvRecordingTests(unittest.TestCase):
         self.assertRegex(body, r"flow syntax|JSON")
         self.assertNotIn("append it as printed", body)
         self.assertNotRegex(body, re.compile(r"append[^.]*as printed", re.I))
+
+    def test_goal_md_tells_the_lead_to_record_only_what_reads_back_identically(self):
+        # R2-B2, for the lead: the same principle as the test writer.
+        goal = GOAL.read_text(encoding="utf-8")
+        body = goal[goal.index("### Completion verification"):]
+        self.assertIn("reads back identically", body)
+        self.assertIn("line break", body)
+        self.assertIn("do not record it; report it", body)
+        self.assertIn("read the entry back", body)
 
 
 if __name__ == "__main__":
