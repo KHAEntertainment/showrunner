@@ -11,7 +11,8 @@ deletable.
 It compares the ``inventory`` rows of ``.agent/dev-state.md`` with three
 listings:
 
-- the Traycer agent listing (``traycer_cli.py agent list --json``),
+- the Traycer agent listing (``traycer_cli.py agent list --json``, read
+  with its full envelope so status and pagination markers are checked),
 - ``git worktree list --porcelain`` for the repository,
 - the lead's own shells (no CLI lists them; the lead passes its shell
   listing in with ``--shells-json``).
@@ -23,8 +24,9 @@ Every inventory row gets exactly one finding:
 - ``blocked_by_open_request``: idle past the timeout, but the lead has an
   open request with it. Each request is named.
 - ``blocked``: not archivable for another reason (``listing_active``,
-  ``state:<state>``, ``obligation:children``, ``successor_custody``,
-  ``open_requests_unknown``, ``idle_unknown``).
+  ``listing_owner_mismatch``, ``state:<state>``, ``obligation:children``,
+  ``successor_custody``, ``open_requests_unknown``,
+  ``open_requests_malformed``, ``idle_unknown``, ``shell_unmatched``).
 - ``not_due``: idle for 60 minutes or less.
 - ``target_gone``: the row's agent, worktree, checkout or shell is missing
   from its listing.
@@ -33,9 +35,9 @@ Every inventory row gets exactly one finding:
 - ``tracked``: a live worktree, checkout or shell that is present.
 - ``skipped``: the row is in a terminal state (``archived-*``, ``cleaned``,
   ``removed``, ``stopped``, ``exited``).
-- ``not_mine``: a ``foreign-*`` row. Listed agents in this project that
-  are NOT in the inventory are reported as ``not_mine`` too. Neither is
-  ever a candidate for action.
+- ``not_mine``: listed agents in this project that are NOT in the
+  inventory (``source: listing``), and ``foreign-*`` inventory rows
+  (``source: inventory``). Neither is ever a candidate for action.
 - ``not_applicable``: an agent row on the claude-native backend, which has
   no agent listing.
 
@@ -44,11 +46,15 @@ listing carries no last-activity timestamp (probed 2026-11-06), so the
 lead records the time of every message it sends to an agent and every
 reply it receives. A listing row with ``active: true`` overrides the clock.
 
-It fails closed. A CLI error, timeout, non-zero exit or unparseable output,
-a partial listing (a pagination marker, or a row missing a field the
-decision needs), an unreadable or malformed ledger, or a second writer on
-the run ledger gives ``status: unavailable`` with ``counts: null`` and no
-findings. An empty result never stands in for "unknown".
+It fails closed. Any fault, inconsistency or malformed input gives
+``status: unavailable`` with ``counts: null``, no findings and exit 2: a
+CLI error, timeout, non-zero exit or unparseable output; an error status or
+a partial or pagination marker at any level of the listing; an empty
+listing or one that omits the lead; a duplicate id; a field of the wrong
+type; non-UTF-8 input; an unreadable or malformed ledger or recovery
+record; a malformed writer id or a second writer on the run ledger. An
+empty result never stands in for "unknown", and no input produces a
+traceback.
 
 Exit 0 when ``status`` is ``ok``, 2 when it is ``unavailable``.
 """
@@ -57,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -67,15 +74,18 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 # Reuse, not copies. tests/test_inventory_reconcile.py fails loudly if any of
-# these names disappears from its module.
+# these names disappears from its module. The agent listing is read here, not
+# through workspace_debt._run_traycer_cli, because that helper returns only
+# the envelope's `data` and drops the status and pagination markers.
 from dev_state import LEDGER_ABSENT, GoalRunError, read_ledger_block  # noqa: E402
 from workspace_debt import (  # noqa: E402
+    COMMAND_TIMEOUT_SECONDS,
+    WRAPPER,
     ScriptError,
     _agent_belongs_to_project,
     _detect_backend,
     _git_worktree_list,
     _parse_porcelain,
-    _run_traycer_cli,
 )
 
 IDLE_TIMEOUT = timedelta(minutes=60)
@@ -106,11 +116,12 @@ TERMINAL_STATES: dict[str, frozenset[str]] = {
 # them makes the listing partial.
 AGENT_LISTING_FIELDS = ("id", "active", "archived", "folderPaths")
 
-# Keys a paged or truncated listing carries. Any of them set means the rows we
-# hold are not the whole listing.
+# Keys a paged, truncated or partial listing carries. Any of them set, at the
+# envelope or the data level, means the rows we hold are not the whole listing.
 PAGINATION_KEYS = (
-    "nextOffset", "next_offset", "hasMore", "has_more", "nextPageToken",
-    "next_page_token", "nextCursor", "next_cursor", "truncated", "partial",
+    "nextOffset", "next_offset", "hasMore", "has_more", "hasNextPage", "has_next_page",
+    "nextPageToken", "next_page_token", "nextCursor", "next_cursor", "next",
+    "truncated", "partial", "incomplete",
 )
 
 FINDINGS = (
@@ -129,21 +140,25 @@ class Unavailable(Exception):
         self.reason = reason
 
 
-def _unavailable(reason_code: str, reason: str, backend: str | None) -> dict[str, Any]:
+def _unavailable(reason_code: str, reason: str, backend: Any) -> dict[str, Any]:
     return {
         "status": "unavailable",
         "reason_code": reason_code,
         "reason": reason,
-        "backend": backend,
+        "backend": backend if backend in {"traycer", "claude-native"} else None,
         "report_only": True,
         "counts": None,
         "findings": [],
     }
 
 
+def _is_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _parse_time(value: Any) -> datetime | None:
     """A timezone-qualified ISO-8601 time, or None when it is not one."""
-    if not isinstance(value, str) or not value.strip():
+    if not _is_text(value):
         return None
     try:
         parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
@@ -161,23 +176,37 @@ def _read_block(text: str, key: str) -> Any:
         raise Unavailable("ledger_unreadable", f"{key}: {error}") from error
 
 
+def _read_text(path: str, what: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise Unavailable("input_unreadable", f"{what} {path} is not UTF-8: {error}") from error
+    except OSError as error:
+        raise Unavailable("input_unreadable", f"{what} {path}: {error}") from error
+
+
+def _read_json(path: str, what: str) -> Any:
+    text = _read_text(path, what)
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, RecursionError) as error:
+        raise Unavailable("listing_unparseable", f"{what} {path}: {error}") from error
+
+
 # --- ledger ---------------------------------------------------------------
 
 
-def _validate_open_requests(row_id: str, value: Any) -> list[dict[str, Any]] | None:
-    """None when the field is absent (unknown). A malformed value is a ledger defect."""
+def _check_open_requests(value: Any) -> list[dict[str, str]] | str | None:
+    """None when absent (unknown); ``"malformed"`` for a bad value; else the list."""
     if value is LEDGER_ABSENT or value is None:
         return None
     if not isinstance(value, list):
-        raise Unavailable("inventory_malformed", f"inventory {row_id}: open_requests must be a list")
+        return "malformed"
     requests = []
     for item in value:
-        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"].strip():
-            raise Unavailable(
-                "inventory_malformed",
-                f"inventory {row_id}: each open_requests entry needs a non-empty id",
-            )
-        requests.append({"id": item["id"], "what": item.get("what")})
+        if not isinstance(item, dict) or not _is_text(item.get("id")) or not _is_text(item.get("what")):
+            return "malformed"
+        requests.append({"id": item["id"], "what": item["what"]})
     return requests
 
 
@@ -193,44 +222,69 @@ def load_inventory(text: str) -> list[dict[str, Any]]:
         if not isinstance(row, dict):
             raise Unavailable("inventory_malformed", f"inventory[{index}] is not a map")
         row_id = row.get("id")
-        if not isinstance(row_id, str) or not row_id.strip():
-            raise Unavailable("inventory_malformed", f"inventory[{index}] has no id")
+        if not _is_text(row_id):
+            raise Unavailable("inventory_malformed", f"inventory[{index}] has no string id")
         if row_id in seen:
             raise Unavailable("inventory_malformed", f"inventory id {row_id} appears twice")
         seen.add(row_id)
         kind = row.get("kind")
-        if kind not in STATES:
+        if not isinstance(kind, str) or kind not in STATES:
             raise Unavailable("inventory_malformed", f"inventory {row_id}: unknown kind {kind!r}")
         state = row.get("state")
-        if state not in STATES[kind]:
+        if not isinstance(state, str) or state not in STATES[kind]:
             raise Unavailable("inventory_malformed", f"inventory {row_id}: state {state!r} is not a {kind} state")
+        pr = row.get("pr")
+        if pr is not None and (isinstance(pr, bool) or not isinstance(pr, int)):
+            raise Unavailable("inventory_malformed", f"inventory {row_id}: pr must be an integer or null")
+        role = row.get("role")
+        if role is not None and not isinstance(role, str):
+            raise Unavailable("inventory_malformed", f"inventory {row_id}: role must be a string or null")
+        for optional in ("shell_id", "path"):
+            if optional in row and row[optional] is not None and not _is_text(row[optional]):
+                raise Unavailable("inventory_malformed", f"inventory {row_id}: {optional} must be a non-blank string")
         clean = dict(row)
         if kind == "agent":
-            clean["open_requests"] = _validate_open_requests(row_id, row.get("open_requests", LEDGER_ABSENT))
+            clean["open_requests"] = _check_open_requests(row.get("open_requests", LEDGER_ABSENT))
         rows.append(clean)
     return rows
 
 
-def check_single_writer(text: str, lead_agent_id: str | None) -> None:
+def _writer_id(text: str, block: str, field: str) -> str | None:
+    value = _read_block(text, block)
+    if value is LEDGER_ABSENT or value is None:
+        return None
+    if not isinstance(value, dict):
+        raise Unavailable("writer_malformed", f"{block} must be a map")
+    writer = value.get(field)
+    if writer is None:
+        return None
+    if not _is_text(writer):
+        raise Unavailable("writer_malformed", f"{block}.{field} must be null or a non-blank string")
+    return writer
+
+
+def check_single_writer(text: str, lead_agent_id: Any) -> None:
     """SC-7 ``rejected-two-active-writers``: one run ledger has one writer.
 
     The lead is the sole writer of its ledger. Its id is recorded twice:
     ``lead.agent_id`` and ``execution.traycer_agent_id`` (the id the lead-swap
-    rule in ``backends/traycer.md`` compares). Every recorded id must equal
-    the caller; a caller that differs from either is a second active writer
-    on the same run ledger, and the report refuses. After a lead swap the new
-    lead updates both before it runs the reconcile. Inventory rows (workers,
-    QA, reviewers, a re-dispatched worker) are never writers and never trip
-    this.
+    rule in ``backends/traycer.md`` compares). Each must be null or a
+    non-blank string, and every recorded id must equal the caller; a caller
+    that differs from either is a second active writer on the same run
+    ledger, and the report refuses. After a lead swap the new lead updates
+    both before it runs the reconcile. Inventory rows (workers, QA,
+    reviewers, a re-dispatched worker) are never writers and never trip this.
     """
-    if not isinstance(lead_agent_id, str) or not lead_agent_id.strip():
+    if not _is_text(lead_agent_id):
         raise Unavailable("lead_agent_id_missing", "the caller's lead agent id is required on traycer")
-    recorded: dict[str, str] = {}
-    for block, field in (("lead", "agent_id"), ("execution", "traycer_agent_id")):
-        value = _read_block(text, block)
-        writer = value.get(field) if isinstance(value, dict) else None
-        if isinstance(writer, str) and writer.strip():
-            recorded[f"{block}.{field}"] = writer
+    recorded = {
+        where: writer
+        for where, writer in (
+            ("lead.agent_id", _writer_id(text, "lead", "agent_id")),
+            ("execution.traycer_agent_id", _writer_id(text, "execution", "traycer_agent_id")),
+        )
+        if writer is not None
+    }
     if not recorded:
         raise Unavailable(
             "lead_unrecorded",
@@ -245,49 +299,92 @@ def check_single_writer(text: str, lead_agent_id: str | None) -> None:
             )
 
 
+def _recovery_ids(record: Any, where: str, fields: tuple[str, ...]) -> list[str]:
+    if not isinstance(record, dict):
+        raise Unavailable("recovery_malformed", f"{where} must be a map")
+    ids = []
+    for field in fields:
+        if field not in record:
+            raise Unavailable("recovery_malformed", f"{where}.{field} is missing")
+        value = record[field]
+        if value is None:
+            continue
+        if not _is_text(value):
+            raise Unavailable("recovery_malformed", f"{where}.{field} must be null or a non-blank string")
+        ids.append(value)
+    return ids
+
+
 def load_custody_blockers(text: str) -> dict[str, str]:
-    """Agent ids that the goal-run recovery records name: they are never idle-archivable."""
+    """Agent ids the goal-run recovery records name: they are never idle-archivable.
+
+    Only a legitimately absent ``goal_run``, ``obligations`` or ``custody``
+    counts as none; any present record of the wrong shape is unavailable.
+    """
     goal_run = _read_block(text, "goal_run")
-    if not isinstance(goal_run, dict):
+    if goal_run is LEDGER_ABSENT or goal_run is None:
         return {}
+    if not isinstance(goal_run, dict):
+        raise Unavailable("recovery_malformed", "goal_run must be a map or null")
     blockers: dict[str, str] = {}
     obligations = goal_run.get("obligations")
-    if isinstance(obligations, dict) and isinstance(obligations.get("children"), list):
-        for child in obligations["children"]:
-            if isinstance(child, str) and child:
-                blockers[child] = "obligation:children"
+    if obligations is not None:
+        if not isinstance(obligations, dict):
+            raise Unavailable("recovery_malformed", "goal_run.obligations must be a map")
+        children = obligations.get("children")
+        if not isinstance(children, list):
+            raise Unavailable("recovery_malformed", "goal_run.obligations.children must be a list")
+        for child in children:
+            if not _is_text(child):
+                raise Unavailable("recovery_malformed", "goal_run.obligations.children entries must be agent ids")
+            blockers[child] = "obligation:children"
     custody = goal_run.get("custody")
-    if isinstance(custody, dict):
-        for key in ("prior_session_id", "current_session_id"):
-            value = custody.get(key)
-            if isinstance(value, str) and value:
-                blockers.setdefault(value, "successor_custody")
+    if custody is not None:
+        for session in _recovery_ids(custody, "goal_run.custody", ("prior_session_id", "current_session_id")):
+            blockers.setdefault(session, "successor_custody")
     return blockers
 
 
 # --- listings -------------------------------------------------------------
 
 
-def _check_not_paged(payload: dict[str, Any], what: str, rows: list[Any]) -> None:
+def _check_envelope_level(payload: dict[str, Any], what: str) -> None:
+    status = payload.get("status")
+    if "status" in payload and status != "ok":
+        raise Unavailable("listing_error", f"{what} status {status!r}")
+    if "ok" in payload and payload["ok"] is not True:
+        raise Unavailable("listing_error", f"{what} ok is {payload['ok']!r}")
+    if payload.get("error") not in (None, False, "", {}, []):
+        raise Unavailable("listing_error", f"{what} carries an error")
     for key in PAGINATION_KEYS:
         if payload.get(key) not in (None, False, "", 0):
-            raise Unavailable("listing_partial", f"{what} is paged or truncated ({key} is set)")
+            raise Unavailable("listing_partial", f"{what} is paged or partial ({key} is set)")
+
+
+def _check_total(payload: dict[str, Any], what: str, rows: list[Any]) -> None:
     total = payload.get("total")
-    if isinstance(total, int) and not isinstance(total, bool) and total != len(rows):
-        raise Unavailable("listing_partial", f"{what} reports total {total} but holds {len(rows)} rows")
+    if total is not None and (isinstance(total, bool) or not isinstance(total, int) or total != len(rows)):
+        raise Unavailable("listing_partial", f"{what} reports total {total!r} but holds {len(rows)} rows")
 
 
-def parse_agent_listing(data: Any) -> dict[str, dict[str, Any]]:
-    if not isinstance(data, dict):
+def parse_agent_listing(envelope: Any, lead_agent_id: Any) -> dict[str, dict[str, Any]]:
+    """Validate the full `agent list --json` envelope, or a flat object."""
+    if not isinstance(envelope, dict):
         raise Unavailable("listing_unparseable", "agent listing is not an object")
-    if isinstance(data.get("data"), dict) and "agents" not in data:
-        if data.get("status") not in (None, "ok"):
-            raise Unavailable("listing_error", f"agent listing status {data.get('status')!r}")
-        data = data["data"]
+    _check_envelope_level(envelope, "agent listing")
+    if "data" in envelope:
+        data = envelope["data"]
+        if not isinstance(data, dict):
+            raise Unavailable("listing_unparseable", "agent listing data is not an object")
+        _check_envelope_level(data, "agent listing data")
+    else:
+        data = envelope
     agents = data.get("agents")
     if not isinstance(agents, list):
         raise Unavailable("listing_unparseable", "agent listing has no agents array")
-    _check_not_paged(data, "agent listing", agents)
+    _check_total(data, "agent listing", agents)
+    if not agents:
+        raise Unavailable("listing_partial", "agent listing is empty; it always lists at least the lead")
     by_id: dict[str, dict[str, Any]] = {}
     for index, agent in enumerate(agents):
         if not isinstance(agent, dict):
@@ -295,13 +392,22 @@ def parse_agent_listing(data: Any) -> dict[str, dict[str, Any]]:
         missing = [field for field in AGENT_LISTING_FIELDS if field not in agent]
         if missing:
             raise Unavailable("listing_partial", f"agent listing row {index} lacks {', '.join(missing)}")
-        if not isinstance(agent["id"], str) or not agent["id"]:
-            raise Unavailable("listing_partial", f"agent listing row {index} has no id")
+        agent_id = agent["id"]
+        if not _is_text(agent_id):
+            raise Unavailable("listing_partial", f"agent listing row {index} has no string id")
         if not isinstance(agent["active"], bool) or not isinstance(agent["archived"], bool):
-            raise Unavailable("listing_partial", f"agent {agent['id']}: active/archived must be booleans")
-        if not isinstance(agent["folderPaths"], list):
-            raise Unavailable("listing_partial", f"agent {agent['id']}: folderPaths must be a list")
-        by_id[agent["id"]] = agent
+            raise Unavailable("listing_partial", f"agent {agent_id}: active/archived must be booleans")
+        paths = agent["folderPaths"]
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise Unavailable("listing_partial", f"agent {agent_id}: folderPaths must be a list of strings")
+        parent = agent.get("parentId")
+        if parent is not None and not isinstance(parent, str):
+            raise Unavailable("listing_partial", f"agent {agent_id}: parentId must be a string or null")
+        if agent_id in by_id:
+            raise Unavailable("listing_duplicate_id", f"agent listing has id {agent_id} twice")
+        by_id[agent_id] = agent
+    if lead_agent_id not in by_id:
+        raise Unavailable("listing_partial", f"agent listing omits the lead {lead_agent_id}")
     return by_id
 
 
@@ -309,48 +415,43 @@ def parse_worktrees(records: Any) -> set[str]:
     if not isinstance(records, list) or not records:
         # A repository always lists at least its main worktree.
         raise Unavailable("listing_unparseable", "git worktree list returned no worktrees")
-    paths = set()
+    paths: set[str] = set()
     for record in records:
         path = record.get("worktreePath") if isinstance(record, dict) else None
-        if not isinstance(path, str) or not path:
+        if not _is_text(path):
             raise Unavailable("listing_partial", "a git worktree record has no path")
+        if path in paths:
+            raise Unavailable("listing_duplicate_id", f"git worktree list has {path} twice")
         paths.add(path)
     return paths
 
 
 def parse_shell_listing(data: Any) -> dict[str, dict[str, Any]]:
     if isinstance(data, dict):
+        _check_envelope_level(data, "shell listing")
         shells = data.get("shells")
         if not isinstance(shells, list):
             raise Unavailable("listing_unparseable", "shell listing has no shells array")
-        _check_not_paged(data, "shell listing", shells)
+        _check_total(data, "shell listing", shells)
     elif isinstance(data, list):
         shells = data
     else:
         raise Unavailable("listing_unparseable", "shell listing is not a list or object")
     by_id: dict[str, dict[str, Any]] = {}
     for index, shell in enumerate(shells):
-        if not isinstance(shell, dict) or not isinstance(shell.get("id"), str) or not shell["id"]:
-            raise Unavailable("listing_partial", f"shell listing row {index} has no id")
+        if not isinstance(shell, dict) or not _is_text(shell.get("id")):
+            raise Unavailable("listing_partial", f"shell listing row {index} has no string id")
         if not isinstance(shell.get("status"), str):
             raise Unavailable("listing_partial", f"shell {shell['id']} has no status")
+        if shell["id"] in by_id:
+            raise Unavailable("listing_duplicate_id", f"shell listing has id {shell['id']} twice")
         by_id[shell["id"]] = shell
     return by_id
 
 
-def _shell_target(row: dict[str, Any]) -> str:
-    """The shell id a row points at: ``shell_id`` when recorded, else the
-    last segment of the locally minted ``shell:<hostid>:<name>`` id."""
-    explicit = row.get("shell_id")
-    if isinstance(explicit, str) and explicit:
-        return explicit
-    return row["id"].rsplit(":", 1)[-1]
-
-
 def _checkout_path(row: dict[str, Any]) -> str:
-    explicit = row.get("path")
-    if isinstance(explicit, str) and explicit:
-        return explicit
+    if _is_text(row.get("path")):
+        return row["path"]
     return row["id"][len("review:"):] if row["id"].startswith("review:") else row["id"]
 
 
@@ -375,6 +476,8 @@ def decide_agent(
     listed: dict[str, Any] | None,
     now: datetime,
     custody_blockers: dict[str, str],
+    lead_agent_id: str,
+    project_paths: set[str],
 ) -> dict[str, Any]:
     state = row["state"]
     if state in AGENT_FOREIGN_STATES:
@@ -385,6 +488,9 @@ def decide_agent(
         return _base(row, "blocked", reason="state:planned")
     if listed is None:
         return _base(row, "target_gone")
+    parent = listed.get("parentId")
+    if (parent is not None and parent != lead_agent_id) or not _agent_belongs_to_project(listed, project_paths):
+        return _base(row, "blocked", reason="listing_owner_mismatch")
     if listed["archived"]:
         return _base(row, "already_archived")
     if listed["active"]:
@@ -396,6 +502,8 @@ def decide_agent(
     open_requests = row["open_requests"]
     if open_requests is None:
         return _base(row, "blocked", reason="open_requests_unknown")
+    if open_requests == "malformed":
+        return _base(row, "blocked", reason="open_requests_malformed")
     last = _parse_time(row.get("last_exchange_at"))
     if last is None or last > now:
         return _base(row, "blocked", reason="idle_unknown")
@@ -426,83 +534,87 @@ def decide_other(
     if kind == "worktree":
         if state == "foreign":
             return _base(row, "not_mine", source="inventory")
-        present = row["id"] in worktree_paths
-    elif kind == "review_checkout":
-        present = _checkout_path(row) in worktree_paths
-    else:  # shell
-        assert shells is not None  # guaranteed by reconcile()
-        present = _shell_target(row) in shells
-    return _base(row, "tracked" if present else "target_gone")
+        return _base(row, "tracked" if row["id"] in worktree_paths else "target_gone")
+    if kind == "review_checkout":
+        return _base(row, "tracked" if _checkout_path(row) in worktree_paths else "target_gone")
+    # shell: a running row, so reconcile() has required the shell listing.
+    if shells is None:
+        raise Unavailable("shells_listing_missing", "a running shell row has no shell listing")
+    if _is_text(row.get("shell_id")):
+        return _base(row, "tracked" if row["shell_id"] in shells else "target_gone")
+    # Without shell_id, only the full row id can match; a partial match is
+    # never evidence, so an unmatched row is blocked, not gone.
+    if row["id"] in shells:
+        return _base(row, "tracked")
+    return _base(row, "blocked", reason="shell_unmatched")
 
 
-def reconcile(
+def _reconcile(
     ledger_text: str,
     *,
-    backend: str,
-    now: datetime,
-    lead_agent_id: str | None,
+    backend: Any,
+    now: Any,
+    lead_agent_id: Any,
     agents_data: Any,
     worktree_records: Any,
     shells_data: Any,
     repo_dir: Path,
 ) -> dict[str, Any]:
-    """Pure decision over injected inputs. Never raises; never acts."""
-    try:
-        if backend not in {"traycer", "claude-native"}:
-            raise Unavailable("backend_incomplete", f"backend {backend!r} is not traycer or claude-native")
-        if now.tzinfo is None:
-            raise Unavailable("clock_invalid", "now must be timezone-qualified")
-        if backend == "traycer":
-            check_single_writer(ledger_text, lead_agent_id)
-        rows = load_inventory(ledger_text)
-        custody_blockers = load_custody_blockers(ledger_text)
-        worktree_paths = parse_worktrees(worktree_records)
+    if backend not in {"traycer", "claude-native"}:
+        raise Unavailable("backend_incomplete", f"backend {backend!r} is not traycer or claude-native")
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        raise Unavailable("clock_invalid", "now must be a timezone-qualified time")
+    if not isinstance(ledger_text, str):
+        raise Unavailable("ledger_unreadable", "the ledger is not text")
+    if backend == "traycer":
+        check_single_writer(ledger_text, lead_agent_id)
+    rows = load_inventory(ledger_text)
+    custody_blockers = load_custody_blockers(ledger_text)
+    worktree_paths = parse_worktrees(worktree_records)
+    project_paths = set(worktree_paths) | {str(repo_dir)}
 
-        live_shell_rows = [r for r in rows if r["kind"] == "shell" and r["state"] == "running"]
-        shells: dict[str, dict[str, Any]] | None = None
-        if live_shell_rows:
-            if shells_data is None:
-                raise Unavailable(
-                    "shells_listing_missing",
-                    "the inventory has running shells but no --shells-json listing was given",
-                )
-            shells = parse_shell_listing(shells_data)
+    shells: dict[str, dict[str, Any]] | None = None
+    if any(r["kind"] == "shell" and r["state"] == "running" for r in rows):
+        if shells_data is None:
+            raise Unavailable(
+                "shells_listing_missing",
+                "the inventory has running shells but no --shells-json listing was given",
+            )
+        shells = parse_shell_listing(shells_data)
 
-        agents: dict[str, dict[str, Any]] | None = None
-        if backend == "traycer":
-            agents = parse_agent_listing(agents_data)
+    agents = parse_agent_listing(agents_data, lead_agent_id) if backend == "traycer" else None
 
-        findings: list[dict[str, Any]] = []
-        inventory_ids = {r["id"] for r in rows}
-        for row in rows:
-            if row["kind"] == "agent":
-                if agents is None:
-                    findings.append(_base(row, "not_applicable"))
-                else:
-                    findings.append(decide_agent(row, agents.get(row["id"]), now, custody_blockers))
+    findings: list[dict[str, Any]] = []
+    inventory_ids = {r["id"] for r in rows}
+    for row in rows:
+        if row["kind"] == "agent":
+            if agents is None:
+                findings.append(_base(row, "not_applicable"))
             else:
-                findings.append(decide_other(row, worktree_paths, shells))
+                findings.append(decide_agent(
+                    row, agents.get(row["id"]), now, custody_blockers, lead_agent_id, project_paths,
+                ))
+        else:
+            findings.append(decide_other(row, worktree_paths, shells))
 
-        listed_in_project = 0
-        if agents is not None:
-            project_paths = set(worktree_paths) | {str(repo_dir)}
-            for agent_id, agent in sorted(agents.items()):
-                if not _agent_belongs_to_project(agent, project_paths):
-                    continue
-                listed_in_project += 1
-                if agent_id in inventory_ids or agent_id == lead_agent_id or agent["archived"]:
-                    continue
-                findings.append({
-                    "finding": "not_mine",
-                    "id": agent_id,
-                    "kind": "agent",
-                    "source": "listing",
-                    "parent_id": agent.get("parentId"),
-                    "title": agent.get("title"),
-                    "hint": "active" if agent["active"] else "idle",
-                })
-    except Unavailable as fault:
-        return _unavailable(fault.reason_code, fault.reason, backend if backend in {"traycer", "claude-native"} else None)
+    listed_in_project = 0
+    if agents is not None:
+        for agent_id, agent in sorted(agents.items()):
+            if not _agent_belongs_to_project(agent, project_paths):
+                continue
+            listed_in_project += 1
+            if agent_id in inventory_ids or agent_id == lead_agent_id or agent["archived"]:
+                continue
+            title = agent.get("title")
+            findings.append({
+                "finding": "not_mine",
+                "id": agent_id,
+                "kind": "agent",
+                "source": "listing",
+                "parent_id": agent.get("parentId"),
+                "title": title if isinstance(title, str) else None,
+                "hint": "active" if agent["active"] else "idle",
+            })
 
     counts: dict[str, Any] = {name: 0 for name in FINDINGS}
     for item in findings:
@@ -522,64 +634,90 @@ def reconcile(
     }
 
 
+def reconcile(ledger_text: str, *, backend: Any, **inputs: Any) -> dict[str, Any]:
+    """Pure decision over injected inputs. Never raises; never acts."""
+    try:
+        return _reconcile(ledger_text, backend=backend, **inputs)
+    except Unavailable as fault:
+        return _unavailable(fault.reason_code, fault.reason, backend)
+    except Exception as error:  # noqa: BLE001 - fail closed on anything unforeseen
+        return _unavailable("internal_error", f"{type(error).__name__}: {error}", backend)
+
+
 # --- I/O ------------------------------------------------------------------
 
 
-def _read_json_file(path: str, what: str) -> Any:
+def read_agent_listing_live() -> dict[str, Any]:
+    """`traycer_cli.py agent list --json`, keeping the whole envelope.
+
+    Same wrapper route, timeout and exit-code handling as
+    workspace_debt._run_traycer_cli, which returns only `data`.
+    """
+    if not WRAPPER.is_file():
+        raise Unavailable("listing_error", f"traycer_cli.py wrapper missing at {WRAPPER}")
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise Unavailable("listing_unparseable", f"{what} {path}: {error}") from error
+        completed = subprocess.run(
+            [sys.executable, str(WRAPPER), "agent", "list", "--json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise Unavailable("listing_error", f"agent list --json timed out after {COMMAND_TIMEOUT_SECONDS}s") from error
+    except UnicodeDecodeError as error:
+        raise Unavailable("input_unreadable", f"agent list --json output is not UTF-8: {error}") from error
+    except OSError as error:
+        raise Unavailable("listing_error", f"agent list --json failed to launch: {error}") from error
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()[:200] or "no output"
+        raise Unavailable("listing_error", f"agent list --json exit {completed.returncode}: {detail}")
+    try:
+        payload = json.loads(completed.stdout)
+    except (json.JSONDecodeError, TypeError, RecursionError) as error:
+        raise Unavailable("listing_unparseable", f"agent list --json returned malformed JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise Unavailable("listing_unparseable", "agent list --json returned a non-object payload")
+    return payload
 
 
-def build_report(args: argparse.Namespace) -> dict[str, Any]:
+def _build_report(args: argparse.Namespace) -> tuple[dict[str, Any], Any]:
     repo_dir = Path(args.repo_dir).resolve()
     backend = args.backend
     lead_agent_id = args.lead_agent_id
-    try:
-        if backend is None:
-            detected = _detect_backend()
-            if detected.get("detection_status") != "ready":
-                raise Unavailable("backend_incomplete", f"backend detector: {detected.get('reason') or 'unknown'}")
-            backend = detected.get("execution_backend")
-            lead_agent_id = lead_agent_id or detected.get("traycer_agent_id")
-        if args.now:
-            now = _parse_time(args.now)
-            if now is None:
-                raise Unavailable("clock_invalid", f"--now {args.now!r} is not a timezone-qualified time")
-        else:
-            now = datetime.now(timezone.utc)
+    if backend is None:
+        detected = _detect_backend()
+        if detected.get("detection_status") != "ready":
+            raise Unavailable("backend_incomplete", f"backend detector: {detected.get('reason') or 'unknown'}")
+        backend = detected.get("execution_backend")
+        lead_agent_id = lead_agent_id or detected.get("traycer_agent_id")
+    if args.now:
+        now = _parse_time(args.now)
+        if now is None:
+            raise Unavailable("clock_invalid", f"--now {args.now!r} is not a timezone-qualified time")
+    else:
+        now = datetime.now(timezone.utc)
+    ledger_text = _read_text(args.dev_state, "ledger")
+
+    if args.worktrees_porcelain:
+        worktree_records = _parse_porcelain(_read_text(args.worktrees_porcelain, "worktree listing"))
+    else:
         try:
-            ledger_text = Path(args.dev_state).read_text(encoding="utf-8")
-        except OSError as error:
-            raise Unavailable("ledger_unreadable", f"{args.dev_state}: {error}") from error
+            worktree_records = _git_worktree_list(repo_dir)
+        except ScriptError as error:
+            raise Unavailable("listing_error", str(error)) from error
+        except UnicodeDecodeError as error:
+            raise Unavailable("input_unreadable", f"git worktree list output is not UTF-8: {error}") from error
 
-        if args.worktrees_porcelain:
-            try:
-                worktree_records = _parse_porcelain(Path(args.worktrees_porcelain).read_text(encoding="utf-8"))
-            except OSError as error:
-                raise Unavailable("listing_unparseable", f"{args.worktrees_porcelain}: {error}") from error
-        else:
-            try:
-                worktree_records = _git_worktree_list(repo_dir)
-            except ScriptError as error:
-                raise Unavailable("listing_error", str(error)) from error
+    agents_data = None
+    if backend == "traycer":
+        agents_data = (
+            _read_json(args.agents_json, "agent listing") if args.agents_json else read_agent_listing_live()
+        )
+    shells_data = _read_json(args.shells_json, "shell listing") if args.shells_json else None
 
-        agents_data = None
-        if backend == "traycer":
-            if args.agents_json:
-                agents_data = _read_json_file(args.agents_json, "agent listing")
-            else:
-                try:
-                    agents_data = _run_traycer_cli(["agent", "list", "--json"])
-                except ScriptError as error:
-                    raise Unavailable("listing_error", str(error)) from error
-
-        shells_data = _read_json_file(args.shells_json, "shell listing") if args.shells_json else None
-    except Unavailable as fault:
-        return _unavailable(fault.reason_code, fault.reason, backend if backend in {"traycer", "claude-native"} else None)
-
-    return reconcile(
+    report = reconcile(
         ledger_text,
         backend=backend,
         now=now,
@@ -589,19 +727,48 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         shells_data=shells_data,
         repo_dir=repo_dir,
     )
+    return report, backend
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Report-only inventory reconcile (Issue #112).")
+def build_report(args: argparse.Namespace) -> dict[str, Any]:
+    """Read the inputs and reconcile. Never raises."""
+    backend = getattr(args, "backend", None)
+    try:
+        report, _ = _build_report(args)
+        return report
+    except Unavailable as fault:
+        return _unavailable(fault.reason_code, fault.reason, backend)
+    except Exception as error:  # noqa: BLE001 - fail closed on anything unforeseen
+        return _unavailable("internal_error", f"{type(error).__name__}: {error}", backend)
+
+
+class _Parser(argparse.ArgumentParser):
+    """Usage errors become an unavailable report, not argparse's exit."""
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        raise Unavailable("usage_error", message)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = _Parser(description="Report-only inventory reconcile (Issue #112).")
     parser.add_argument("--dev-state", default=".agent/dev-state.md", help="ledger path")
     parser.add_argument("--repo-dir", default=".", help="repository root for git worktree list")
     parser.add_argument("--backend", choices=("traycer", "claude-native"), help="skip backend detection")
     parser.add_argument("--lead-agent-id", help="the calling lead's agent id (traycer)")
     parser.add_argument("--now", help="timezone-qualified ISO time to evaluate at (default: now, UTC)")
-    parser.add_argument("--agents-json", help="saved `traycer_cli.py agent list --json` output")
+    parser.add_argument("--agents-json", help="saved `traycer_cli.py agent list --json` output (full envelope)")
     parser.add_argument("--worktrees-porcelain", help="saved `git worktree list --porcelain` output")
     parser.add_argument("--shells-json", help="the lead's shell listing: a list or {shells: [...]} of {id, status}")
-    report = build_report(parser.parse_args(argv))
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        report = build_report(_parser().parse_args(argv))
+    except Unavailable as fault:
+        report = _unavailable(fault.reason_code, fault.reason, None)
+    except Exception as error:  # noqa: BLE001 - never a traceback
+        report = _unavailable("internal_error", f"{type(error).__name__}: {error}", None)
     print(json.dumps(report, sort_keys=True, separators=(",", ":")))
     return 0 if report["status"] == "ok" else 2
 

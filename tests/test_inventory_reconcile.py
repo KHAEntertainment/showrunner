@@ -16,7 +16,9 @@ import copy
 import importlib.util
 import io
 import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -147,9 +149,11 @@ class ImportedHelpersTest(unittest.TestCase):
 
         for name in (
             "ScriptError", "_agent_belongs_to_project", "_detect_backend",
-            "_git_worktree_list", "_parse_porcelain", "_run_traycer_cli",
+            "_git_worktree_list", "_parse_porcelain",
         ):
             self.assertTrue(callable(getattr(workspace_debt, name, None)), f"workspace_debt.{name} disappeared")
+        for name in ("WRAPPER", "COMMAND_TIMEOUT_SECONDS"):
+            self.assertTrue(hasattr(workspace_debt, name), f"workspace_debt.{name} disappeared")
         for name in ("LEDGER_ABSENT", "GoalRunError", "read_ledger_block"):
             self.assertTrue(hasattr(dev_state, name), f"dev_state.{name} disappeared")
 
@@ -251,6 +255,7 @@ class OwnershipTest(unittest.TestCase):
         self.assertEqual(item["parent_id"], "someone-else")
         # qa-1 is ours by parentId but not in the inventory: still not mine.
         self.assertEqual(finding_for(report, "qa-1")["finding"], "not_mine")
+        self.assertEqual(finding_for(report, "qa-1")["parent_id"], "previous-lead")
 
     def test_only_inventory_rows_carry_an_action(self):
         report = run([agent_row(idle=timedelta(hours=2))])
@@ -306,7 +311,7 @@ class LifecycleStatesTest(unittest.TestCase):
             {"id": "review:/synthetic/repo/review-gone", "kind": "review_checkout", "pr": 12, "role": "qa",
              "created_at": "2026-11-06T08:00:00Z", "state": "in-use"},
             {"id": "shell:host-1:gone-shell", "kind": "shell", "pr": None, "role": None,
-             "created_at": "2026-11-06T08:00:00Z", "state": "running"},
+             "created_at": "2026-11-06T08:00:00Z", "state": "running", "shell_id": "gone-shell"},
         ]
         report = run(rows)
         for row in rows:
@@ -320,7 +325,7 @@ class LifecycleStatesTest(unittest.TestCase):
             {"id": "review:/synthetic/repo/review-12", "kind": "review_checkout", "pr": 12, "role": "qa",
              "created_at": "2026-11-06T08:00:00Z", "state": "clean"},
             {"id": "shell:host-1:dev-server", "kind": "shell", "pr": None, "role": None,
-             "created_at": "2026-11-06T08:00:00Z", "state": "running"},
+             "created_at": "2026-11-06T08:00:00Z", "state": "running", "shell_id": "dev-server"},
             {"id": "shell:host-1:old", "kind": "shell", "pr": None, "role": None,
              "created_at": "2026-11-06T08:00:00Z", "state": "stopped"},
             {"id": "/synthetic/repo/wt-old", "kind": "worktree", "pr": 3, "role": "worker-new",
@@ -384,7 +389,6 @@ class FailClosedTest(unittest.TestCase):
         self.assertUnavailable(run([agent_row(kind="robot")]), "inventory_malformed")
         self.assertUnavailable(run([agent_row(idle=timedelta(hours=2)), agent_row(idle=timedelta(hours=2))]),
                                "inventory_malformed")
-        self.assertUnavailable(run([agent_row(open_requests=[{"what": "no id"}])]), "inventory_malformed")
 
     def test_unknown_backend(self):
         self.assertUnavailable(run([], backend="incomplete"), "backend_incomplete")
@@ -396,13 +400,21 @@ class FailClosedTest(unittest.TestCase):
             worktrees_porcelain=str(FIXTURES / "worktrees.porcelain"), shells_json=None,
         )
         # Ledger first: an unreadable ledger is itself unavailable.
-        self.assertUnavailable(MODULE.build_report(args), "ledger_unreadable")
+        self.assertUnavailable(MODULE.build_report(args), "input_unreadable")
 
         with self._ledger_file([agent_row(idle=timedelta(hours=3))]) as path:
             args.dev_state = path
-            for message in ("agent list --json timed out after 30s", "agent list --json exit 1: boom"):
-                with mock.patch.object(MODULE, "_run_traycer_cli", side_effect=MODULE.ScriptError(message)):
-                    self.assertUnavailable(MODULE.build_report(args), "listing_error")
+            # Live path: only subprocess.run is mocked.
+            for side_effect, code in (
+                (subprocess.TimeoutExpired(cmd="traycer", timeout=30), "listing_error"),
+                (subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom"), "listing_error"),
+                (subprocess.CompletedProcess(args=[], returncode=0, stdout="not json", stderr=""),
+                 "listing_unparseable"),
+            ):
+                kwargs = {"side_effect": side_effect} if isinstance(side_effect, Exception) else {
+                    "return_value": side_effect}
+                with mock.patch("subprocess.run", **kwargs):
+                    self.assertUnavailable(MODULE.build_report(args), code)
             args.worktrees_porcelain = None
             with mock.patch.object(MODULE, "_git_worktree_list", side_effect=MODULE.ScriptError("git exit 128")):
                 self.assertUnavailable(MODULE.build_report(args), "listing_error")
@@ -439,11 +451,15 @@ class SingleWriterTest(unittest.TestCase):
         rows = [
             agent_row("worker-1", idle=timedelta(hours=3), state="archived-on-accept"),
             agent_row("worker-2", idle=timedelta(hours=3), role="worker-new"),
-            agent_row("qa-1", idle=timedelta(hours=3), role="qa"),
+            agent_row("qa-2", idle=timedelta(hours=3), role="qa"),
             agent_row("reviewer-1", idle=timedelta(hours=3), role="reviewer"),
         ]
         agents = agents_with(lambda d: d["agents"].extend([
+            {"id": writer, "parentId": "foreman-1", "active": True, "archived": False,
+             "folderPaths": ["/synthetic/repo/wt-lead"]},
             {"id": "worker-2", "parentId": writer, "active": False, "archived": False,
+             "folderPaths": ["/synthetic/repo/wt-worker"]},
+            {"id": "qa-2", "parentId": writer, "active": False, "archived": False,
              "folderPaths": ["/synthetic/repo/wt-worker"]},
             {"id": "reviewer-1", "parentId": writer, "active": False, "archived": False,
              "folderPaths": ["/synthetic/repo/wt-worker"]},
@@ -565,6 +581,324 @@ class MainTest(unittest.TestCase):
                 code = MODULE.main(base[:9] + ["not-a-time"] + base[10:])
             self.assertEqual(code, 2)
             self.assertEqual(json.loads(out.getvalue())["reason_code"], "clock_invalid")
+
+
+# --- Fix batch 1 (de-251-1) regression tests -------------------------------
+# Each fails at 6597e52: the reconcile either reported `ok` from unknown data
+# or raised a traceback.
+
+
+def envelope(**outer):
+    """The fixture envelope with outer keys replaced or added."""
+    data = copy.deepcopy(AGENTS)
+    data.update(outer)
+    return data
+
+
+def assert_unavailable(case, report, reason_code):
+    case.assertEqual(report["status"], "unavailable", report)
+    case.assertEqual(report["reason_code"], reason_code, report)
+    case.assertIsNone(report["counts"])
+    case.assertEqual(report["findings"], [])
+
+
+def main_report(argv):
+    """Run main() and return (exit code, parsed JSON). A traceback fails the caller's test."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = MODULE.main(argv)
+    return code, json.loads(out.getvalue())
+
+
+def base_argv(ledger_path, *extra):
+    return ["--dev-state", str(ledger_path), "--repo-dir", str(REPO_DIR), "--backend", "traycer",
+            "--lead-agent-id", LEAD, "--now", _iso(NOW), *extra]
+
+
+class EnvelopeStatusTest(unittest.TestCase):
+    """B1: envelope metadata is checked at the outer and the data level."""
+
+    ROWS = [agent_row(idle=timedelta(hours=3))]
+
+    def test_outer_error_status(self):
+        assert_unavailable(self, run(self.ROWS, agents=envelope(status="error")), "listing_error")
+
+    def test_outer_ok_false_and_error_field(self):
+        assert_unavailable(self, run(self.ROWS, agents=envelope(ok=False)), "listing_error")
+        assert_unavailable(self, run(self.ROWS, agents=envelope(error="rate limited")), "listing_error")
+
+    def test_outer_partial_and_pagination(self):
+        for key, value in (("partial", True), ("hasMore", True), ("nextOffset", 200),
+                           ("next_page_token", "abc"), ("nextCursor", "c1")):
+            with self.subTest(key=key):
+                assert_unavailable(self, run(self.ROWS, agents=envelope(**{key: value})), "listing_partial")
+
+    def test_data_level_status_and_markers(self):
+        assert_unavailable(self, run(self.ROWS, agents=agents_with(lambda d: d.update(status="error"))),
+                           "listing_error")
+        assert_unavailable(self, run(self.ROWS, agents=agents_with(lambda d: d.update(partial=True))),
+                           "listing_partial")
+        assert_unavailable(self, run(self.ROWS, agents=agents_with(lambda d: d.update(nextCursor="c2"))),
+                           "listing_partial")
+
+    def test_flat_error_object(self):
+        flat = {"status": "error", "agents": copy.deepcopy(AGENTS["data"]["agents"])}
+        assert_unavailable(self, run(self.ROWS, agents=flat), "listing_error")
+
+    def test_flat_ok_object_is_accepted(self):
+        flat = {"agents": copy.deepcopy(AGENTS["data"]["agents"])}
+        self.assertEqual(run(self.ROWS, agents=flat)["status"], "ok")
+
+    def test_agents_json_path_checks_the_envelope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger_path = Path(tmp) / "dev-state.md"
+            ledger_path.write_text(ledger(self.ROWS), encoding="utf-8")
+            agents_path = Path(tmp) / "agents.json"
+            agents_path.write_text(json.dumps(envelope(hasMore=True)), encoding="utf-8")
+            code, report = main_report(base_argv(
+                ledger_path, "--agents-json", str(agents_path),
+                "--worktrees-porcelain", str(FIXTURES / "worktrees.porcelain")))
+            self.assertEqual(code, 2)
+            assert_unavailable(self, report, "listing_partial")
+
+    def test_live_path_checks_the_envelope(self):
+        """Only subprocess.run is mocked; the script reads the full envelope itself."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger_path = Path(tmp) / "dev-state.md"
+            ledger_path.write_text(ledger(self.ROWS), encoding="utf-8")
+            argv = base_argv(ledger_path, "--worktrees-porcelain", str(FIXTURES / "worktrees.porcelain"))
+            cases = (
+                (envelope(hasMore=True), "listing_partial"),
+                (agents_with(lambda d: d.update(next_page_token="t")), "listing_partial"),
+                (envelope(status="error"), "listing_error"),
+            )
+            for payload, reason in cases:
+                done = subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(payload), stderr="")
+                with mock.patch("subprocess.run", return_value=done) as patched:
+                    code, report = main_report(argv)
+                self.assertEqual(code, 2)
+                assert_unavailable(self, report, reason)
+                self.assertEqual(patched.call_args.args[0][-3:], ["agent", "list", "--json"])
+            done = subprocess.CompletedProcess(args=[], returncode=0, stdout=json.dumps(AGENTS), stderr="")
+            with mock.patch("subprocess.run", return_value=done):
+                code, report = main_report(argv)
+            self.assertEqual(report["status"], "ok", report)
+            self.assertEqual(finding_for(report, "worker-1")["finding"], "archive_due")
+
+
+class EmptyOrLeadlessListingTest(unittest.TestCase):
+    """QA M2: an empty or lead-less listing never turns live rows into target_gone."""
+
+    def test_empty_agents(self):
+        report = run([agent_row(idle=timedelta(hours=3))], agents=agents_with(lambda d: d.update(agents=[])))
+        assert_unavailable(self, report, "listing_partial")
+
+    def test_lead_missing_from_listing(self):
+        agents = agents_with(lambda d: d.update(agents=[a for a in d["agents"] if a["id"] != LEAD]))
+        assert_unavailable(self, run([agent_row(idle=timedelta(hours=3))], agents=agents), "listing_partial")
+
+
+class DuplicateIdTest(unittest.TestCase):
+    """B2: a duplicate id in any listing is unavailable."""
+
+    def test_duplicate_agent_id(self):
+        agents = agents_with(lambda d: d["agents"].append(copy.deepcopy(d["agents"][1])))
+        assert_unavailable(self, run([agent_row(idle=timedelta(hours=3))], agents=agents), "listing_duplicate_id")
+
+    def test_duplicate_shell_id(self):
+        row = {"id": "shell:host-1:dev-server", "kind": "shell", "pr": None, "role": None,
+               "created_at": "2026-11-06T08:00:00Z", "state": "running", "shell_id": "dev-server"}
+        shells = {"shells": [{"id": "dev-server", "status": "running"}, {"id": "dev-server", "status": "exited"}]}
+        assert_unavailable(self, run([row], shells=shells), "listing_duplicate_id")
+
+    def test_duplicate_worktree_path(self):
+        assert_unavailable(self, run([], worktrees=WORKTREES + [dict(WORKTREES[1])]), "listing_duplicate_id")
+
+
+class RecoveryMalformedTest(unittest.TestCase):
+    """B3: malformed goal_run recovery records are unavailable, never "none"."""
+
+    ROWS = [agent_row(idle=timedelta(hours=3))]
+
+    def check(self, goal_run):
+        assert_unavailable(self, run(self.ROWS, goal_run=goal_run), "recovery_malformed")
+
+    def test_scalar_children(self):
+        self.check(["goal_run:", "  obligations:", "    children: worker-1"])
+
+    def test_non_map_obligations_and_missing_children(self):
+        self.check(["goal_run:", "  obligations: pending"])
+        self.check(["goal_run:", "  obligations:", "    worker_count: 1"])
+
+    def test_non_string_child_entry(self):
+        self.check(["goal_run:", "  obligations:", "    children:", "      - id: worker-1"])
+
+    def test_custody_without_identity_fields(self):
+        self.check(["goal_run:", "  custody:", "    claim: successor"])
+        self.check(["goal_run:", "  custody:", "    prior_session_id: worker-1"])
+
+    def test_custody_wrong_type(self):
+        self.check(["goal_run:", "  custody:", "    prior_session_id: 7", "    current_session_id: lead-1"])
+
+    def test_scalar_goal_run(self):
+        self.check(["goal_run: armed"])
+
+    def test_absent_records_count_as_none(self):
+        self.assertEqual(run(self.ROWS, goal_run=["goal_run: null"])["status"], "ok")
+        self.assertEqual(run(self.ROWS, goal_run=["goal_run:", "  run_id: r-1"])["status"], "ok")
+
+
+class WriterMalformedTest(unittest.TestCase):
+    """B4: writer ids are null or non-blank strings; anything else is unavailable."""
+
+    def test_wrong_types(self):
+        for value in (123, ""):
+            with self.subTest(value=value):
+                assert_unavailable(self, run([], lead_in_ledger=value), "writer_malformed")
+                assert_unavailable(self, run([], execution_id=value), "writer_malformed")
+
+    def test_list_and_map_values(self):
+        base = ledger([])
+        as_list = base.replace("  agent_id: \"lead-1\"", "  agent_id:\n    - lead-1")
+        as_map = base.replace("  traycer_agent_id: null", "  traycer_agent_id:\n    id: lead-1")
+        for text in (as_list, as_map):
+            assert_unavailable(self, run([], text=text), "writer_malformed")
+
+    def test_differing_string_is_still_two_writers(self):
+        self.assertEqual(run([], execution_id="other-lead")["reason_code"], "two_active_writers")
+
+
+class TypeAndEncodingTest(unittest.TestCase):
+    """B5 + QA M1: wrong types and non-UTF-8 never reach a membership test or a traceback."""
+
+    def test_unhashable_kind_and_state(self):
+        base = ledger([agent_row(idle=timedelta(hours=3))])
+        for old, new in (('    kind: "agent"', "    kind:\n      - agent"),
+                         ('    state: "active"', "    state:\n      - active")):
+            text = base.replace(old, new)
+            self.assertNotEqual(text, base)
+            assert_unavailable(self, run([], text=text), "inventory_malformed")
+
+    def test_wrong_scalar_types(self):
+        for extra in ({"pr": "twelve"}, {"role": 5}, {"id": 42}):
+            with self.subTest(extra=extra):
+                assert_unavailable(self, run([agent_row(idle=timedelta(hours=3), **extra)]), "inventory_malformed")
+
+    def test_listing_field_types(self):
+        for mutate in (lambda a: a.update(parentId=7), lambda a: a.update(folderPaths=[1]), lambda a: a.update(id=9)):
+            agents = agents_with(lambda d, m=mutate: m(d["agents"][1]))
+            assert_unavailable(self, run([agent_row(idle=timedelta(hours=3))], agents=agents), "listing_partial")
+
+    def test_non_utf8_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "dev-state.md"
+            good.write_text(ledger([agent_row(idle=timedelta(hours=3))]), encoding="utf-8")
+            bad = Path(tmp) / "bad.bin"
+            bad.write_bytes(b"\xff\xfe\x00garbage\x80")
+            base = {"--dev-state": str(good), "--agents-json": str(FIXTURES / "agent_list.json"),
+                    "--worktrees-porcelain": str(FIXTURES / "worktrees.porcelain"),
+                    "--shells-json": str(FIXTURES / "shells.json")}
+            for flag in base:
+                with self.subTest(flag=flag):
+                    values = dict(base, **{flag: str(bad)})
+                    argv = ["--repo-dir", str(REPO_DIR), "--backend", "traycer", "--lead-agent-id", LEAD,
+                            "--now", _iso(NOW)]
+                    for key, value in values.items():
+                        argv += [key, value]
+                    code, report = main_report(argv)
+                    self.assertEqual(code, 2)
+                    assert_unavailable(self, report, "input_unreadable")
+
+
+class MainNeverTracebacksTest(unittest.TestCase):
+    """B5: main() prints parseable unavailable JSON with exit 2 on garbage."""
+
+    def call(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = MODULE.main(argv)
+        return code, json.loads(out.getvalue())
+
+    def test_garbage_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "dev-state.md"
+            path.write_text("---\nlead: [unclosed\ninventory: {\n---\n", encoding="utf-8")
+            code, report = self.call(["--dev-state", str(path), "--backend", "traycer", "--lead-agent-id", LEAD,
+                                      "--worktrees-porcelain", str(FIXTURES / "worktrees.porcelain"),
+                                      "--agents-json", str(FIXTURES / "agent_list.json")])
+        self.assertEqual(code, 2)
+        self.assertEqual(report["status"], "unavailable")
+        self.assertIsNone(report["counts"])
+
+    def test_bad_arguments(self):
+        code, report = self.call(["--backend", "bogus"])
+        self.assertEqual((code, report["reason_code"]), (2, "usage_error"))
+        code, report = self.call(["--no-such-flag"])
+        self.assertEqual((code, report["reason_code"]), (2, "usage_error"))
+
+    def test_unforeseen_exception(self):
+        with mock.patch.object(MODULE, "build_report", side_effect=RuntimeError("boom")):
+            code, report = self.call(["--backend", "traycer"])
+        self.assertEqual((code, report["reason_code"]), (2, "internal_error"))
+        with mock.patch.object(MODULE, "load_inventory", side_effect=KeyError("x")):
+            report = run([])
+        self.assertEqual(report["reason_code"], "internal_error")
+
+
+class OwnerMismatchTest(unittest.TestCase):
+    """QA L1: a listed parent that is not the lead, or folders outside the project, block."""
+
+    def test_foreign_parent_blocks(self):
+        agents = agents_with(lambda d: d["agents"][1].update(parentId="someone-else"))
+        item = finding_for(run([agent_row(idle=timedelta(hours=3))], agents=agents), "worker-1")
+        self.assertEqual((item["finding"], item["reason"]), ("blocked", "listing_owner_mismatch"))
+
+    def test_folders_outside_project_block(self):
+        agents = agents_with(lambda d: d["agents"][1].update(folderPaths=["/synthetic/other-repo"]))
+        item = finding_for(run([agent_row(idle=timedelta(hours=3))], agents=agents), "worker-1")
+        self.assertEqual((item["finding"], item["reason"]), ("blocked", "listing_owner_mismatch"))
+
+    def test_null_parent_in_project_is_still_archivable(self):
+        agents = agents_with(lambda d: d["agents"][1].update(parentId=None))
+        self.assertEqual(finding_for(run([agent_row(idle=timedelta(hours=3))], agents=agents),
+                                     "worker-1")["finding"], "archive_due")
+
+
+class ShellMatchTest(unittest.TestCase):
+    """QA L2: without shell_id only the full row id matches; a miss is blocked, not gone."""
+
+    def row(self, **extra):
+        row = {"id": "shell:host-1:dev-server", "kind": "shell", "pr": None, "role": None,
+               "created_at": "2026-11-06T08:00:00Z", "state": "running"}
+        row.update(extra)
+        return row
+
+    def test_trailing_segment_never_matches(self):
+        item = finding_for(run([self.row()]), "shell:host-1:dev-server")
+        self.assertEqual((item["finding"], item["reason"]), ("blocked", "shell_unmatched"))
+
+    def test_full_id_matches(self):
+        shells = {"shells": [{"id": "shell:host-1:dev-server", "status": "running"}]}
+        self.assertEqual(finding_for(run([self.row()], shells=shells), "shell:host-1:dev-server")["finding"],
+                         "tracked")
+
+
+class OpenRequestsMalformedTest(unittest.TestCase):
+    """QA L6: an entry without a non-blank id and what blocks the row; "None" never prints."""
+
+    def test_malformed_entries_block(self):
+        for entry in ({"what": "no id"}, {"id": "r-1"}, {"id": "r-1", "what": ""}, {"id": "", "what": "x"}):
+            with self.subTest(entry=entry):
+                report = run([agent_row(idle=timedelta(hours=3), open_requests=[entry])])
+                item = finding_for(report, "worker-1")
+                self.assertEqual((item["finding"], item["reason"]), ("blocked", "open_requests_malformed"))
+                self.assertNotIn("None", json.dumps(item))
+
+    def test_non_list_value_blocks(self):
+        text = ledger([agent_row(idle=timedelta(hours=3), open_requests=None)]).replace(
+            '    state: "active"', '    state: "active"\n    open_requests: "resp-9"')
+        item = finding_for(run([], text=text), "worker-1")
+        self.assertEqual((item["finding"], item["reason"]), ("blocked", "open_requests_malformed"))
 
 
 if __name__ == "__main__":
