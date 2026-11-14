@@ -329,7 +329,7 @@ def check_description(check: dict[str, Any]) -> str:
     check run. GitHub's `gh pr view --json statusCheckRollup` does not
     expose this field; the live `fetch_pr` path augments each check
     with `output` by querying the head's check-runs REST endpoint
-    (see `fetch_check_output`). The `description` field is
+    (see `fetch_check_outputs_for_head`). The `description` field is
     kept for backward compatibility with fixtures that pre-date the
     REST augmentation.
     """
@@ -389,6 +389,24 @@ def is_rate_limited_check(check: dict[str, Any]) -> bool:
         return False
     description = normalize(check_description(check))
     return RATE_LIMIT_PHRASE in description
+
+
+def check_run_order_key(started: Any, run_id: Any) -> tuple[str, int]:
+    """Order key for check runs: started_at DESC, then id DESC.
+
+    The id compares numerically when possible (falling back to 0 for
+    a missing or non-numeric id) so the LATEST run wins
+    deterministically regardless of listing order. Both the batch
+    acquisition (`fetch_check_outputs_for_head`) and the Kilo run
+    selection (`kilo_summary_evidence_for_head`) order runs with
+    this one key, so the two paths always choose the same run.
+    """
+    started_text = str(started or "")
+    try:
+        run_id_int = int(run_id)
+    except (TypeError, ValueError):
+        run_id_int = 0
+    return (started_text, run_id_int)
 
 
 def kilo_summary_fields(body: str) -> tuple[str, str]:
@@ -517,18 +535,13 @@ def kilo_summary_evidence_for_head(
             pending.add("kilo")
         return completed, findings, pending, rate_limit_reasons, consumed_check_ids
 
-    # Latest by started_at DESC, then id DESC (numeric when possible,
-    # falling back to 0) for a deterministic tie-break.
-    def run_sort_key(check: dict[str, Any]) -> tuple[str, int]:
-        started = str(check.get("startedAt") or "")
-        run_id = check.get("id") or 0
-        try:
-            run_id_int = int(run_id)
-        except (TypeError, ValueError):
-            run_id_int = 0
-        return (started, run_id_int)
-
-    kilo_runs.sort(key=run_sort_key, reverse=True)
+    # Latest by started_at DESC, then id DESC — the shared
+    # `check_run_order_key`, so this walk and the batch acquisition
+    # always choose the same run.
+    kilo_runs.sort(
+        key=lambda check: check_run_order_key(check.get("startedAt"), check.get("id")),
+        reverse=True,
+    )
     kilo_check = kilo_runs[0]
 
     # The LATEST run decides. If it is a rate-limited failure,
@@ -538,7 +551,7 @@ def kilo_summary_evidence_for_head(
         rate_limit_reasons.append(
             {
                 "reviewer": "kilo",
-                "reason": "Kilo review check failed with a rate-limit response; retry or take the rate-limit breakpoint",
+                "reason": rate_limit_reason("Kilo"),
             }
         )
         return completed, findings, pending, rate_limit_reasons, consumed_check_ids
@@ -654,6 +667,21 @@ def kilo_summary_evidence_for_head(
             }
         )
     return completed, findings, pending, rate_limit_reasons, consumed_check_ids
+
+
+def rate_limit_reason(reviewer_label: str) -> str:
+    """The one named rate-limit diagnostic shared by every walk.
+
+    The Kilo summary walk and the main check walk report a
+    rate-limited check with this single wording (the label is the
+    reviewer as the calling walk names it), so the rate-limit
+    breakpoint (#48) and the lead's retry loop see one consistent
+    reason everywhere.
+    """
+    return (
+        f"{reviewer_label} review check failed with a rate-limit response; "
+        "retry or take the rate-limit breakpoint"
+    )
 
 
 def stale_review_reason(verdicts: set[str]) -> str:
@@ -949,74 +977,6 @@ def augment_comments_with_metadata(
     return current
 
 
-def fetch_check_output(repo: str, head_sha: str, name: str) -> dict[str, Any] | None:
-    """Return the live `output` (and timing) of the head SHA's named check.
-
-    `gh pr view --json statusCheckRollup` returns a CheckRun shape that
-    omits both `output` and the run id; the rate-limit phrase lives in
-    `output.summary`. To detect a rate-limited Kilo check on live data
-    (#117), we call the check-runs REST endpoint for the head SHA and
-    return the most recent matching run's output. Failures (network,
-    permissions, malformed response) raise `InspectionError` so the
-    caller can record a named reason rather than silently falling
-    back to a check that may or may not be rate-limited.
-
-    `name` is matched against the check's `name` field; the returned
-    object is the same shape the rollup would carry if `output` were
-    on it, so callers can splat it back into a rollup entry.
-
-    The query is sent as a GET (the `check_name` parameter is encoded
-    into the URL) because `gh api` defaults to POST when request
-    parameters are supplied; a POST would silently create or update a
-    check run on the head SHA. The listing also passes
-    `filter=all` so an older run on the same head is visible (the
-    default `filter=latest` hides it).
-    """
-    if not repo or not head_sha or not name:
-        return None
-    owner, separator, name_repo = repo.partition("/")
-    if not separator or not owner or not name_repo:
-        return None
-    # GET with query-encoded parameters. `gh api` sends a POST
-    # whenever `-f`/`-F` is used, so `check_name` is placed in the
-    # URL's query string. `filter=all` lists every run on the head
-    # SHA, not just the latest (the default).
-    from urllib.parse import quote
-    query = quote(name, safe="")
-    url = (
-        f"repos/{owner}/{name_repo}/commits/{head_sha}/check-runs"
-        f"?check_name={query}&filter=all"
-    )
-    response = run_json(
-        [
-            "rtk",
-            "gh",
-            "api",
-            "--method",
-            "GET",
-            url,
-            "--jq",
-            ".check_runs | sort_by(.started_at) | last // null",
-        ]
-    )
-    if not isinstance(response, dict):
-        return None
-    output = response.get("output") or {}
-    if not isinstance(output, dict):
-        return None
-    return {
-        "id": response.get("id"),
-        "name": response.get("name"),
-        "status": response.get("status"),
-        "conclusion": response.get("conclusion"),
-        "startedAt": response.get("started_at"),
-        "completedAt": response.get("completed_at"),
-        "detailsUrl": response.get("details_url"),
-        "app": response.get("app"),
-        "output": output,
-    }
-
-
 def fetch_check_outputs_for_head(
     repo: str, head_sha: str, names: set[str]
 ) -> dict[str, dict[str, Any]]:
@@ -1066,16 +1026,14 @@ def fetch_check_outputs_for_head(
         if name not in wanted:
             continue
         existing = by_name.get(name)
-        started = str(run.get("started_at") or "")
-        existing_started = str((existing or {}).get("started_at") or "")
-        run_id = run.get("id")
-        existing_id = (existing or {}).get("id")
-        # Sort by started_at DESC, then id DESC as tie-break, so the
-        # LATEST run wins deterministically regardless of REST order.
+        # Order by started_at DESC, then id DESC as tie-break — the
+        # shared `check_run_order_key`, so the LATEST run wins
+        # deterministically regardless of REST order and matches the
+        # Kilo walk's choice.
         if (
             existing is None
-            or started > existing_started
-            or (started == existing_started and (run_id or 0) > (existing_id or 0))
+            or check_run_order_key(run.get("started_at"), run.get("id"))
+            > check_run_order_key((existing or {}).get("started_at"), (existing or {}).get("id"))
         ):
             by_name[name] = run
     result: dict[str, dict[str, Any]] = {}
@@ -1493,10 +1451,7 @@ def inspect(
     for reviewer in rate_limited_reviewers:
         if reviewer in rate_limit_by_reviewer:
             continue
-        rate_limit_by_reviewer[reviewer] = (
-            f"{reviewer} review check failed with a rate-limit response; "
-            "retry or take the rate-limit breakpoint"
-        )
+        rate_limit_by_reviewer[reviewer] = rate_limit_reason(reviewer)
     for reviewer in sorted(pending_reviewers):
         reasons = []
         if reviewer in rate_limit_by_reviewer:
