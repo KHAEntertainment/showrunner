@@ -1655,6 +1655,21 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         # submitted-shaped.
         self.assertNotIn("brand-new-reviewer", result["observed_reviewers"])
 
+    def test_kilo_summary_with_findings_listed_completed_and_pending(self):
+        # D1 (issue #124): a Kilo summary bound to the head's
+        # successful run is review completion, so `kilo` is listed
+        # in `completed_on_head`, while its untriaged findings keep
+        # it in `pending_reviewers` at the same time. The gate
+        # verdict is unchanged (`pending`): `completed_on_head` is
+        # not a disposition signal — `pending_reviewers` governs.
+        result = inspect_fixture("kilo-summary-with-issues.json")
+        self.assertEqual(result["state"], "pending", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        self.assertIn("kilo", result["pending_reviewers"])
+        self.assertEqual(len(result["untriaged_findings"]), 1)
+        self.assertEqual(result["untriaged_findings"][0]["reviewer"], "kilo")
+        self.assertEqual(result["errors"], [])
+
 
 class VerdictRegressionTests(unittest.TestCase):
     def make(self, states):
