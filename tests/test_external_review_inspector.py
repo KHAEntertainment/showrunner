@@ -1119,40 +1119,6 @@ class ExternalReviewInspectorTests(unittest.TestCase):
                 self.assertEqual(result["completed_on_head"], ["kilo"])
                 self.assertEqual(result["errors"], [])
 
-    def test_issue_82_n1_transport_contract_uses_get_method(self):
-        # N1: the live REST call to fetch a check's `output` must
-        # use `--method GET` with the `check_name` in the URL's
-        # query string. `gh api` defaults to POST whenever
-        # request parameters are supplied (via `-f`/`-F`), and a
-        # POST to the check-runs endpoint would silently create
-        # or mutate a check run. The test asserts the exact argv.
-        # The listing also passes `filter=all` so older runs on
-        # the same head are visible (the default `filter=latest`
-        # hides them — QA-N1).
-        captured: list[list[str]] = []
-
-        def fake_run_json(command, **kwargs):
-            captured.append(list(command))
-            return {"id": 1, "name": "Kilo Code Review", "output": {"summary": "ok"}}
-
-        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
-            MODULE.fetch_check_output("owner/repo", "deadbeef", "Kilo Code Review")
-        self.assertEqual(len(captured), 1)
-        argv = captured[0]
-        # Must contain `--method` and `GET` as separate argv entries.
-        self.assertIn("--method", argv, argv)
-        method_idx = argv.index("--method")
-        self.assertEqual(argv[method_idx + 1], "GET", argv)
-        # Must NOT use `-f` or `-F` for query parameters (that
-        # would force POST).
-        self.assertNotIn("-f", argv, argv)
-        self.assertNotIn("-F", argv, argv)
-        # The URL must carry the check_name and filter=all in its
-        # query string, URL-encoded.
-        url = next((a for a in argv if "check-runs" in a), "")
-        self.assertIn("check_name=Kilo+Code+Review", url.replace("%20", "+"), argv)
-        self.assertIn("filter=all", url, argv)
-
     def test_issue_82_n1_transport_contract_batch_uses_get_method(self):
         # N1 for the batch (A1) fetch: the same GET-method rule
         # applies to `fetch_check_outputs_for_head`. The endpoint
@@ -1177,6 +1143,163 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         self.assertNotIn("-F", argv, argv)
         url = next((a for a in argv if "check-runs" in a), "")
         self.assertIn("filter=all", url, argv)
+
+    def test_single_check_runs_get_serves_kilo_and_main(self):
+        # D2 (issue #124): the deduplicated fetch path is ONE
+        # check-runs GET per PR (`filter=all`, no `check_name`
+        # parameter), and that single acquisition serves both the
+        # Kilo walk and the main walk — no per-name request is made
+        # for either.
+        current = {
+            "number": 114,
+            "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+            "reviewRequests": [],
+            "reviews": [],
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {
+                    "name": "Kilo Code Review",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-10-13T23:20:05Z",
+                    "completedAt": "2026-10-13T23:25:48Z",
+                    "app": None,
+                },
+                {
+                    "name": "Greptile Code Review",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-10-13T23:21:05Z",
+                    "completedAt": "2026-10-13T23:24:48Z",
+                    "app": {"slug": "greptile-apps"},
+                },
+            ],
+            "comments": [],
+        }
+        captured: list[list[str]] = []
+
+        def fake_run_json(command, **kwargs):
+            captured.append(list(command))
+            return {
+                "check_runs": [
+                    {
+                        "id": 301,
+                        "name": "Kilo Code Review",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-10-13T23:20:05Z",
+                        "completed_at": "2026-10-13T23:25:48Z",
+                        "output": {"summary": "Kilo ok"},
+                    },
+                    {
+                        "id": 302,
+                        "name": "Greptile Code Review",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": "2026-10-13T23:21:05Z",
+                        "completed_at": "2026-10-13T23:24:48Z",
+                        "output": {"summary": "Greptile ok"},
+                    },
+                ]
+            }
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            MODULE.augment_checks_with_output(current, "owner/repo")
+        # ONE acquisition serves both walks' checks.
+        self.assertEqual(len(captured), 1, captured)
+        argv = captured[0]
+        self.assertIn("--method", argv, argv)
+        self.assertEqual(argv[argv.index("--method") + 1], "GET", argv)
+        url = next((a for a in argv if "check-runs" in a), "")
+        self.assertIn("filter=all", url, argv)
+        self.assertNotIn("check_name=", url, argv)
+        by_name = {check["name"]: check for check in current["statusCheckRollup"]}
+        self.assertEqual(by_name["Kilo Code Review"]["output"]["summary"], "Kilo ok")
+        self.assertEqual(
+            by_name["Greptile Code Review"]["output"]["summary"], "Greptile ok"
+        )
+
+    def test_shared_latest_run_tie_break_prefers_higher_numeric_id(self):
+        # D2 (issue #124): the latest-run selection is shared —
+        # started_at DESC, then id DESC as a NUMERIC tie-break —
+        # between `fetch_check_outputs_for_head` and the Kilo walk,
+        # so both paths choose the same run on a tie. Numeric string
+        # ids compare numerically ("10" beats "2"), not
+        # lexicographically.
+        tie_started = "2026-10-13T23:20:05Z"
+
+        def fake_run_json(command, **kwargs):
+            return {
+                "check_runs": [
+                    {
+                        "id": "2",
+                        "name": "Kilo Code Review",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": tie_started,
+                        "output": {"summary": "lower-id"},
+                    },
+                    {
+                        "id": "10",
+                        "name": "Kilo Code Review",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "started_at": tie_started,
+                        "output": {"summary": "higher-id"},
+                    },
+                ]
+            }
+
+        with mock.patch.object(MODULE, "run_json", side_effect=fake_run_json):
+            fetched = MODULE.fetch_check_outputs_for_head(
+                "owner/repo", "deadbeef", {"Kilo Code Review"}
+            )
+        self.assertEqual(fetched["kilo code review"]["id"], "10")
+        self.assertEqual(fetched["kilo code review"]["output"]["summary"], "higher-id")
+        # Kilo walk: same tie on the same key — the higher numeric
+        # id (the SUCCESS run) decides.
+        current = {
+            "number": 114,
+            "headRefOid": "91e1cb4a71d1a1ee90b6b27e36d27c0dac1b96f8",
+            "reviewRequests": [],
+            "reviews": [],
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {
+                    "id": "2",
+                    "name": "Kilo Code Review",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                    "startedAt": tie_started,
+                    "completedAt": "2026-10-13T23:21:05Z",
+                    "app": None,
+                },
+                {
+                    "id": "10",
+                    "name": "Kilo Code Review",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": tie_started,
+                    "completedAt": "2026-10-13T23:25:48Z",
+                    "app": None,
+                },
+            ],
+            "comments": [
+                {
+                    "id": "IC_kilo",
+                    "author": {"login": "kilo-code-bot"},
+                    "createdAt": "2026-10-13T23:26:00Z",
+                    "body": (
+                        "<!-- kilo-review -->\n"
+                        "**Status:** No Issues Found | **Recommendation:** Merge\n"
+                    ),
+                }
+            ],
+        }
+        result = MODULE.inspect(current, [], [], policy(), {})
+        self.assertEqual(result["state"], "clear", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        self.assertEqual(result["errors"], [])
 
     def test_issue_82_m3_unrelated_check_mentioning_rate_limit_does_not_route(self):
         # s7: a non-trusted check (here: github-actions unit
@@ -1531,6 +1654,21 @@ class ExternalReviewInspectorTests(unittest.TestCase):
         # reviewer under any name, even if the comment is
         # submitted-shaped.
         self.assertNotIn("brand-new-reviewer", result["observed_reviewers"])
+
+    def test_kilo_summary_with_findings_listed_completed_and_pending(self):
+        # D1 (issue #124): a Kilo summary bound to the head's
+        # successful run is review completion, so `kilo` is listed
+        # in `completed_on_head`, while its untriaged findings keep
+        # it in `pending_reviewers` at the same time. The gate
+        # verdict is unchanged (`pending`): `completed_on_head` is
+        # not a disposition signal — `pending_reviewers` governs.
+        result = inspect_fixture("kilo-summary-with-issues.json")
+        self.assertEqual(result["state"], "pending", result)
+        self.assertEqual(result["completed_on_head"], ["kilo"])
+        self.assertIn("kilo", result["pending_reviewers"])
+        self.assertEqual(len(result["untriaged_findings"]), 1)
+        self.assertEqual(result["untriaged_findings"][0]["reviewer"], "kilo")
+        self.assertEqual(result["errors"], [])
 
 
 class VerdictRegressionTests(unittest.TestCase):
