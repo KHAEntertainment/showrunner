@@ -3,11 +3,11 @@
 </h1>
 
 <p align="center">
-  <a href="docs/badges.md"><img alt="Built with Showrunner" src="https://svg.khaentertainment.com/badge.svg?style=for-the-badge&anim=both&project=KHAEntertainment/showrunner"></a>
-  <a href="https://showrunner.khaentertainment.com"><img alt="Projects using Showrunner" src="https://svg.khaentertainment.com/count.svg?style=for-the-badge&anim=sweep"></a>
+  <a href="docs/badges.md"><img alt="Built with Showrunner" src="https://svg.khaentertainment.com/badge.svg?style=for-the-badge&amp;anim=both&amp;project=KHAEntertainment/showrunner"></a>
+  <a href="https://showrunner.khaentertainment.com"><img alt="Projects using Showrunner" src="https://svg.khaentertainment.com/count.svg?style=for-the-badge&amp;anim=sweep"></a>
 </p>
 
-The multi-orchestrator Showrunner coordinator runs only inside Traycer for now. The `/dev` command works everywhere. Cross-harness support is planned for a later release (see #238, #244).
+The multi-orchestrator Showrunner coordinator runs only inside Traycer for now. The `/dev` command works everywhere. Cross-harness support is planned for a later release (see [#238](https://github.com/KHAEntertainment/showrunner/issues/238), [#244](https://github.com/KHAEntertainment/showrunner/issues/244)).
 
 **Showrunner plans the work, hands it out to your coding agents, checks every pull request, and merges what passes.**
 
