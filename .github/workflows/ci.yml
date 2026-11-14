@@ -20,6 +20,8 @@ jobs:
           python-version: '3.x'
       - name: Validate the distributable Skill
         run: python3 scripts/validate_skill.py
+      - name: Check contract fixture digests
+        run: python3 scripts/check_contract_digests.py
       - name: Run Python tests
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 
