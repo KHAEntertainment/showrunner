@@ -7,6 +7,7 @@
     "profile_version": "completion-evidence-v1",
     "scope": "pr_assurance",
     "repository": "OWNER/synthetic-repo",
+    "number": 10,
     "issue": "OWNER/synthetic-repo#1",
     "parent_ref": "OWNER/synthetic-repo#1",
     "criteria_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -15,9 +16,9 @@
       "ref": "synthetic-policy",
       "rev": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     },
-    "base_oid": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "base_oid": "0000000000000000000000000000000000000001",
     "target_branch": "main",
-    "headRefOid": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+    "headRefOid": "0000000000000000000000000000000000000002",
     "checks": [
       {
         "id": "synthetic-check-001",
@@ -26,7 +27,7 @@
           "rev": "sha256:0000000000000000000000000000000000000000000000000000000000000003"
         },
         "executor": "ci",
-        "tested_subject": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+        "tested_subject": "0000000000000000000000000000000000000002",
         "environment": "ci",
         "outcome": "pass",
         "evidence_ref": "synthetic-run-001/job-1/attempt-1",
@@ -47,20 +48,20 @@
     "demonstrated": {
       "what": "synthetic behavior",
       "where": "synthetic environment",
-      "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "revision": "0000000000000000000000000000000000000002",
       "how": "synthetic demonstration"
     },
     "assurance": {
       "outcome": "pass",
       "reason": "all contributed criteria pass by assigned evaluator; no unresolved material finding",
-      "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002",
+      "revision": "0000000000000000000000000000000000000002",
       "observed_at": "2099-01-02T00:00:00Z",
       "current": true,
       "stale_reason": null
     },
     "post_merge": [
       {
-        "merge_sha": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+        "merge_sha": "0000000000000000000000000000000000000004",
         "merged_at": "2099-01-02T00:00:00Z",
         "tested_vs_merged": "same",
         "action": "applies_verbatim",
@@ -69,7 +70,7 @@
         "checks": [
           {
             "id": "synthetic-check-001",
-            "at": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+            "at": "0000000000000000000000000000000000000004",
             "outcome": "pass",
             "basis": "reused",
             "justification": "merged tree equals tested tree; definition rev 0003 unchanged; environment ci unchanged",
@@ -79,7 +80,7 @@
         "criteria": [
           {
             "id": "AC-1@00000000",
-            "at": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
+            "at": "0000000000000000000000000000000000000004",
             "outcome": "pass",
             "basis": "reused",
             "evaluator": {
@@ -95,8 +96,8 @@
     "integrated": {
       "current": {
         "branch": "main",
-        "merge_sha": "sha256:0000000000000000000000000000000000000000000000000000000000000004",
-        "revision": "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+        "merge_sha": "0000000000000000000000000000000000000004",
+        "revision": "0000000000000000000000000000000000000002"
       },
       "history": []
     },

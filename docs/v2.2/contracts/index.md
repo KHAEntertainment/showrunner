@@ -54,13 +54,13 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-2/accepted-continue-epoch-rotation.json` | `0616d15296c88dc7394a8c77985393c8a60763f9ecc889c78e84524042656021` |
 | `fixtures/sc-2/accepted-continue-latest-start-expiry.json` | `8c05043366ec54b347f4ba88de9691cef7e7ad7e490ed9da9e2eb5f6099b4936` |
 | `fixtures/sc-2/rejected-replayed-begin.json` | `4164a59604421cac8a7674b2f815b801bed3ed3d7d65372fe568de3729070576` |
-| `fixtures/sc-3/accepted-final-verified-completion.json` | `094d04471adc9531020b6a0f090e28338af26a08a536264a89d5b65a45e4575e` |
-| `fixtures/sc-3/unusable-readiness-never-verified.json` | `ace0bebfd6c84ae764a5cbf342ce12194fe7e84567c24a9c987836cc694ceb1c` |
-| `fixtures/sc-3/unusable-outcome-outside-vocabulary.json` | `506344ba61d60c96ba57becd204d98006f7d81f3d84eb5432cc78373b0f5551b` |
-| `fixtures/sc-3/unknown-missing-profile-version.json` | `255f9f94d1b0408eea931716c9d75f5fc8a499234bf9d6efa4d6c271a71fffc8` |
-| `fixtures/sc-3/rejected-cross-repo-goal-at-arming.json` | `e7e0246a64e75ff6f346d83139ca3bde79dfbcf5f8d573b233ed642b8dacede5` |
-| `fixtures/sc-3/evidence-accepted-pr-assurance.json` | `49d1513241b767ec9c64f3b5ea6bc9a1ebd9853e9eabff9c8263a65d3d047724` |
-| `fixtures/sc-3/evidence-rejected-pr-assurance-noncurrent-no-stale-reason.json` | `de26c50b2513d4d16222dd030451f5707c34dd54fc3c7de737369fa285e35705` |
+| `fixtures/sc-3/accepted-final-verified-completion.json` | `82e56e4dcdd8b3099612b680ebf77e5ae06ebff03d28273616f586876290251b` |
+| `fixtures/sc-3/unusable-readiness-never-verified.json` | `8131340a0ee11288bca961ae27be00ab762c60390b0447d1b185af2e14ea1b33` |
+| `fixtures/sc-3/unusable-outcome-outside-vocabulary.json` | `79cb84d6be6b0eeff282c411dedaabbfdcf3bbd9591e9978944373e19c0958bb` |
+| `fixtures/sc-3/unknown-missing-profile-version.json` | `b1d0fbf4dd0549785c5e8df5ef50e81aa5ad9395877d41cfd932b9135b210727` |
+| `fixtures/sc-3/rejected-cross-repo-goal-at-arming.json` | `c44bc2aa9af81e14adfff7c601c64b12a71e87952d1af45081968520a4243e73` |
+| `fixtures/sc-3/evidence-accepted-pr-assurance.json` | `6b96db89e66bd3dc5833a0cc7b1a18a45db399a4aa7aa5334f930f2c9758b3df` |
+| `fixtures/sc-3/evidence-rejected-pr-assurance-noncurrent-no-stale-reason.json` | `250bbb248484e96a1aa0b8ce799f705c7d718821405df644d60006408662da00` |
 | `fixtures/sc-3/evidence-accepted-parent-acceptance.json` | `11847ae86c6c9cae442f63f27b901962d003f514643f9da751bb33e94b210d72` |
 | `fixtures/sc-3/evidence-rejected-parent-acceptance-carries-result.json` | `45bb71c55b2e14bd42ccd839bc40cfd0f29987608494c755e45e4fe91d0d8710` |
 | `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `c471847b4530bd29fb2d1a7a4f88882491820edd75eda1eab5a5e01b6641c8ec` |
@@ -91,4 +91,4 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-9/rejected-stale-note-overriding-pause.json` | `ac2972557e34dcee88e741199da8cd006bd25222ab8131d5e4006f2ab180f01a` |
 | `fixtures/sc-9/rejected-unknown-effect-replay.json` | `e4e7fc706a19e7a22f5c34b5bd49b36f199131f83d5bfc520a0488b3070d2668` |
 
-**Aggregate digest (53 fixtures, 2026-11-06, #218):** `dbfbbd0c57a70b17da446f531ab5404f88aa9c5ddd80ecc9db060a6478d9604f`. Method: SHA-256 of the `sha256sum`-style lines `<hex>  <repository path>` (two spaces, one line per `docs/v2.2/contracts/fixtures/**/*.json` file, each ending in a newline), sorted by repository path in byte order — the method that reproduces the contract registry's recorded aggregate `7e1fad8c…d57446` (37 fixtures at `a389dc8`).
+**Aggregate digest (53 fixtures, 2026-11-14, #233):** `f64e40fa06ae71061850cde681888274bc6b3502cfa72bb16bfd4fe217b34c6d`. Method: SHA-256 of the `sha256sum`-style lines `<hex>  <repository path>` (two spaces, one line per `docs/v2.2/contracts/fixtures/**/*.json` file, each ending in a newline), sorted by repository path in byte order — the method that reproduces the contract registry's recorded aggregate `7e1fad8c…d57446` (37 fixtures at `a389dc8`).
