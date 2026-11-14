@@ -60,7 +60,7 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-3/unknown-missing-profile-version.json` | `b1d0fbf4dd0549785c5e8df5ef50e81aa5ad9395877d41cfd932b9135b210727` |
 | `fixtures/sc-3/rejected-cross-repo-goal-at-arming.json` | `c44bc2aa9af81e14adfff7c601c64b12a71e87952d1af45081968520a4243e73` |
 | `fixtures/sc-3/evidence-accepted-pr-assurance.json` | `6b96db89e66bd3dc5833a0cc7b1a18a45db399a4aa7aa5334f930f2c9758b3df` |
-| `fixtures/sc-3/evidence-rejected-pr-assurance-noncurrent-no-stale-reason.json` | `2ea5d3de616b0af1abcdf4caf31b1e6b4953372b1bf06d3eddf7c6660dae2766` |
+| `fixtures/sc-3/evidence-rejected-pr-assurance-noncurrent-no-stale-reason.json` | `250bbb248484e96a1aa0b8ce799f705c7d718821405df644d60006408662da00` |
 | `fixtures/sc-3/evidence-accepted-parent-acceptance.json` | `11847ae86c6c9cae442f63f27b901962d003f514643f9da751bb33e94b210d72` |
 | `fixtures/sc-3/evidence-rejected-parent-acceptance-carries-result.json` | `45bb71c55b2e14bd42ccd839bc40cfd0f29987608494c755e45e4fe91d0d8710` |
 | `fixtures/sc-4/accepted-documented-skip-below-qa.json` | `c471847b4530bd29fb2d1a7a4f88882491820edd75eda1eab5a5e01b6641c8ec` |
@@ -91,4 +91,4 @@ Every fixture file's SHA-256, recomputed after the last edit. Each fixture carri
 | `fixtures/sc-9/rejected-stale-note-overriding-pause.json` | `ac2972557e34dcee88e741199da8cd006bd25222ab8131d5e4006f2ab180f01a` |
 | `fixtures/sc-9/rejected-unknown-effect-replay.json` | `e4e7fc706a19e7a22f5c34b5bd49b36f199131f83d5bfc520a0488b3070d2668` |
 
-**Aggregate digest (53 fixtures, 2026-11-14, #233):** `9f4abae6d09693cc3928cd666fae59c3db8ba8a7d13f0ca9ecfc39b5d8a29a06`. Method: SHA-256 of the `sha256sum`-style lines `<hex>  <repository path>` (two spaces, one line per `docs/v2.2/contracts/fixtures/**/*.json` file, each ending in a newline), sorted by repository path in byte order — the method that reproduces the contract registry's recorded aggregate `7e1fad8c…d57446` (37 fixtures at `a389dc8`).
+**Aggregate digest (53 fixtures, 2026-11-14, #233):** `f64e40fa06ae71061850cde681888274bc6b3502cfa72bb16bfd4fe217b34c6d`. Method: SHA-256 of the `sha256sum`-style lines `<hex>  <repository path>` (two spaces, one line per `docs/v2.2/contracts/fixtures/**/*.json` file, each ending in a newline), sorted by repository path in byte order — the method that reproduces the contract registry's recorded aggregate `7e1fad8c…d57446` (37 fixtures at `a389dc8`).

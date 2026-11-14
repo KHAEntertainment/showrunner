@@ -7,6 +7,7 @@
     "profile_version": "completion-evidence-v1",
     "scope": "pr_assurance",
     "repository": "OWNER/synthetic-repo",
+    "number": 11,
     "issue": "OWNER/synthetic-repo#1",
     "criteria_ref": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "base_oid": "0000000000000000000000000000000000000001",

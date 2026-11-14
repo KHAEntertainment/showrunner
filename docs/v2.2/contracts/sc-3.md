@@ -32,6 +32,7 @@ Normative fixture source: the [v2.1.3 cross-project reconciliation report §2](~
 | `profile_version` | string | 1 | required | `completion-evidence-v1` |
 | `scope` | enum (`pr_assurance`) | 1 | required | record type |
 | `repository` | `OWNER/REPO` | 1 | required | the repository |
+| `number` | positive integer | 1 | required | the PR number; with `repository` it is the PR identity (DEV_STATE_TEMPLATE l.122). A record without a resolvable `number` cannot be evaluated: GV reports it inconclusive (`pr_identity_missing`) |
 | `issue` | `OWNER/REPO#N` | 1 | required | the Issue, qualified |
 | `parent_ref` | qualified parent / `linear:KEY-N` | 0..1 | conditional (null for standalone single-PR) | parent objective |
 | `criteria_ref` | `sha256:<digest>` | 1 | required | approved acceptance content only, never status prose |
