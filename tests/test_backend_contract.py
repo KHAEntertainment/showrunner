@@ -2790,17 +2790,17 @@ class MultiHarnessContractTests(unittest.TestCase):
             contract,
         )
 
-    def test_adr_009_lint_reclassification_in_contract(self) -> None:
-        """Issue #38: the lint-vs-control reclassification must be in the
-        file the delegated lanes read, and must not name the rejected ADR-008
-        credential layer as a control."""
+    def test_adr_009_read_only_guard_in_contract(self) -> None:
+        """Issue #38 / #215: the read-only guard rule, as amended, must be
+        in the file the delegated lanes read, and must not name the rejected
+        ADR-008 credential layer as a control."""
         contract = self.read("skills/dev/backends/contract.md")
         self.assertIn(
-            "an authorship lint, not a security control",
+            "No static AST guard is adopted in this repository.",
             contract,
         )
         self.assertIn(
-            "behavioural tests and the supported pre-write verification are the real controls",
+            "asserts the absence of mutating tokens, mutating phrases and bare pushes",
             contract,
         )
 

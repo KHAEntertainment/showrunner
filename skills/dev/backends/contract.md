@@ -21,7 +21,7 @@ Each adapter must implement these operations and either return verified state fo
 
 ## Common invariants
 
-- **Read-only AST guard.** The read-only AST guard in `scripts/validate_skill.py` is an authorship lint, not a security control; behavioural tests and the supported pre-write verification are the real controls. Per ADR-009, this section is the placement so a future round does not re-litigate the guard.
+- **Read-only guard.** No static AST guard is adopted in this repository. The read-only property of the pre-write verification rests on the behavioural control: the shipped resolver only constructs read-only commands, and `tests/test_repository_identity.py` observes actual execution, asserts every command against a shape-bounded allowlist, and asserts the absence of mutating tokens, mutating phrases and bare pushes. Per ADR-009 and its 2026-11-05 amendment, this section is the placement so a future round does not re-litigate the question.
 - **Resolve `${CLAUDE_SKILL_DIR}` to its absolute path and substitute it into every prompt before dispatch, in every phase.** Dispatched agents do not inherit `CLAUDE_SKILL_DIR`, so an unsubstituted reference reaches the delegate as literal text it cannot expand. This applies to every lane that pastes prompt content — prototype, worker, QA, and reviewer alike — and to the assignment envelope itself. Record the resolved value as `skill_dir` in `.agent/dev-state.md` and re-resolve it at the start of each run rather than trusting a stored value; the path changes when the Skill is reinstalled, and it is version-stamped when the Skill is installed as a plugin.
 - The lead never modifies implementation or test code.
 - Every coding agent receives a pre-created, verified branch/worktree and explicit ownership.

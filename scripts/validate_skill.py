@@ -1317,11 +1317,11 @@ def main() -> int:
             "Shared-filesystem read of resolved Skill files",
             "Replies in seven-section shape on arrival surface",
             "remedy is a different route, never a trimmed prompt",
-            # Issue #38: ADR-009 lint reclassification recorded here so the
-            # delegated lanes read it at the point of use. Must not name the
-            # rejected credential layer from ADR-008 as a control.
-            "an authorship lint, not a security control",
-            "behavioural tests and the supported pre-write verification are the real controls",
+            # Issue #38 / #215: ADR-009 read-only guard rule (amended 2026-11-05)
+            # recorded here so the delegated lanes read it at the point of use.
+            # Must not name the rejected credential layer from ADR-008 as a control.
+            "No static AST guard is adopted in this repository.",
+            "asserts the absence of mutating tokens, mutating phrases and bare pushes",
             # Issue #89: a lead that is not Claude Code has no native path, and
             # its harness is read from Traycer rather than assumed.
             "A lead whose harness is not Claude Code selects `traycer` or records `incomplete` and stops.",
