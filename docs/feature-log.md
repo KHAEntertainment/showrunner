@@ -2,6 +2,20 @@
 
 ## Completed
 
+- v2.2 M2 (milestone #9): the P1 planning core and the P1 research lane merged in PRs
+  #208 (`f05b365`), #209 (`f839f15`), #210 (`f0b07da`), #211 (`89231c0`), #212 (`f6c2f38`),
+  #213 (`26a379c`), #214 (`bd696c9`), #216 (`1f9c65d`), #217 (`e9c21ee`), merged
+  2026-11-05 to 2026-11-06.
+- v2.2 M3 (milestone #10): the P2 bounded execution, authority and gates, and
+  continuity and recovery work merged in PRs #222 (`e370e22`), #223 (`757a4a4`), #224
+  (`b75ae0b`), #225 (`b211d6f`), #226 (`060f84b`), #227 (`da1f3f4`), #228 (`2b1170e`),
+  #229 (`c111021`), merged 2026-11-06.
+- v2.2 M4 (milestone #11): the P3 completion verifier, the SC-1 fixture rebuild and
+  contract header re-pins, and the goal ledger-fields correction merged in PRs #236
+  (`29e1f48`), #237 (`1f7fe8e`), #241 (`32cbb9b`), #247 (`9dcb385`), #249 (`e26385e`),
+  merged 2026-11-06 to 2026-11-07.
+- v2.2 M5 (milestone #12): the idle-timeout and inventory reconcile for delegated
+  agents merged in PR #251 (`c230fc3`), merged 2026-11-07.
 - v2.1.0 content: adapter report-back enforcement (PR #32), bounded review recovery
   (PR #35), and `.dev.json` repository/account verification (PR #36), merged 2026-09-11.
 - Committed verification gate and current-head external-review enforcement (PR #23/#28),
