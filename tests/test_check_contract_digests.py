@@ -6,8 +6,10 @@ or any subprocess; the checker is imported and called in-process. The one test
 that touches the real repository tree only reads it.
 """
 
+import contextlib
 import hashlib
 import importlib.util
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,6 +70,11 @@ class TreeBuilder:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
 
+    def write_raw(self, text):
+        index = self.root / CONTRACTS / "index.md"
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text(text, encoding="utf-8")
+
 
 def build_tree(root, tamper_row=None, tamper_aggregate=False, drop_file=None, extra_file=None):
     """A tree whose table matches disk, optionally broken in one named way."""
@@ -90,6 +97,26 @@ def build_tree(root, tamper_row=None, tamper_aggregate=False, drop_file=None, ex
         row_digests=row_digests,
         agg="0" * 64 if tamper_aggregate else None)
     return builder
+
+
+def rows_block(paths_and_bytes, digests=None):
+    lines = []
+    for repo_path in sorted(paths_and_bytes):
+        table_path = repo_path.replace(CONTRACTS.as_posix() + "/", "")
+        recorded = (digests or {}).get(repo_path, digest(paths_and_bytes[repo_path]))
+        lines.append(f"| `{table_path}` | `{recorded}` |")
+    return "\n".join(lines)
+
+
+def aggregate_line(value):
+    return f"**Aggregate digest (3 fixtures, 2099-01-01, #0):** `{value}`. Method: as stated."
+
+
+def run_main(root):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = CCD.main(["check_contract_digests", str(root)])
+    return code, buf.getvalue()
 
 
 class TestCheckContractDigests(unittest.TestCase):
@@ -136,6 +163,62 @@ class TestCheckContractDigests(unittest.TestCase):
             problems = CCD.check(root)
             self.assertTrue(any(unlisted in p and "not listed" in p for p in problems),
                             problems)
+
+    def test_later_heading_aggregate_does_not_mask_a_stale_canonical_aggregate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = build_tree(root)
+            stale = "0" * 64
+            correct = aggregate(builder.files)
+            builder.write_raw(
+                "# fixtures\n\n## Fixture digest index\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(builder.files) + "\n\n"
+                + aggregate_line(stale) + "\n\n"
+                "## Historical example\n\n" + aggregate_line(correct) + "\n")
+            code, out = run_main(root)
+            self.assertEqual(code, 1)
+            self.assertIn("aggregate digest mismatch", out)
+            self.assertIn(stale, out)
+            self.assertIn(correct, out)
+            self.assertNotIn("OK:", out)
+
+    def test_duplicate_aggregate_in_section_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = build_tree(root)
+            correct = aggregate(builder.files)
+            builder.write_raw(
+                "# fixtures\n\n## Fixture digest index\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(builder.files) + "\n\n"
+                + aggregate_line(correct) + "\n" + aggregate_line(correct) + "\n")
+            code, out = run_main(root)
+            self.assertEqual(code, 1)
+            self.assertIn(str(CONTRACTS / "index.md"), out)
+            self.assertIn("aggregate digest declared more than once", out)
+            self.assertNotIn("aggregate digest mismatch", out)
+            self.assertNotIn("OK:", out)
+
+    def test_row_under_later_heading_is_not_treated_as_listed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = build_tree(root)
+            three = (CONTRACTS / "fixtures/sc-3/three.json").as_posix()
+            listed = {p: d for p, d in builder.files.items() if p != three}
+            builder.write_raw(
+                "# fixtures\n\n## Fixture digest index\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(listed) + "\n\n"
+                + aggregate_line(aggregate(builder.files)) + "\n\n"
+                "## Historical example\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                f"| `fixtures/sc-3/three.json` | `{'0' * 64}` |\n")
+            code, out = run_main(root)
+            self.assertEqual(code, 1)
+            self.assertIn(three, out)
+            self.assertIn("not listed", out)
+            self.assertNotIn("digest mismatch", out)
 
     def test_real_repository_tree_passes(self):
         self.assertEqual(CCD.check(ROOT), [])

@@ -37,26 +37,30 @@ AGGREGATE_RE = re.compile(r"\*\*Aggregate digest \([^)]*\):\*\* `(?P<digest>[0-9
 
 
 def parse_table(text: str):
-    """Return ([(table path, recorded digest)], aggregate digest or None).
+    """Return ([(table path, recorded digest)], [declared aggregate digests]).
 
-    Rows are read under the "## Fixture digest index" heading; the aggregate
-    is its closing ``**Aggregate digest (...):**`` line."""
+    Parsing is scoped to the "## Fixture digest index" section: the section
+    ends at the next Markdown heading line (any line starting with ``#``).
+    Rows and aggregate lines outside the section are ignored. Every aggregate
+    declaration inside the section is returned; more than one is reported by
+    the caller rather than resolved here."""
     rows = []
-    aggregate = None
+    aggregates = []
     in_section = False
     for line in text.splitlines():
-        if line.startswith(TABLE_HEADING):
-            in_section = True
-            continue
         if not in_section:
+            if line.startswith(TABLE_HEADING):
+                in_section = True
             continue
+        if line.startswith("#"):
+            break
         row = ROW_RE.match(line)
         if row:
             rows.append((row.group("path"), row.group("digest")))
         agg = AGGREGATE_RE.search(line)
         if agg:
-            aggregate = agg.group("digest")
-    return rows, aggregate
+            aggregates.append(agg.group("digest"))
+    return rows, aggregates
 
 
 def fixture_files(root: Path):
@@ -84,10 +88,10 @@ def check(root: Path):
     index = root / INDEX_PATH
     if not index.is_file():
         return [f"{INDEX_PATH.as_posix()}: digest table file missing"]
-    rows, aggregate = parse_table(index.read_text(encoding="utf-8"))
+    rows, aggregates = parse_table(index.read_text(encoding="utf-8"))
     if not rows:
         return [f"{INDEX_PATH.as_posix()}: no rows under '{TABLE_HEADING}'"]
-    if aggregate is None:
+    if not aggregates:
         return [f"{INDEX_PATH.as_posix()}: no aggregate digest row under '{TABLE_HEADING}'"]
 
     problems = []
@@ -108,6 +112,10 @@ def check(root: Path):
         if repo_path not in listed:
             problems.append(f"{repo_path}: fixture on disk but not listed in the digest table")
 
+    if len(aggregates) > 1:
+        problems.append(f"{INDEX_PATH.as_posix()}: aggregate digest declared more than once")
+        return problems
+    aggregate = aggregates[0]
     computed_aggregate = aggregate_digest(root, fixture_files(root))
     if computed_aggregate != aggregate:
         problems.append(
@@ -123,8 +131,8 @@ def main(argv) -> int:
         for line in problems:
             print(line)
         return 1
-    rows, aggregate = parse_table((root / INDEX_PATH).read_text(encoding="utf-8"))
-    print(f"OK: {len(rows)} fixtures match {INDEX_PATH.as_posix()} (aggregate {aggregate})")
+    rows, aggregates = parse_table((root / INDEX_PATH).read_text(encoding="utf-8"))
+    print(f"OK: {len(rows)} fixtures match {INDEX_PATH.as_posix()} (aggregate {aggregates[0]})")
     return 0
 
 
