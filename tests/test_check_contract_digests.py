@@ -220,6 +220,63 @@ class TestCheckContractDigests(unittest.TestCase):
             self.assertIn("not listed", out)
             self.assertNotIn("digest mismatch", out)
 
+    def test_lookalike_heading_section_does_not_mask_a_stale_canonical_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = build_tree(root)
+            stale = "0" * 64
+            correct = aggregate(builder.files)
+            builder.write_raw(
+                "# fixtures\n\n## Fixture digest index (historical)\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(builder.files) + "\n\n"
+                + aggregate_line(correct) + "\n\n"
+                "## Fixture digest index\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(builder.files) + "\n\n"
+                + aggregate_line(stale) + "\n")
+            code, out = run_main(root)
+            self.assertEqual(code, 1)
+            self.assertIn("aggregate digest mismatch", out)
+            self.assertIn(stale, out)
+            self.assertIn(correct, out)
+            self.assertNotIn("OK:", out)
+
+    def test_duplicate_canonical_heading_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = build_tree(root)
+            correct = aggregate(builder.files)
+            builder.write_raw(
+                "# fixtures\n\n## Fixture digest index\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(builder.files) + "\n\n"
+                + aggregate_line(correct) + "\n\n"
+                "## Fixture digest index\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(builder.files) + "\n\n"
+                + aggregate_line(correct) + "\n")
+            code, out = run_main(root)
+            self.assertEqual(code, 1)
+            self.assertIn(str(CONTRACTS / "index.md"), out)
+            self.assertIn("digest table heading declared more than once", out)
+            self.assertNotIn("aggregate digest mismatch", out)
+            self.assertNotIn("OK:", out)
+
+    def test_lookalike_heading_only_reports_no_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            builder = build_tree(root)
+            builder.write_raw(
+                "# fixtures\n\n## Fixture digest index (historical)\n\n"
+                "| Fixture | SHA-256 |\n| --- | --- |\n"
+                + rows_block(builder.files) + "\n\n"
+                + aggregate_line(aggregate(builder.files)) + "\n")
+            code, out = run_main(root)
+            self.assertEqual(code, 1)
+            self.assertIn("no rows under '## Fixture digest index'", out)
+            self.assertNotIn("OK:", out)
+
     def test_real_repository_tree_passes(self):
         self.assertEqual(CCD.check(ROOT), [])
 

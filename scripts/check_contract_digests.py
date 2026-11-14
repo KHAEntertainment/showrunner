@@ -37,30 +37,36 @@ AGGREGATE_RE = re.compile(r"\*\*Aggregate digest \([^)]*\):\*\* `(?P<digest>[0-9
 
 
 def parse_table(text: str):
-    """Return ([(table path, recorded digest)], [declared aggregate digests]).
+    """Return ([(table path, recorded digest)], [declared aggregate digests], heading count).
 
-    Parsing is scoped to the "## Fixture digest index" section: the section
-    ends at the next Markdown heading line (any line starting with ``#``).
-    Rows and aggregate lines outside the section are ignored. Every aggregate
-    declaration inside the section is returned; more than one is reported by
-    the caller rather than resolved here."""
+    Parsing is scoped to the "## Fixture digest index" section: only a line
+    exactly equal to that heading (after stripping trailing whitespace) starts
+    it — lookalikes such as "## Fixture digest index (historical)" are
+    ordinary headings — and the section ends at the next Markdown heading line
+    (any line starting with ``#``). Rows and aggregate lines outside the
+    section are ignored. The section is parsed only when the canonical heading
+    occurs exactly once; more than one is reported by the caller rather than
+    resolved here."""
+    lines = text.splitlines()
+    heading_count = sum(1 for line in lines if line.rstrip() == TABLE_HEADING)
     rows = []
     aggregates = []
-    in_section = False
-    for line in text.splitlines():
-        if not in_section:
-            if line.startswith(TABLE_HEADING):
-                in_section = True
-            continue
-        if line.startswith("#"):
-            break
-        row = ROW_RE.match(line)
-        if row:
-            rows.append((row.group("path"), row.group("digest")))
-        agg = AGGREGATE_RE.search(line)
-        if agg:
-            aggregates.append(agg.group("digest"))
-    return rows, aggregates
+    if heading_count == 1:
+        in_section = False
+        for line in lines:
+            if not in_section:
+                if line.rstrip() == TABLE_HEADING:
+                    in_section = True
+                continue
+            if line.startswith("#"):
+                break
+            row = ROW_RE.match(line)
+            if row:
+                rows.append((row.group("path"), row.group("digest")))
+            agg = AGGREGATE_RE.search(line)
+            if agg:
+                aggregates.append(agg.group("digest"))
+    return rows, aggregates, heading_count
 
 
 def fixture_files(root: Path):
@@ -88,7 +94,9 @@ def check(root: Path):
     index = root / INDEX_PATH
     if not index.is_file():
         return [f"{INDEX_PATH.as_posix()}: digest table file missing"]
-    rows, aggregates = parse_table(index.read_text(encoding="utf-8"))
+    rows, aggregates, heading_count = parse_table(index.read_text(encoding="utf-8"))
+    if heading_count > 1:
+        return [f"{INDEX_PATH.as_posix()}: digest table heading declared more than once"]
     if not rows:
         return [f"{INDEX_PATH.as_posix()}: no rows under '{TABLE_HEADING}'"]
     if not aggregates:
@@ -131,7 +139,7 @@ def main(argv) -> int:
         for line in problems:
             print(line)
         return 1
-    rows, aggregates = parse_table((root / INDEX_PATH).read_text(encoding="utf-8"))
+    rows, aggregates, _ = parse_table((root / INDEX_PATH).read_text(encoding="utf-8"))
     print(f"OK: {len(rows)} fixtures match {INDEX_PATH.as_posix()} (aggregate {aggregates[0]})")
     return 0
 
