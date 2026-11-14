@@ -276,6 +276,43 @@ class HomePathScopeTests(unittest.TestCase):
             with self.subTest(content=content):
                 self.assert_passes(content)
 
+    # Issue #116: tails outside the old `_RIGHT` allow-list (`* | # @ … —`)
+    # used to fail the match outright and hide the leak. One named test per
+    # escape so the audit can map criterion -> test.
+    def test_home_path_right_boundary_bold(self) -> None:
+        """Markdown bold tail must not end the match unreported."""
+        self.assert_leak_caught("**/Users/bob**\n")
+
+    def test_home_path_right_boundary_table_cell(self) -> None:
+        """Compact table-cell tail must not end the match unreported."""
+        self.assert_leak_caught("|/Users/bob|\n")
+
+    def test_home_path_right_boundary_glob(self) -> None:
+        """Glob star tail must not end the match unreported."""
+        self.assert_leak_caught("/Users/bob*\n")
+
+    def test_home_path_right_boundary_fragment(self) -> None:
+        """URL fragment tail must not end the match unreported."""
+        self.assert_leak_caught("/Users/bob#frag\n")
+
+    def test_home_path_right_boundary_at_host(self) -> None:
+        """`@host` tail must not end the match unreported."""
+        self.assert_leak_caught("/Users/bob@host\n")
+
+    def test_home_path_right_boundary_ellipsis(self) -> None:
+        """Unicode ellipsis tail must not end the match unreported."""
+        self.assert_leak_caught("/Users/bob…\n")
+
+    def test_home_path_right_boundary_em_dash(self) -> None:
+        """Unicode em dash tail must not end the match unreported."""
+        self.assert_leak_caught("/Users/bob—\n")
+
+    def test_home_path_right_boundary_variants(self) -> None:
+        """The same right boundary applies to the /home/ and C:\\Users\\ patterns."""
+        for content in ("/home/bob*\n", "C:\\Users\\bob#frag\n"):
+            with self.subTest(content=content):
+                self.assert_leak_caught(content)
+
     def test_tree_without_docs_dir_passes(self) -> None:
         """docs/ is export-ignored, so an archive tree lacks it."""
         self.assertFalse((self.root / "docs").exists())

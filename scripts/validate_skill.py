@@ -169,15 +169,20 @@ ROUTING_SECTION_BODY = (
 # (`/Users` follows `t`) and unrooted prose like `Users/alice/` or `home/ docs/`
 # are not. The Windows pattern has no left boundary: a `C:\Users\` literal is
 # never a URL segment, so `xC:\Users\bob\` is still caught as it always was.
-# Right: the name must start with a word character (so `the /Users/ folder`
-# is not a path) and be followed by a separator, whitespace, a quote, backtick,
-# closing bracket, punctuation, or end of text, so a bare `/Users/name` at end
-# of line, in backticks, or before a full stop is caught too. Template
-# placeholders stay excluded: `<name>` cannot match the name class,
+# Right (#116): a negative lookahead -- the name must not be followed by a
+# word character -- so the match ends at any character that cannot continue a
+# name. Every tail (`*`, `|`, `#`, `@`, and Unicode punctuation like `…` and
+# `—`) ends the span and the leak is reported, where the old allow-list
+# lookahead rejected exactly those tails, failed the match outright and hid
+# the leak. The greedy name class already consumes every word character, so
+# the lookahead always holds at the full name; a bare `/Users/name` at end of
+# line, in backticks, or before a full stop is still caught, `the /Users/
+# folder` stays excluded because the name class cannot start on a space, and
+# template placeholders stay excluded: `<name>` cannot match the name class,
 # `C:\path\to\...` never reaches the `C:\Users\` pattern, and `$HOME` is not
 # a literal path.
 _NAME = r"\w[\w.' -]*"
-_RIGHT = r"""(?=[/\\\s"'`)\]}>.,;:!?]|\Z)"""
+_RIGHT = r"(?!\w)"
 HOME_PATH_PATTERNS = (
     (re.compile(rf"(?<![\w.])/Users/{_NAME}{_RIGHT}"), "macOS home directory"),
     (re.compile(rf"(?<![\w.])/home/{_NAME}{_RIGHT}"), "Linux home directory"),
