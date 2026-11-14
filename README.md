@@ -7,6 +7,8 @@
   <a href="https://showrunner.khaentertainment.com"><img alt="Projects using Showrunner" src="https://svg.khaentertainment.com/count.svg?style=for-the-badge&amp;anim=sweep"></a>
 </p>
 
+The multi-orchestrator Showrunner coordinator runs only inside Traycer for now. The `/dev` command works everywhere. Cross-harness support is planned for a later release (see [#238](https://github.com/KHAEntertainment/showrunner/issues/238), [#244](https://github.com/KHAEntertainment/showrunner/issues/244)).
+
 **Showrunner plans the work, hands it out to your coding agents, checks every pull request, and merges what passes.**
 
 You describe what you want built. Showrunner splits it into GitHub Issues, gives each Issue to a coding agent in its own worktree, reviews every pull request (with QA when the change is big or risky enough), waits for your external reviewers, merges in dependency order, and writes down what it learned. The lead never edits implementation or test code itself. Its job is to plan, delegate, check the work, and keep you posted.
