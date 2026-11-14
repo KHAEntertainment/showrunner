@@ -51,7 +51,7 @@
   "expected_reason": "Unusable: `purpose: readiness` returns `verified`, which is outside the readiness vocabulary (`evidence_ready`/`not_ready`/`inconclusive`); readiness never returns `verified` and such a record is unusable (D4.5 l.433, l.445).",
   "retained_source": {
     "path": "~/.traycer/epics/6266293c-edb0-48f6-b8f6-ddd561de1f05/artifacts/v2-2-development-plan/index.md",
-    "revision_or_digest": "sha256:fee134d938f2678f057653b161bd9606ee9e18161e8fc34dc362387d23b94bcd",
+    "revision_or_digest": "sha256:7177580c8429d6e5f8f07e6138de72506ac7a419e9697f5102f842d43a93315b",
     "sdp_line": 433
   },
   "status": "not-run",
