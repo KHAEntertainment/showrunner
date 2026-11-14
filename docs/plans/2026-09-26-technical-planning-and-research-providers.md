@@ -183,7 +183,7 @@ You fill that gap with Claude Code's native plan mode or Traycer Tech Plan. Both
   - `~/.codex/skills/`
   - `~/.config/opencode/skills/` (OpenCode)
   - the plugin cache, including multiple versions
-  It compares digests and prints JSON: `present | not_available | drift | error`, with a `cause` required on `not_available`, `drift` and `error`. It is not the backend detector, which must not probe binaries (`validate_skill.py:725-729`).
+  It compares digests and prints JSON: `present | not_available | drift | error`, with a `cause` required on `not_available`, `drift` and `error`. It is not the backend detector, which must not probe binaries (`validate_skill.py:1897-1901`).
 - **Invocation** is harness-neutral (ADR-012). The lead passes the resolved path in the envelope. The research lane reads that `SKILL.md` and follows it, subject to **overrides that come after the third-party text and take precedence:**
   - read-only; leave zero tracked changes;
   - never address the user; return `needs_input`;
@@ -208,7 +208,7 @@ You fill that gap with Claude Code's native plan mode or Traycer Tech Plan. Both
      At most once per mechanism question.
   4. Merge the results into Research evidence. **When advise and neuroarxiv disagree, the disagreement becomes a decision-interview ticket**; it is never resolved automatically.
 - **Evidence and fallbacks:**
-  - `research_evidence: finding | needs_input | not_available | drift | error` (SC-5 `provider-result-v1` `result.type`), with `cause` required on `not_available`, `drift` and `error`, and cause `no_candidate_found | digest_mismatch | multiple_versions_none_match | symlinked_content | root_unreadable | candidate_unreadable | capability_missing | declined_by_user | aborted_by_preflight | budget_declined | query_failure`.
+  - `research_evidence: present | unavailable`, with cause `no_candidate_found | digest_mismatch | multiple_versions_none_match | symlinked_content | root_unreadable | candidate_unreadable | capability_missing | declined_by_user | aborted_by_preflight | budget_declined | query_failure`.
   - Fallback 1: the `builtin` lane actually runs.
   - **Last resort, when no lane has web access:** the question goes into "Not yet specified" as unresearched, and you must accept it. **Silence never passes.**
 - **Outputs.** The lane writes untracked output to `.agent/research/<date>-<slug>.md`. The plan cites it (pull principle). Cited notes are promoted to `docs/research/` in the plan's docs PR.
