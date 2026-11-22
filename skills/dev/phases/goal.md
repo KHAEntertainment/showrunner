@@ -37,6 +37,8 @@ The lead is the sole writer of `.agent/dev-state.md`. This phase writes the `goa
 - `context_resets` (the lifecycle clock count, see Lifecycle clocks) and the five recovery records `obligations`, `custody`, `event_ledger`, `recovery_receipts` and `unknown_effects` (see Recovery and resume). Each of the six is optional: absent or `null` is valid;
 - the top-level `completion_results`: the completion verifier results the lead records (step 4). It is optional until the first result is recorded.
 
+When the goal has more than one fixed Issue, the lead also writes the top-level `parent_acceptance` record (schema: `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`, "Parent acceptance is a separate record"); GV reports `missing_parent_acceptance` without it and cannot complete the goal.
+
 After every write, run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state.py" --validate .agent/dev-state.md`. A failure names the field (`goal_run.<field>: <reason>`); repair the ledger before any further step.
 
 ## 1. Arm
