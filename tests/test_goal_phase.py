@@ -156,7 +156,8 @@ def ledger_goal_fields() -> set[str]:
 DEV_NAMES = {
     "goal_run", "next_action", "skill_dir", "true", "false", "null",
     "completion_results", "evaluator_unsupported", "evidence_ready", "human",
-    "inconclusive", "not_complete", "supersedes",
+    "inconclusive", "not_complete", "supersedes", "parent_acceptance",
+    "missing_parent_acceptance",
 }
 
 

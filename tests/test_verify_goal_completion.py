@@ -1871,14 +1871,19 @@ def pr_entry(number=10, head=HEAD, base_ref="main", base_sha=BASE_OID, repo=REPO
 
 
 def answer_run(responses, run, *, event, head_sha, job="build", conclusion="success", attempt=1,
-               prs=None):
+               prs=None, head_repo=REPO):
     """An explicit Actions answer for one run attempt (used with synthesis OFF). A
-    pull_request run lists this PR's honest context unless ``prs`` says otherwise."""
+    pull_request run lists this PR's honest context unless ``prs`` says otherwise,
+    and its ``head_repository`` is the goal repository unless ``head_repo`` names
+    another one (or is None, which omits the field)."""
     if prs is None:
         prs = [pr_entry()] if event == "pull_request" else []
-    responses[actions_ep(run, attempt)] = {
+    answer = {
         "id": run, "run_attempt": attempt, "status": "completed", "conclusion": conclusion,
         "event": event, "head_sha": head_sha, "pull_requests": list(prs)}
+    if head_repo is not None:
+        answer["head_repository"] = {"full_name": head_repo}
+    responses[actions_ep(run, attempt)] = answer
     responses[jobs_ep(run, attempt)] = {"total_count": 1, "jobs": [
         {"name": job, "status": "completed", "conclusion": conclusion}]}
 
@@ -2201,13 +2206,15 @@ class TestGVHardening(unittest.TestCase):
                 result, _, _ = scenario(actions=False, mutate_gh=lying)
                 self.assertNotVerified(result, "inconclusive", "ci_run_event_unbound")
 
-    def test_fb1_pull_request_run_for_another_pr_is_not_complete(self):
-        # Fix batch 2 (R2-B1b) changed this: a listing with no entry for this PR is missing
-        # context, inconclusive ci_run_pr_context_missing (was not_complete, field pull_requests).
+    def test_fb1_pull_request_run_listing_only_another_pr_is_accepted_by_the_verbatim_consumers(self):
+        # Fix batch 2 (R2-B1b) made a listing with no entry for this PR inconclusive
+        # (ci_run_pr_context_missing); ruling-264-fix-reach-2026-11-23 "Q04: A" now accepts it
+        # for the applies_verbatim consumers, which bind the run by head sha instead.
         result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
             answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD,
                                               prs=[pr_entry(number=77)])))
-        self.assertNotVerified(result, "inconclusive", "ci_run_pr_context_missing")
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertNotIn("ci_run_pr_context_missing", codes(result))
 
     # Fix batch 2 (round-2 review R2-B1): a pull_request run binds this PR's own API context.
 
@@ -2222,11 +2229,73 @@ class TestGVHardening(unittest.TestCase):
         honest, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answer_base)
         self.assertEqual(honest.outcome, "verified", honest.record["reason_codes"])
 
-    def test_fb2_r2b1b_empty_pr_listing_is_inconclusive(self):
-        # Reviewer's R2_empty_PR_listing_no_context case (a fork PR's run lists none, too).
+    def test_fb2_r2b1b_empty_pr_listing_is_accepted_by_the_verbatim_consumers(self):
+        # Reviewer's R2_empty_PR_listing_no_context case, flipped by ruling-264-fix-reach-2026-11-23
+        # "Q04: A": run 123 is this PR's own pull_request run under applies_verbatim, consumed as
+        # prior_gate and (AC-1's evidence) test_proof; both bind by head sha when the list is empty.
         result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
             answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=[])))
-        self.assertNotVerified(result, "inconclusive", "ci_run_pr_context_missing")
+        self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+        self.assertNotIn("ci_run_pr_context_missing", codes(result))
+
+    # Issue #264 item 1, ruling-264-fix-reach-2026-11-23 "Q04: A": the applies_verbatim consumers
+    # (prior_gate and test_proof) bind by head sha when the PR listing is gone.
+
+    def test_264_verbatim_prior_gate_binds_by_head_sha_when_the_pr_listing_is_absent(self):
+        # GitHub empties a run's pull_requests list once its PR closes (run 43638400263 for merged
+        # PR #260 lists []; run 36661944046 for open PR #86 lists [86]), and GV reads merged PRs.
+        # A demo-only verbatim goal, so run 123 is prior_gate proof only and nothing else reads it.
+        for name, prs in {"empty_list": [], "only_other_prs": [pr_entry(number=77)]}.items():
+            with self.subTest(listing=name):
+                result, _, _ = scenario(demo_only_verbatim, actions=False, mutate_gh=answers(
+                    answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=prs)))
+                self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+                self.assertNotIn("ci_run_pr_context_missing", codes(result))
+
+    def test_264_verbatim_test_proof_binds_by_head_sha_when_the_pr_listing_is_absent(self):
+        # The test_proof use of the same run (AC-1's evidence_ref in make_verbatim): an empty list
+        # and a list naming only another PR give no ci_run_pr_context_missing from either consumer.
+        for name, prs in {"empty_list": [], "only_other_prs": [pr_entry(number=77)]}.items():
+            with self.subTest(listing=name):
+                result, _, _ = scenario(make_verbatim, actions=False, mutate_gh=answers(
+                    answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=prs)))
+                self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+                self.assertNotIn("ci_run_pr_context_missing", codes(result))
+
+    def test_264_verbatim_head_sha_mismatch_is_still_rejected_without_a_listing(self):
+        # The binding is the run's head sha against the PR's headRefOid: without a listing a wrong
+        # head sha is still not_complete ci_run_api_mismatch, field head_sha, on both uses.
+        for use, base in {"prior_gate_use": demo_only_verbatim, "test_proof_use": make_verbatim}.items():
+            with self.subTest(use=use):
+                result, _, _ = scenario(base, actions=False, mutate_gh=answers(
+                    answer_base, lambda g: answer_run(g, 123, event="pull_request", head_sha=TEMP_OID, prs=[])))
+                self.assertNotVerified(result, "not_complete", "ci_run_api_mismatch")
+                hits = [r["detail"] for r in result.record["reason_codes"] if r["code"] == "ci_run_api_mismatch"]
+                self.assertIn("head_sha", {d.get("field") for d in hits})
+
+    def test_264_verbatim_fork_run_is_never_ci_proof_without_a_listing(self):
+        # A fork PR's pull_request run reports an empty list; the head-sha bind must not let it in,
+        # on either use. The run payload's own head_repository names the fork; a missing or
+        # malformed one cannot prove the run is not a fork PR's, so both keep the code.
+        cases = {"fork": {"full_name": "OTHER/fork"}, "missing": None, "malformed": {"full_name": 42}}
+        uses = {"prior_gate_use": demo_only_verbatim, "test_proof_use": make_verbatim}
+        for use, base in uses.items():
+            for name, head_repository in cases.items():
+                with self.subTest(use=use, head_repository=head_repository):
+                    def lying(g, hr=head_repository):
+                        answer_base(g)
+                        answer_run(g, 123, event="pull_request", head_sha=HEAD, prs=[], head_repo=None)
+                        if hr is not None:
+                            g[actions_ep(123, 1)]["head_repository"] = hr
+                    result, _, _ = scenario(base, actions=False, mutate_gh=lying)
+                    self.assertNotVerified(result, "inconclusive", "ci_run_pr_context_missing")
+                    named = {r["detail"].get("consumer") for r in result.record["reason_codes"]
+                             if r["code"] == "ci_run_pr_context_missing"}
+                    if use == "test_proof_use":
+                        self.assertIn("test_proof", named)
+                    if name == "fork":
+                        why = self.reason(result, "ci_run_pr_context_missing")["detail"]["why"]
+                        self.assertIn("fork", why)
 
     def test_fb1_workflow_dispatch_is_accepted_only_where_push_is(self):
         rerun, _, _ = scenario(actions=False, mutate_gh=answers(
@@ -2343,8 +2412,8 @@ class TestGVHardening(unittest.TestCase):
             "base_repo": ([], [pr_entry(repo="OTHER/fork")], "not_complete", "ci_run_api_mismatch", "pr.base_repo"),
             "base_sha": ([], [pr_entry(base_sha="a0b1c2d" + "0" * 33)], "inconclusive", "ci_run_base_unconfirmed",
                          None),
-            "empty_list": ([], [], "inconclusive", "ci_run_pr_context_missing", None),
-            "wrong_number": ([], [pr_entry(number=77)], "inconclusive", "ci_run_pr_context_missing", None),
+            # empty_list and wrong_number moved below (issue #264, ruling-264-fix-reach-2026-11-23:
+            # the verbatim consumers bind by head sha when the listing omits this PR).
             "listed_twice": ([], [pr_entry(), pr_entry()], "inconclusive", "ci_run_pr_context_missing", None),
             "incomplete_entry": ([], [{"number": 10, "head": {"sha": HEAD}}], "inconclusive",
                                  "ci_run_pr_context_missing", None),
@@ -2372,6 +2441,20 @@ class TestGVHardening(unittest.TestCase):
                     self.assertLessEqual(set(consumers), {d.get("consumer") for d in hits}, hits)
                     if field_name:
                         self.assertIn(field_name, {d.get("field") for d in hits})
+        # Issue #264 rows (moved out of the table above), ruling-264-fix-reach-2026-11-23
+        # "Q04: A": a listing that omits this PR blocks no applies_verbatim consumer (prior_gate
+        # and test_proof both bind by head sha instead), so both paths verify on both rows.
+        absent = {"empty_list": [], "wrong_number": [pr_entry(number=77)]}
+        for consumers, (base, run, job) in paths.items():
+            for name, prs in absent.items():
+                with self.subTest(run=run, row=name):
+                    def lying(g, run=run, job=job, prs=prs):
+                        answer_base(g)
+                        answer_run(g, 124, event="pull_request", head_sha=HEAD, job="lint")
+                        answer_run(g, run, event="pull_request", head_sha=HEAD, job=job, prs=prs)
+                    result, _, _ = scenario(base, actions=False, mutate_gh=lying)
+                    self.assertEqual(result.outcome, "verified", result.record["reason_codes"])
+                    self.assertNotIn("ci_run_pr_context_missing", codes(result))
         # Honest controls (unchanged): both paths verify with the honest PR context.
         for consumers, (base, run, job) in paths.items():
             with self.subTest(run=run, row="honest"):

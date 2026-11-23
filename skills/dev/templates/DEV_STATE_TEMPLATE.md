@@ -337,8 +337,9 @@ rerun when the merged tree differs from the tested tree.
 
 `integrated` records `current` (`branch`, `merge_sha`, `revision`, or null) and
 `history`, a list of `{branch, merge_sha, integrated_at, withdrawn_at, reason}`.
-`current` is null until merge and after any withdrawal; a rollback withdraws
-`current` and keeps the history entry.
+`current.revision` is the PR head (`headRefOid`), not the merge sha. `current` is
+null until merge and after any withdrawal; a rollback withdraws `current` and
+keeps the history entry.
 
 `host_load_at_launch` (private) is the host's load average when the lane
 launched a local heavy run under the resource policy in
@@ -535,6 +536,9 @@ pull_requests:
             justification: "same empty diff on the rename path; demonstration at 4e683b4 applies"
             evidence_ref: "PR body demonstration, revision 4e683b4"
     integrated:
+      # Populated while the integration stands (before the withdrawal below), current
+      # is {branch: main, merge_sha: d44f1e0, revision: 4e683b4}: revision is the PR
+      # head (headRefOid, above), never the merge sha. After a withdrawal it is null.
       current: null
       history:
         - branch: main

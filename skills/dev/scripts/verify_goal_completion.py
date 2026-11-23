@@ -103,19 +103,15 @@ branch (else ``not_complete`` ``ci_run_api_mismatch``, field ``pr.head``,
 ``pr.base_repo`` or ``pr.base_ref``), and whose ``base.sha`` is the subject's
 ``base_oid`` (else ``inconclusive`` ``ci_run_base_unconfirmed``). No entry for
 this PR, an empty list, several entries or an incomplete entry is
-``inconclusive`` (``ci_run_pr_context_missing``): a fork PR's ``pull_request``
-run is never GV CI proof in v2.2. A missing or unknown kind, or a merge ref
-with no ``head`` or no ``base_oid``, is ``inconclusive``
-(``ci_subject_unbound``) with no fallback; a subject naming another commit than the PR head is ``not_complete``
-(``ci_subject_mismatch``); a missing or other event is ``inconclusive``
-(``ci_run_event_unbound``). A read that fails after the D3 retries, or an answer
-of the wrong shape, is ``inconclusive`` (``ci_run_unreadable``, naming the
-read); a run not yet completed is ``inconclusive`` (``ci_run_pending``); a
-readable mismatch is ``not_complete`` (``ci_run_api_mismatch``, naming the run,
-attempt and field). The ledger's conclusion may reject a run but never accepts
-one by itself. A CI entry with no attempt is ``inconclusive``
-(``ci_identity_incomplete``) and makes no read. LOCAL and approved-fallback
-entries are not CI runs and make no Actions read.
+``inconclusive`` (``ci_run_pr_context_missing``), except for the PR's own
+``pull_request`` run under ``applies_verbatim``, its ``prior_gate`` and
+``test_proof`` uses (issue #264, ruling-264-fix-reach-2026-11-23 "Q04: A"),
+where a listing with no entry for this PR is accepted and the run binds to the
+PR by head sha alone when the run's own ``head_repository.full_name`` is the
+goal repository, case-insensitive: GitHub empties the list once the PR closes.
+A run whose ``head_repository`` names another repository (a fork PR's run) or
+is missing or malformed keeps ``ci_run_pr_context_missing``: a fork PR's
+``pull_request`` run is never GV CI proof in v2.2.
 
 Environment rule. A check's ``environment`` is an executor class; a ``ci_runs``
 ``environment`` is a runtime descriptor. ``ci`` needs a recorded CI entry (any
@@ -633,6 +629,16 @@ def _is_approved_fallback(entry) -> bool:
 # _authorize_run with its own name, then _Evaluation.confirm_ci_run with the
 # same name; the tests enumerate this tuple.
 RUN_CONSUMERS = ("test_proof", "prior_gate", "post_merge_rerun")
+
+
+def _pr_listing_may_be_absent(consumer, gate_result):
+    """Issue #264 item 1, ruling-264-fix-reach-2026-11-23 "Q04: A": the PR's own
+    ``pull_request`` run under ``applies_verbatim``, its ``prior_gate`` and
+    ``test_proof`` uses, is still CI proof when its ``pull_requests`` listing
+    omits this PR, bound to the PR by head sha instead. A single predicate so
+    the rule is decided in one place; every other consumer and gate result is
+    unchanged."""
+    return consumer in ("prior_gate", "test_proof") and gate_result == "applies_verbatim"
 
 
 def _authorize_run(entry, check, consumer):
@@ -1311,7 +1317,13 @@ class _Evaluation:
         whose ``sha`` is the PR head (``push``/``workflow_dispatch``). Both the
         merge sha and the PR head are checked against the fresh PR read
         (``merge_sha_mismatch`` and ``head_mismatch`` are not_complete), so a
-        verified result never rests on a stale binding."""
+        verified result never rests on a stale binding. For the PR's own
+        ``pull_request`` run under ``applies_verbatim``, its ``prior_gate`` and
+        ``test_proof`` uses (issue #264, ruling-264-fix-reach-2026-11-23
+        "Q04: A"), the ``pull_requests`` listing may be absent: the PR context
+        then binds nothing extra and the run binds to the PR head by
+        ``head_sha`` alone, with ``confirm_pr_context`` proving the run is not a
+        fork PR's."""
         rec = ctx.get("record") if isinstance(ctx.get("record"), dict) else {}
         pm = ctx.get("pm") if isinstance(ctx.get("pm"), dict) else {}
         rerun = consumer == "post_merge_rerun" or (
@@ -1341,11 +1353,21 @@ class _Evaluation:
         ref only when the API's own PR context binds it to this PR, this head and
         this base. None when accepted, else (cls, code, detail).
 
-        Exactly one ``pull_requests`` entry must carry this PR's number. None (an
-        empty list, as a fork PR's run reports, or only other PRs), several, or
-        an entry lacking head/base fields is inconclusive
-        ``ci_run_pr_context_missing``: a fork PR's ``pull_request`` run is never
-        GV CI proof in v2.2. The entry's ``head.sha`` must be the PR head,
+        Exactly one ``pull_requests`` entry must carry this PR's number. Several
+        entries or an entry lacking head/base fields is inconclusive
+        ``ci_run_pr_context_missing``. None (an empty list, or only other PRs) is
+        inconclusive ``ci_run_pr_context_missing`` too, with one exception: the
+        PR's own ``pull_request`` run under ``applies_verbatim``, its
+        ``prior_gate`` and ``test_proof`` uses (issue #264,
+        ruling-264-fix-reach-2026-11-23 "Q04: A"), where a listing with no entry
+        for this PR is accepted and the run binds to the PR by head sha alone
+        when ``_pr_listing_may_be_absent`` holds and the run's own
+        ``head_repository.full_name`` is the goal repository, case-insensitive
+        (GitHub empties the list once the PR closes). A run
+        whose ``head_repository`` names another repository (a fork PR's run) or
+        is missing or malformed keeps ``ci_run_pr_context_missing``: a fork PR's
+        ``pull_request`` run is never GV CI proof in v2.2. The entry's
+        ``head.sha`` must be the PR head,
         ``base.repo.full_name`` the goal repository and ``base.ref`` the PR's
         base branch; a mismatch is not_complete ``ci_run_api_mismatch`` (fields
         ``pr.head``, ``pr.base_repo``, ``pr.base_ref``). ``base.sha`` must equal
@@ -1366,6 +1388,16 @@ class _Evaluation:
                 base, read=f"actions-run:{base['run']}/attempt-{base['attempt']}", cause="unexpected_shape")
         mine = [p for p in listed if str(p.get("number")) == str(ctx.get("number"))]
         if not mine:
+            if _pr_listing_may_be_absent(base.get("consumer"), (ctx.get("pm") or {}).get("gate_result")):
+                # Issue #264: GitHub empties the list once the PR closes, so for this one case
+                # confirm_ci_run's head-sha bind is the binding. Only a run the payload proves is
+                # not a fork PR's may use it; anything else keeps the PR-context requirement.
+                head_repo = run_data.get("head_repository")
+                name = head_repo.get("full_name") if isinstance(head_repo, dict) else None
+                if isinstance(name, str) and name.lower() == self.repo.lower():
+                    return None
+                if isinstance(name, str):
+                    return missing("the run is from a fork / another repository", head_repository=name)
             return missing("this PR is not listed", listed=[p.get("number") for p in listed])
         if len(mine) > 1:
             return missing("this PR is listed more than once")
