@@ -299,7 +299,12 @@ the goal.
 When the Issue's approved acceptance content no longer digests to the recorded
 `criteria_ref`, every affected `criteria` and `post_merge` criterion outcome
 becomes `inconclusive` until its tests and evaluator judgment are reassessed
-against the new intent, whatever files changed. An authorized amendment records
+against the new intent, whatever files changed. For a goal with more than one
+fixed Issue the comparison is the approved acceptance text of all the goal's
+fixed Issues, in frozen order as one text, against
+`parent_acceptance.criteria_ref`, so an edit to any one fixed Issue's approved
+acceptance content marks that Issue's affected outcomes `inconclusive`.
+An authorized amendment records
 the new `criteria_ref` with an explicit `criteria_map` and `amendment` on the
 parent-acceptance record below. An amended criterion is never retired through
 `not_applicable`.
