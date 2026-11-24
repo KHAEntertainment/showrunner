@@ -158,6 +158,7 @@ DEV_NAMES = {
     "completion_results", "evaluator_unsupported", "evidence_ready", "human",
     "inconclusive", "not_complete", "supersedes", "parent_acceptance",
     "missing_parent_acceptance",
+    "parent_ref", "criteria_ref", "criteria_ids",
 }
 
 

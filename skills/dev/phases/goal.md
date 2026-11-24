@@ -39,6 +39,12 @@ The lead is the sole writer of `.agent/dev-state.md`. This phase writes the `goa
 
 When the goal has more than one fixed Issue, the lead also writes the top-level `parent_acceptance` record (schema: `${CLAUDE_SKILL_DIR}/templates/DEV_STATE_TEMPLATE.md`, "Parent acceptance is a separate record"); GV reports `missing_parent_acceptance` without it and cannot complete the goal.
 
+Two rules govern that record and the pull request records beside it, only for a goal with more than one fixed Issue; a goal with one fixed Issue and the ordinary workflow keep their existing rules unchanged.
+
+**Parent.** Every pull request record's `parent_ref` names the goal's one parent — the same qualified value, `OWNER/REPO#N`, on every record — and `parent_acceptance.parent` equals that value. The parent is an existing Issue the owner names when approving the goal; if the owner names none, the lead stops and asks (ruling-goal-parent-2026-11-24).
+
+**One criteria revision.** Such a goal has one criteria revision, `parent_acceptance.criteria_ref`, and every pull request record's `criteria_ref` equals it. It is the `sha256:` digest of the approved acceptance text of all the goal's fixed Issues, in frozen order, as one text. Every criterion id in `criteria_ids` is prefixed with its Issue number — `12-AC-1` for Issue #12 — and qualified by that revision (`12-AC-1@<prefix of the digest>`), and ids are unique across the goal (ruling-goal-criteria-revision-2026-11-24).
+
 After every write, run `rtk proxy python3 "${CLAUDE_SKILL_DIR}/scripts/dev_state.py" --validate .agent/dev-state.md`. A failure names the field (`goal_run.<field>: <reason>`); repair the ledger before any further step.
 
 ## 1. Arm
