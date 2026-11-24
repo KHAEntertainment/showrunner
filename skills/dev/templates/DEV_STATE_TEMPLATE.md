@@ -272,7 +272,11 @@ and adds:
 - Identity: `profile_version`, `scope`, `repository` (`OWNER/REPO`), `issue`
   written qualified as `OWNER/REPO#N`, `parent_ref` (a qualified parent such as
   `OWNER/REPO#N` or `linear:KEY-N`; null is allowed for a standalone single-PR
-  delivery), `criteria_ref`, `criteria_ids`, and `policy_ref` (`ref`, `rev`).
+  delivery; a goal with more than one fixed Issue instead requires the goal's
+  one parent on every pull request record — the same qualified value on every
+  record — with `parent_acceptance.parent` equal to it, an existing Issue the
+  owner named when approving the goal, or the lead stops and asks),
+  `criteria_ref`, `criteria_ids`, and `policy_ref` (`ref`, `rev`).
 - Subject: `base_oid` and `target_branch` beside the existing `headRefOid`.
 - Observation: `checks` and `criteria`, below.
 - Progress: `demonstrated`, `assurance`, `post_merge`, and `integrated`, below.
@@ -284,6 +288,13 @@ extracted from the Issue body at approval, never the Issue's status prose.
 Consumers treat it as opaque and never recompute it; they compare revisions by
 reference and by the `amendment` chain. `criteria_ids` lists the criteria this PR
 contributes to as stable IDs qualified by that revision (`AC-2@9f3c`).
+A goal with more than one fixed Issue has one criteria revision instead:
+`parent_acceptance.criteria_ref`, the `sha256:` digest of the approved
+acceptance text of all the goal's fixed Issues in frozen order as one text,
+which every pull request record's `criteria_ref` equals. Each id in
+`criteria_ids` is prefixed with its Issue number and qualified by that one
+revision (`12-AC-1@<prefix of the digest>` for Issue #12) and is unique across
+the goal.
 **Criteria edited after approval mark the affected outcomes `inconclusive`.**
 When the Issue's approved acceptance content no longer digests to the recorded
 `criteria_ref`, every affected `criteria` and `post_merge` criterion outcome
