@@ -1,5 +1,7 @@
 # Plan: /dev-native Technical Planning, Gap Pass, and Optional Research Providers
 
+> **Status: planned for v2.2.0, not started.** Nothing in this plan is implemented. It is feature and scope-increasing work, so it targets v2.2.0 rather than a v2.1.x patch release (decided 2026-09-29).
+>
 > Audit + build plan. This session only researched and planned; nothing was implemented.
 > **Execute after v2.1.2 lands** (#74, #76, #78 especially). Target release: **v2.2.0**.
 > Audited sources (read-only clones, observed 2026-09-26):
